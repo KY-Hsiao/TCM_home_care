@@ -6,6 +6,7 @@
 - 可直接啟動的桌面介面
 - 一個本地可按的「執行動作」按鈕
 - GitHub Actions 的手動執行按鈕
+- 專案級 `.codex` 環境設定與常用動作按鈕
 
 ## 本地啟動
 
@@ -26,6 +27,18 @@
    ```powershell
    powershell -ExecutionPolicy Bypass -File .\launch_app.ps1
    ```
+
+## Codex 專案環境
+
+此專案新增了 `.codex/environments/environment.toml`，用途是讓 Codex 在這個專案中更快進入可工作的狀態，包含：
+
+- 自動執行 `.codex/scripts/setup.ps1`
+- 初始化 `.venv`
+- 安裝 `requirements.txt`
+- 清除會干擾 GitHub CLI 的代理環境變數
+- 提供「啟動程式」、「CLI 試跑」、「Git 狀態」、「推送 GitHub」動作按鈕
+
+這些設定只針對此專案的常用流程加速，不會把權限無限制放大到工作區外。
 
 ## GitHub Actions 手動執行
 
