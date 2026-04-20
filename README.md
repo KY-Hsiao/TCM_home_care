@@ -49,11 +49,20 @@ python app.py --cli --message "GitHub Actions 手動執行完成" --repeat-count
 gh auth login --hostname github.com --git-protocol https --web
 ```
 
-之後可以建立並連接遠端倉庫：
+目前這個工作區已完成：
+
+- `git init -b main`
+- `git remote add origin https://github.com/KY-Hsiao/TCM_home_care.git`
+- 初始 commit `Initial project setup`
+
+完成登入後，可以直接建立 GitHub 倉庫並推送：
 
 ```powershell
-git init -b main
-git add .
-git commit -m "Initial project setup"
 gh repo create TCM_home_care --public --source . --remote origin --push
+```
+
+如果你已經先在 GitHub 網站手動建立同名倉庫，則改用：
+
+```powershell
+git push -u origin main
 ```

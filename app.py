@@ -14,7 +14,7 @@ OUTPUT_FILE = OUTPUT_DIR / "latest_run.txt"
 
 
 def run_action(message: str, repeat_count: int) -> str:
-    """執行示範動作，並將結果寫到 output/latest_run.txt。"""
+    """執行示範動作，並將結果寫到 latest_run.txt。"""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     lines = [
         f"[{timestamp}] 第 {index + 1} 次執行：{message}"
