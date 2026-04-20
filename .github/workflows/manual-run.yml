@@ -1,0 +1,43 @@
+name: Manual Run
+
+on:
+  workflow_dispatch:
+    inputs:
+      action_message:
+        description: 執行時要寫入的訊息
+        required: false
+        default: GitHub Actions 手動執行完成
+      repeat_count:
+        description: 重複執行次數
+        required: false
+        default: "1"
+
+jobs:
+  run-manual-action:
+    runs-on: ubuntu-latest
+    env:
+      TCM_HOME_CARE_DATA_DIR: ${{ github.workspace }}/artifacts
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip && pip install -r requirements.txt
+
+      - name: Run action
+        run: |
+          python app.py --cli \
+            --message "${{ github.event.inputs.action_message || 'GitHub Actions 手動執行完成' }}" \
+            --repeat-count "${{ github.event.inputs.repeat_count || '1' }}"
+
+      - name: Upload result artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: latest-run
+          path: artifacts/latest_run.txt
