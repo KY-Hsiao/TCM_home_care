@@ -9,6 +9,7 @@ import type {
 import type {
   ConfirmationSource,
   FamilyFollowUpStatus,
+  RouteItemStatus,
   UserRole,
   VisitFeedbackCode,
   VisitStatus
@@ -278,11 +279,25 @@ function upsertRecordList(db: AppDb, record: VisitRecord) {
 }
 
 function upsertSavedRoutePlanList(db: AppDb, routePlan: SavedRoutePlan) {
-  const index = db.saved_route_plans.findIndex((item) => item.id === routePlan.id);
+  const filtered = db.saved_route_plans.filter(
+    (item) =>
+      item.id !== routePlan.id &&
+      !(
+        item.doctor_id === routePlan.doctor_id &&
+        item.route_date === routePlan.route_date &&
+        item.route_weekday === routePlan.route_weekday &&
+        item.service_time_slot === routePlan.service_time_slot
+      )
+  );
+  return [routePlan, ...filtered];
+}
+
+function upsertReminderList(db: AppDb, reminder: AppDb["reminders"][number]) {
+  const index = db.reminders.findIndex((item) => item.id === reminder.id);
   if (index >= 0) {
-    return db.saved_route_plans.map((item, itemIndex) => (itemIndex === index ? routePlan : item));
+    return db.reminders.map((item, itemIndex) => (itemIndex === index ? reminder : item));
   }
-  return [routePlan, ...db.saved_route_plans];
+  return [reminder, ...db.reminders];
 }
 
 function deleteSavedRoutePlanList(db: AppDb, routePlanId: string) {
@@ -298,6 +313,338 @@ function buildChangeAction(
     id: `rs-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     created_at: now,
     updated_at: now
+  };
+}
+
+function resolveRouteItemStatus(status: VisitStatus): RouteItemStatus {
+  if (["completed", "followup_pending"].includes(status)) {
+    return "completed";
+  }
+  if (status === "paused") {
+    return "paused";
+  }
+  if (["arrived", "in_treatment"].includes(status)) {
+    return "in_treatment";
+  }
+  if (["on_the_way", "tracking", "proximity_pending"].includes(status)) {
+    return "on_the_way";
+  }
+  return "scheduled";
+}
+
+function buildRouteScopeId(doctorId: string, routeDate: string, routeWeekday: string, serviceTimeSlot: "上午" | "下午") {
+  return `route-${doctorId}-${routeDate}-${routeWeekday}-${serviceTimeSlot}`;
+}
+
+function buildRouteScheduleDateTime(routeDate: string, serviceTimeSlot: "上午" | "下午", order: number) {
+  const baseHour = serviceTimeSlot === "上午" ? 9 : 14;
+  const baseDate = new Date(`${routeDate}T00:00:00`);
+  baseDate.setHours(baseHour + Math.max(order - 1, 0), 0, 0, 0);
+  return baseDate.toISOString();
+}
+
+function syncRoutePlansForSchedule(
+  db: AppDb,
+  scheduleId: string,
+  patch: Partial<{
+    status: RouteItemStatus;
+    routeOrder: number | null;
+  }>
+) {
+  return db.saved_route_plans.map((routePlan) => {
+    let changed = false;
+    const nextRouteItems = routePlan.route_items.map((item) => {
+      if (item.schedule_id !== scheduleId) {
+        return item;
+      }
+      changed = true;
+      return {
+        ...item,
+        status: patch.status ?? item.status,
+        route_order: patch.routeOrder === undefined ? item.route_order : patch.routeOrder
+      };
+    });
+    return changed ? { ...routePlan, route_items: nextRouteItems } : routePlan;
+  });
+}
+
+function executeRoutePlanInDb(db: AppDb, routePlanId: string) {
+  const routePlan = db.saved_route_plans.find((item) => item.id === routePlanId);
+  if (!routePlan) {
+    return {
+      db,
+      executedRoutePlan: undefined as SavedRoutePlan | undefined
+    };
+  }
+
+  const now = new Date().toISOString();
+  const patientsById = new Map(db.patients.map((patient) => [patient.id, patient]));
+  const primaryCaregiverByPatientId = new Map(
+    db.caregivers
+      .filter((caregiver) => caregiver.is_primary)
+      .map((caregiver) => [caregiver.patient_id, caregiver.id])
+  );
+  const anyCaregiverByPatientId = new Map(
+    db.caregivers.map((caregiver) => [caregiver.patient_id, caregiver.id])
+  );
+
+  let nextSchedules = [...db.visit_schedules];
+  const checkedCount = routePlan.route_items.filter((item) => item.checked).length;
+  let pausedIndex = 0;
+
+  const nextRouteItems: SavedRoutePlan["route_items"] = routePlan.route_items
+    .filter((item) => {
+      const patient = patientsById.get(item.patient_id);
+      return Boolean(patient) && patient?.status !== "closed";
+    })
+    .map((item) => {
+      const patient = patientsById.get(item.patient_id)!;
+      const routeOrder = item.checked
+        ? item.route_order ?? 1
+        : checkedCount + pausedIndex++ + 1;
+      const scheduledStart = buildRouteScheduleDateTime(
+        routePlan.route_date,
+        routePlan.service_time_slot,
+        routeOrder
+      );
+      const scheduledEnd = new Date(
+        new Date(scheduledStart).getTime() + 60 * 60 * 1000
+      ).toISOString();
+      const existingScheduleIndex = nextSchedules.findIndex(
+        (schedule) => schedule.id === item.schedule_id
+      );
+      const scheduleId = item.schedule_id ?? `vs-${routePlan.id}-${patient.id}`;
+      const nextStatus: VisitStatus = item.checked ? "scheduled" : "paused";
+      const baseSchedule: VisitSchedule =
+        existingScheduleIndex >= 0
+          ? nextSchedules[existingScheduleIndex]
+          : {
+              id: scheduleId,
+              patient_id: patient.id,
+              assigned_doctor_id: routePlan.doctor_id,
+              primary_caregiver_id:
+                primaryCaregiverByPatientId.get(patient.id) ??
+                anyCaregiverByPatientId.get(patient.id) ??
+                "",
+              scheduled_start_at: scheduledStart,
+              scheduled_end_at: scheduledEnd,
+              estimated_treatment_minutes: 30,
+              address_snapshot: patient.home_address || patient.address,
+              location_keyword_snapshot: patient.location_keyword,
+              home_latitude_snapshot: patient.home_latitude,
+              home_longitude_snapshot: patient.home_longitude,
+              arrival_radius_meters: 100,
+              geofence_status:
+                patient.home_latitude === null || patient.home_longitude === null
+                  ? "coordinate_missing"
+                  : "idle",
+              google_maps_link: patient.google_maps_link,
+              area: patient.address,
+              service_time_slot: `${routePlan.route_weekday}${routePlan.service_time_slot}`,
+              route_order: routeOrder,
+              route_group_id: routePlan.id,
+              tracking_mode: "hybrid",
+              tracking_started_at: null,
+              tracking_stopped_at: null,
+              arrival_confirmed_by: null,
+              departure_confirmed_by: null,
+              last_feedback_code: null,
+              reminder_tags: [...patient.reminder_tags, ...patient.service_needs],
+              status: nextStatus,
+              visit_type:
+                patient.service_needs.length > 0
+                  ? `${patient.service_needs.join(" / ")} / ${patient.primary_diagnosis}`
+                  : patient.primary_diagnosis,
+              note: "由排程管理頁實行路線",
+              created_at: now,
+              updated_at: now
+            };
+
+      const nextSchedule = {
+        ...baseSchedule,
+        id: scheduleId,
+        patient_id: patient.id,
+        assigned_doctor_id: routePlan.doctor_id,
+        scheduled_start_at: scheduledStart,
+        scheduled_end_at: scheduledEnd,
+        address_snapshot: patient.home_address || patient.address,
+        location_keyword_snapshot: patient.location_keyword,
+        home_latitude_snapshot: patient.home_latitude,
+        home_longitude_snapshot: patient.home_longitude,
+        google_maps_link: patient.google_maps_link,
+        service_time_slot: `${routePlan.route_weekday}${routePlan.service_time_slot}`,
+        route_order: routeOrder,
+        route_group_id: routePlan.id,
+        reminder_tags: [...patient.reminder_tags, ...patient.service_needs],
+        status: nextStatus,
+        note: "由排程管理頁實行路線",
+        updated_at: now
+      };
+
+      if (existingScheduleIndex >= 0) {
+        nextSchedules[existingScheduleIndex] = nextSchedule;
+      } else {
+        nextSchedules.unshift(nextSchedule);
+      }
+
+      return {
+        ...item,
+        schedule_id: scheduleId,
+        route_order: item.checked ? item.route_order ?? routeOrder : null,
+        status: item.checked ? ("scheduled" as const) : ("paused" as const),
+        patient_name: patient.name,
+        address: patient.home_address || patient.address
+      };
+    });
+
+  let executedRoutePlan: SavedRoutePlan | undefined;
+  const nextSavedRoutePlans = db.saved_route_plans.map((item) => {
+    if (
+      item.doctor_id === routePlan.doctor_id &&
+      item.execution_status === "executing" &&
+      item.id !== routePlan.id
+    ) {
+      return {
+        ...item,
+        execution_status: "archived" as const,
+        updated_at: now
+      };
+    }
+    if (item.id !== routePlan.id) {
+      return item;
+    }
+    const nextPlan = {
+      ...item,
+      route_items: nextRouteItems,
+      schedule_ids: nextRouteItems
+        .map((routeItem) => routeItem.schedule_id)
+        .filter((scheduleId): scheduleId is string => Boolean(scheduleId)),
+      execution_status: "executing" as const,
+      executed_at: now,
+      updated_at: now
+    };
+    executedRoutePlan = nextPlan;
+    return nextPlan;
+  });
+
+  return {
+    db: {
+      ...db,
+      visit_schedules: nextSchedules,
+      saved_route_plans: nextSavedRoutePlans
+    },
+    executedRoutePlan
+  };
+}
+
+function resetRoutePlanProgressInDb(db: AppDb, routePlanId: string) {
+  const routePlan = db.saved_route_plans.find((item) => item.id === routePlanId);
+  if (!routePlan) {
+    return {
+      db,
+      resetRoutePlan: undefined as SavedRoutePlan | undefined
+    };
+  }
+
+  const now = new Date().toISOString();
+  const patientById = new Map(db.patients.map((patient) => [patient.id, patient]));
+  const routePatientIdSet = new Set(routePlan.route_items.map((item) => item.patient_id));
+  const routeServiceTimeSlot = `${routePlan.route_weekday}${routePlan.service_time_slot}`;
+  const associatedRouteSchedules = db.visit_schedules.filter(
+    (schedule) =>
+      schedule.route_group_id === routePlan.id ||
+      (routePatientIdSet.has(schedule.patient_id) &&
+      schedule.assigned_doctor_id === routePlan.doctor_id &&
+        schedule.scheduled_start_at.slice(0, 10) === routePlan.route_date &&
+        schedule.service_time_slot === routeServiceTimeSlot)
+  );
+  const routeScheduleById = new Map(
+    associatedRouteSchedules.map((schedule) => [schedule.id, schedule])
+  );
+  const routeScheduleByPatientId = new Map(
+    associatedRouteSchedules.map((schedule) => [schedule.patient_id, schedule])
+  );
+  const orderedRouteItems = routePlan.route_items
+    .slice()
+    .sort((left, right) => {
+      const leftOrder = left.route_order ?? Number.MAX_SAFE_INTEGER;
+      const rightOrder = right.route_order ?? Number.MAX_SAFE_INTEGER;
+      if (leftOrder !== rightOrder) {
+        return leftOrder - rightOrder;
+      }
+      return left.patient_name.localeCompare(right.patient_name, "zh-Hant");
+    });
+  const activeRouteItems = orderedRouteItems.filter((item) => {
+    const patient = patientById.get(item.patient_id);
+    return patient?.status !== "closed";
+  });
+
+  let checkedOrder = 0;
+  const checkedItemCount = activeRouteItems.filter((item) => item.checked).length;
+  let pausedOrder = 0;
+  const scheduleOrderByScheduleId = new Map<string, number>();
+  const normalizedRouteItems = activeRouteItems.map((item) => {
+    const resolvedScheduleId =
+      (item.schedule_id && routeScheduleById.has(item.schedule_id) ? item.schedule_id : null) ??
+      routeScheduleByPatientId.get(item.patient_id)?.id ??
+      item.schedule_id;
+    const nextRouteItem = {
+      ...item,
+      schedule_id: resolvedScheduleId,
+      route_order: item.checked ? ++checkedOrder : null,
+      status: item.checked ? ("scheduled" as const) : ("paused" as const)
+    };
+
+    if (resolvedScheduleId) {
+      scheduleOrderByScheduleId.set(
+        resolvedScheduleId,
+        item.checked ? checkedOrder : checkedItemCount + ++pausedOrder
+      );
+    }
+
+    return nextRouteItem;
+  });
+
+  const scheduleIdSet = new Set(
+    [
+      ...associatedRouteSchedules.map((schedule) => schedule.id),
+      ...normalizedRouteItems
+      .map((item) => item.schedule_id)
+      .filter((scheduleId): scheduleId is string => Boolean(scheduleId))
+    ]
+  );
+
+  let resetRoutePlan: SavedRoutePlan | undefined;
+  const nextSavedRoutePlans = db.saved_route_plans.map((item) => {
+    if (item.id !== routePlanId) {
+      return item;
+    }
+
+    const nextPlan = {
+      ...item,
+      route_items: normalizedRouteItems,
+      execution_status: "executing" as const,
+      updated_at: now
+    };
+    resetRoutePlan = nextPlan;
+    return nextPlan;
+  });
+
+  return {
+    ...(() => {
+      const cleanedDb = {
+        ...db,
+        visit_records: db.visit_records.filter((record) => !scheduleIdSet.has(record.visit_schedule_id)),
+        visit_schedules: db.visit_schedules.filter((schedule) => !scheduleIdSet.has(schedule.id)),
+        saved_route_plans: nextSavedRoutePlans
+      };
+      const result = executeRoutePlanInDb(cleanedDb, routePlanId);
+      resetRoutePlan = result.executedRoutePlan;
+      return {
+        db: result.db,
+        resetRoutePlan
+      };
+    })()
   };
 }
 
@@ -468,6 +815,11 @@ export function createVisitRepository(
           (routePlan) => routePlan.service_time_slot === filters.serviceTimeSlot
         );
       }
+      if (filters?.executionStatus) {
+        routePlans = routePlans.filter(
+          (routePlan) => routePlan.execution_status === filters.executionStatus
+        );
+      }
       return routePlans.slice().sort((left, right) => {
         const dateDiff = compareAsc(new Date(left.route_date), new Date(right.route_date));
         if (dateDiff !== 0) {
@@ -482,6 +834,24 @@ export function createVisitRepository(
     getSavedRoutePlanById(routePlanId) {
       return getDb().saved_route_plans.find((routePlan) => routePlan.id === routePlanId);
     },
+    getActiveRoutePlan(doctorId) {
+      const today = new Date().toISOString().slice(0, 10);
+      const activePlans = getDb().saved_route_plans
+        .filter(
+          (routePlan) =>
+            routePlan.doctor_id === doctorId && routePlan.execution_status === "executing"
+        )
+        .sort((left, right) => {
+          if (left.route_date === today && right.route_date !== today) {
+            return -1;
+          }
+          if (left.route_date !== today && right.route_date === today) {
+            return 1;
+          }
+          return compareAsc(new Date(right.executed_at ?? right.saved_at), new Date(left.executed_at ?? left.saved_at));
+        });
+      return activePlans[0];
+    },
     getDoctorRouteSchedules(doctorId, routePlanId) {
       const db = getDb();
       const fallbackTodaySchedules = sortSchedules(
@@ -491,12 +861,17 @@ export function createVisitRepository(
             isSameDay(new Date(schedule.scheduled_start_at), new Date())
         )
       );
-      if (!routePlanId) {
-        return fallbackTodaySchedules;
-      }
-      const routePlan = db.saved_route_plans.find(
-        (item) => item.id === routePlanId && item.doctor_id === doctorId
-      );
+      const activeRoutePlan = db.saved_route_plans
+        .filter(
+          (item) => item.doctor_id === doctorId && item.execution_status === "executing"
+        )
+        .sort((left, right) =>
+          compareAsc(new Date(right.executed_at ?? right.saved_at), new Date(left.executed_at ?? left.saved_at))
+        )[0];
+      const routePlan =
+        (routePlanId
+          ? db.saved_route_plans.find((item) => item.id === routePlanId && item.doctor_id === doctorId)
+          : undefined) ?? activeRoutePlan;
       if (!routePlan) {
         return fallbackTodaySchedules;
       }
@@ -505,7 +880,18 @@ export function createVisitRepository(
           .filter((schedule) => schedule.assigned_doctor_id === doctorId)
           .map((schedule) => [schedule.id, schedule])
       );
-      const selectedSchedules = routePlan.schedule_ids
+      const selectedSchedules = routePlan.route_items
+        .slice()
+        .sort((left, right) => {
+          const leftOrder = left.route_order ?? Number.MAX_SAFE_INTEGER;
+          const rightOrder = right.route_order ?? Number.MAX_SAFE_INTEGER;
+          if (leftOrder !== rightOrder) {
+            return leftOrder - rightOrder;
+          }
+          return left.patient_name.localeCompare(right.patient_name, "zh-Hant");
+        })
+        .map((item) => item.schedule_id)
+        .filter((scheduleId): scheduleId is string => Boolean(scheduleId))
         .map((scheduleId) => scheduleById.get(scheduleId))
         .filter((schedule): schedule is VisitSchedule => Boolean(schedule));
       return selectedSchedules.length > 0 ? selectedSchedules : fallbackTodaySchedules;
@@ -513,19 +899,96 @@ export function createVisitRepository(
     upsertSchedule(schedule) {
       updateDb((db) => ({
         ...db,
-        visit_schedules: patchSchedule(db, schedule.id, schedule)
+        visit_schedules: patchSchedule(db, schedule.id, schedule),
+        saved_route_plans: syncRoutePlansForSchedule(db, schedule.id, {
+          status: resolveRouteItemStatus(schedule.status),
+          routeOrder: schedule.route_order ?? null
+        })
       }));
     },
     upsertSavedRoutePlan(routePlan) {
       updateDb((db) => ({
         ...db,
-        saved_route_plans: upsertSavedRoutePlanList(db, routePlan)
+        saved_route_plans: upsertSavedRoutePlanList(db, {
+          ...routePlan,
+          id:
+            routePlan.id ||
+            buildRouteScopeId(
+              routePlan.doctor_id,
+              routePlan.route_date,
+              routePlan.route_weekday,
+              routePlan.service_time_slot
+            )
+        })
       }));
     },
     deleteSavedRoutePlan(routePlanId) {
       updateDb((db) => ({
         ...db,
         saved_route_plans: deleteSavedRoutePlanList(db, routePlanId)
+      }));
+    },
+    executeRoutePlan(routePlanId) {
+      let executedRoutePlan: SavedRoutePlan | undefined;
+
+      updateDb((db) => {
+        const result = executeRoutePlanInDb(db, routePlanId);
+        executedRoutePlan = result.executedRoutePlan;
+        return result.db;
+      });
+
+      return executedRoutePlan;
+    },
+    upsertSavedRoutePlanAndExecute(routePlan) {
+      let executedRoutePlan: SavedRoutePlan | undefined;
+
+      updateDb((db) => {
+        const normalizedRoutePlan = {
+          ...routePlan,
+          id:
+            routePlan.id ||
+            buildRouteScopeId(
+              routePlan.doctor_id,
+              routePlan.route_date,
+              routePlan.route_weekday,
+              routePlan.service_time_slot
+            )
+        };
+        const nextDb = {
+          ...db,
+          saved_route_plans: upsertSavedRoutePlanList(db, normalizedRoutePlan)
+        };
+        const result = executeRoutePlanInDb(nextDb, normalizedRoutePlan.id);
+        executedRoutePlan = result.executedRoutePlan;
+        return result.db;
+      });
+
+      return executedRoutePlan;
+    },
+    resetRoutePlanProgress(routePlanId) {
+      let resetRoutePlan: SavedRoutePlan | undefined;
+
+      updateDb((db) => {
+        const result = resetRoutePlanProgressInDb(db, routePlanId);
+        resetRoutePlan = result.resetRoutePlan;
+        return result.db;
+      });
+
+      return resetRoutePlan;
+    },
+    syncRouteItemStatus(routePlanId, patientId, status) {
+      updateDb((db) => ({
+        ...db,
+        saved_route_plans: db.saved_route_plans.map((routePlan) =>
+          routePlan.id !== routePlanId
+            ? routePlan
+            : {
+                ...routePlan,
+                route_items: routePlan.route_items.map((item) =>
+                  item.patient_id === patientId ? { ...item, status } : item
+                )
+              }
+        )
       }));
     },
     upsertVisitRecord(record: VisitRecord) {
@@ -535,12 +998,16 @@ export function createVisitRepository(
         const currentSchedule = db.visit_schedules.find(
           (schedule) => schedule.id === record.visit_schedule_id
         );
+        const nextStatus = deriveScheduleStatus(normalizedRecord, currentSchedule?.status ?? "scheduled");
 
         return {
           ...db,
           visit_records: upsertRecordList(db, normalizedRecord),
           visit_schedules: patchSchedule(db, record.visit_schedule_id, {
-            status: deriveScheduleStatus(normalizedRecord, currentSchedule?.status ?? "scheduled")
+            status: nextStatus
+          }),
+          saved_route_plans: syncRoutePlansForSchedule(db, record.visit_schedule_id, {
+            status: resolveRouteItemStatus(nextStatus)
           })
         };
       });
@@ -572,6 +1039,9 @@ export function createVisitRepository(
           geofence_status: "tracking",
           tracking_started_at: departureTime,
           tracking_stopped_at: null
+        }),
+        saved_route_plans: syncRoutePlansForSchedule(currentDb, visitScheduleId, {
+          status: "on_the_way"
         })
       }));
 
@@ -580,7 +1050,10 @@ export function createVisitRepository(
     updateRouteOrder(visitScheduleId, routeOrder) {
       updateDb((db) => ({
         ...db,
-        visit_schedules: patchSchedule(db, visitScheduleId, { route_order: routeOrder })
+        visit_schedules: patchSchedule(db, visitScheduleId, { route_order: routeOrder }),
+        saved_route_plans: syncRoutePlansForSchedule(db, visitScheduleId, {
+          routeOrder
+        })
       }));
     },
     confirmArrival(visitScheduleId, confirmedBy, recordedAt = new Date().toISOString()) {
@@ -608,6 +1081,9 @@ export function createVisitRepository(
           status: nextRecord.visit_feedback_code === "normal" ? "in_treatment" : "arrived",
           geofence_status: "arrived",
           arrival_confirmed_by: confirmedBy
+        }),
+        saved_route_plans: syncRoutePlansForSchedule(currentDb, visitScheduleId, {
+          status: "in_treatment"
         })
       }));
       return nextRecord;
@@ -645,6 +1121,9 @@ export function createVisitRepository(
           geofence_status: "completed",
           departure_confirmed_by: confirmedBy,
           tracking_stopped_at: recordedAt
+        }),
+        saved_route_plans: syncRoutePlansForSchedule(currentDb, visitScheduleId, {
+          status: "completed"
         })
       }));
       return nextRecord;
@@ -661,6 +1140,12 @@ export function createVisitRepository(
       const nextRecord = applyVisitRecordRules(
         {
           ...(existingRecord ?? buildBlankRecord(schedule, null)),
+          arrival_time:
+            feedbackCode === "absent"
+              ? existingRecord?.arrival_time ?? recordedAt
+              : existingRecord?.arrival_time ?? null,
+          departure_from_patient_home_time:
+            feedbackCode === "absent" ? recordedAt : existingRecord?.departure_from_patient_home_time ?? null,
           visit_feedback_code: feedbackCode,
           visit_feedback_at: recordedAt,
           family_followup_status: feedbackCode === "normal" ? "not_needed" : "draft_ready",
@@ -674,6 +1159,8 @@ export function createVisitRepository(
           ? nextRecord.arrival_time
             ? "in_treatment"
             : "arrived"
+          : feedbackCode === "absent"
+            ? "paused"
           : "issue_pending";
 
       updateDb((currentDb) => ({
@@ -681,7 +1168,12 @@ export function createVisitRepository(
         visit_records: upsertRecordList(currentDb, nextRecord),
         visit_schedules: patchSchedule(currentDb, visitScheduleId, {
           status: nextStatus,
-          last_feedback_code: feedbackCode
+          last_feedback_code: feedbackCode,
+          geofence_status: feedbackCode === "absent" ? "completed" : schedule.geofence_status,
+          tracking_stopped_at: feedbackCode === "absent" ? recordedAt : schedule.tracking_stopped_at
+        }),
+        saved_route_plans: syncRoutePlansForSchedule(currentDb, visitScheduleId, {
+          status: resolveRouteItemStatus(nextStatus)
         })
       }));
       return nextRecord;
@@ -707,6 +1199,9 @@ export function createVisitRepository(
         visit_records: upsertRecordList(currentDb, nextRecord),
         visit_schedules: patchSchedule(currentDb, visitScheduleId, {
           status: status === "sent" ? "completed" : "followup_pending"
+        }),
+        saved_route_plans: syncRoutePlansForSchedule(currentDb, visitScheduleId, {
+          status: status === "sent" ? "completed" : "completed"
         })
       }));
       return nextRecord;
@@ -732,6 +1227,9 @@ export function createVisitRepository(
                 }
               : item
           ),
+          saved_route_plans: syncRoutePlansForSchedule(db, input.visitScheduleId, {
+            status: "scheduled"
+          }),
           reschedule_actions: [
             buildChangeAction({
               visit_schedule_id: input.visitScheduleId,
@@ -770,6 +1268,9 @@ export function createVisitRepository(
                 }
               : item
           ),
+          saved_route_plans: syncRoutePlansForSchedule(db, input.visitScheduleId, {
+            status: "scheduled"
+          }),
           reschedule_actions: [
             buildChangeAction({
               visit_schedule_id: input.visitScheduleId,
@@ -803,6 +1304,9 @@ export function createVisitRepository(
               ? { ...item, status: "cancelled", note: `${item.note}｜取消：${reason}`, updated_at: now }
               : item
           ),
+          saved_route_plans: syncRoutePlansForSchedule(db, visitScheduleId, {
+            status: "paused"
+          }),
           reschedule_actions: [
             buildChangeAction({
               visit_schedule_id: visitScheduleId,
@@ -833,9 +1337,12 @@ export function createVisitRepository(
           ...db,
           visit_schedules: db.visit_schedules.map((item) =>
             item.id === visitScheduleId
-              ? { ...item, status: "cancelled", note: `${item.note}｜暫停本次：${reason}`, updated_at: now }
+              ? { ...item, status: "paused", note: `${item.note}｜暫停本次：${reason}`, updated_at: now }
               : item
           ),
+          saved_route_plans: syncRoutePlansForSchedule(db, visitScheduleId, {
+            status: "paused"
+          }),
           reschedule_actions: [
             buildChangeAction({
               visit_schedule_id: visitScheduleId,
@@ -857,20 +1364,49 @@ export function createVisitRepository(
     },
     getReminders(role: UserRole, ownerId?: string) {
       const reminders = getDb()
-        .reminders.filter((reminder) => reminder.role === role)
+        .reminders.filter((reminder) => {
+          if (reminder.role === role) {
+            return true;
+          }
+          if (!reminder.related_visit_schedule_id) {
+            return false;
+          }
+          const schedule = getDb().visit_schedules.find(
+            (item) => item.id === reminder.related_visit_schedule_id
+          );
+          if (!schedule) {
+            return false;
+          }
+          if (role === "admin") {
+            return true;
+          }
+          return ownerId ? schedule.assigned_doctor_id === ownerId : true;
+        })
         .sort((left, right) => compareAsc(new Date(left.due_at), new Date(right.due_at)));
       if (!ownerId) {
         return reminders;
       }
       return reminders.filter((reminder) => {
         if (!reminder.related_visit_schedule_id) {
-          return true;
+          return reminder.role === role;
         }
         const schedule = getDb().visit_schedules.find(
           (item) => item.id === reminder.related_visit_schedule_id
         );
-        return schedule ? schedule.assigned_doctor_id === ownerId : false;
+        if (!schedule) {
+          return false;
+        }
+        if (role === "admin") {
+          return true;
+        }
+        return schedule.assigned_doctor_id === ownerId;
       });
+    },
+    createReminder(reminder) {
+      updateDb((db) => ({
+        ...db,
+        reminders: upsertReminderList(db, reminder)
+      }));
     },
     appendDoctorLocationLog(log) {
       updateDb((db) => ({

@@ -52,7 +52,7 @@ export function getScheduleDisplayRange(
 }
 
 export function isVisitFinished(status: VisitSchedule["status"]) {
-  return ["completed", "followup_pending", "cancelled"].includes(status);
+  return ["completed", "followup_pending", "cancelled", "paused"].includes(status);
 }
 
 export function isVisitUnlocked(
@@ -79,11 +79,5 @@ export function shouldPromptArrival(
   if (!runtime) {
     return schedule.status === "proximity_pending";
   }
-  return (
-    schedule.status === "proximity_pending" ||
-    runtime.arrivalConfirmationPending ||
-    runtime.geofenceStatus === "proximity_pending" ||
-    (runtime.latestDistanceMeters !== null &&
-      runtime.latestDistanceMeters <= schedule.arrival_radius_meters)
-  );
+  return schedule.status === "proximity_pending" || runtime.arrivalConfirmationPending;
 }

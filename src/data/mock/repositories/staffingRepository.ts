@@ -26,76 +26,37 @@ export function createStaffingRepository(
       const todaySchedules = db.visit_schedules.filter((schedule) =>
         isSameDay(new Date(schedule.scheduled_start_at), new Date())
       );
-      const todayScheduleIds = new Set(todaySchedules.map((schedule) => schedule.id));
-      const delayedCount = todaySchedules.filter((schedule) => {
-        const record = db.visit_records.find(
-          (item) => item.visit_schedule_id === schedule.id
-        );
-        if (!record?.departure_time) {
-          return false;
-        }
-        return new Date(record.departure_time) > new Date(schedule.scheduled_start_at);
-      }).length;
+      const pendingLeaveRequests = db.leave_requests.filter((leave) => leave.status === "pending");
+      const pendingRescheduleActions = db.reschedule_actions.filter((item) =>
+        ["pending", "draft"].includes(item.status)
+      );
+      const draftRoutePlans = db.saved_route_plans.filter(
+        (routePlan) => routePlan.execution_status === "draft"
+      );
+      const exceptionSchedules = todaySchedules.filter((schedule) =>
+        ["paused", "issue_pending", "followup_pending", "rescheduled", "cancelled"].includes(
+          schedule.status
+        )
+      );
 
       return {
         todayVisitTotal: todaySchedules.length,
-        pendingSchedulingCount: db.patients.filter(
-          (patient) =>
-            patient.status !== "closed" &&
-            !db.visit_schedules.some(
-              (schedule) =>
-                schedule.patient_id === patient.id &&
-                new Date(schedule.scheduled_start_at) >= new Date()
-            )
-        ).length,
-        pendingNotificationCount: db.notification_tasks.filter(
-          (task) => task.status === "pending"
-        ).length,
-        doctorTaskCount: db.notification_tasks.filter(
-          (task) => task.recipient_role === "doctor" && task.status !== "closed"
-        ).length,
-        caregiverTaskCount: db.notification_tasks.filter(
-          (task) => task.recipient_role === "caregiver" && task.status !== "closed"
-        ).length,
-        leaveAffectedCount: db.leave_requests.reduce((count, leave) => {
-          if (leave.status === "rejected") {
-            return count;
-          }
-          return count + getImpactedSchedules(leave.doctor_id, leave.start_date, leave.end_date).length;
-        }, 0),
-        arrivedCount: todaySchedules.filter((schedule) => schedule.status === "arrived").length,
-        inTreatmentCount: todaySchedules.filter((schedule) => schedule.status === "in_treatment").length,
-        completedCount: todaySchedules.filter((schedule) => schedule.status === "completed").length,
+        draftRouteCount: draftRoutePlans.length,
         trackingCount: todaySchedules.filter((schedule) =>
           ["tracking", "on_the_way"].includes(schedule.status)
         ).length,
-        proximityPendingCount: todaySchedules.filter((schedule) => schedule.status === "proximity_pending").length,
-        followupPendingCount: todaySchedules.filter((schedule) => schedule.status === "followup_pending").length,
+        pausedCount: todaySchedules.filter((schedule) => schedule.status === "paused").length,
         urgentCount: todaySchedules.filter((schedule) => schedule.last_feedback_code === "urgent").length,
-        delayedCount,
         unrecordedCount: todaySchedules.filter(
           (schedule) =>
             schedule.status === "completed" &&
             !db.visit_records.some((record) => record.visit_schedule_id === schedule.id)
         ).length,
-        totalPatients: db.patients.length,
-        rescheduleCount: db.reschedule_actions.filter((item) =>
-          ["pending", "draft"].includes(item.status)
-        ).length,
-        leaveRequests: db.leave_requests,
-        exceptionSchedules: db.visit_schedules.filter((schedule) =>
-          todayScheduleIds.has(schedule.id) &&
-          [
-            "rescheduled",
-            "cancelled",
-            "preparing",
-            "on_the_way",
-            "tracking",
-            "proximity_pending",
-            "followup_pending",
-            "issue_pending"
-          ].includes(schedule.status)
-        )
+        rescheduleCount: pendingRescheduleActions.length,
+        pendingLeaveRequests,
+        pendingRescheduleActions,
+        draftRoutePlans,
+        exceptionSchedules
       };
     },
     getLeaveRequests() {

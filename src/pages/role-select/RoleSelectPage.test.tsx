@@ -18,6 +18,9 @@ describe("RoleSelectPage", () => {
     expect(screen.getByText("行政管理")).toBeInTheDocument();
     expect(screen.getByText("共用行政帳號")).toBeInTheDocument();
     expect(screen.getByText("行政人員")).toBeInTheDocument();
+    expect(
+      screen.getByText(/醫師登入後會立即要求手機瀏覽器定位分享/)
+    ).toBeInTheDocument();
     expect(screen.getAllByText(/預設密碼為 `0000`/).length).toBeGreaterThan(0);
     expect(screen.getAllByRole("button", { name: "登入並進入" }).length).toBe(2);
   });

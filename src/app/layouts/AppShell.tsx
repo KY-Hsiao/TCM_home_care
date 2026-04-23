@@ -30,6 +30,16 @@ type ContactFeedback = {
   message: string;
 };
 
+function resolveDoctorLocationBannerTone(status: DoctorLocationSyncState["status"]) {
+  if (status === "sharing") {
+    return "border-emerald-200 bg-emerald-50 text-emerald-800";
+  }
+  if (status === "requesting" || status === "idle") {
+    return "border-amber-200 bg-amber-50 text-amber-800";
+  }
+  return "border-rose-200 bg-rose-50 text-rose-800";
+}
+
 function sortByLatest<T extends { updated_at?: string; sent_at?: string | null; scheduled_send_at?: string; due_at?: string }>(
   items: T[]
 ) {
@@ -50,6 +60,7 @@ export function AppShell() {
   const {
     db,
     repositories,
+    services,
     session,
     logout,
     changePassword,
@@ -67,12 +78,6 @@ export function AppShell() {
       : null;
   const navItems = shellRole ? navigationByRole[shellRole] : [];
   const isAuthenticated = shellRole ? isAuthenticatedForRole(shellRole) : true;
-  const shellTitle =
-    shellRole === "doctor"
-      ? "居家醫師操作視圖"
-      : shellRole === "admin"
-        ? "行政管理協作視圖"
-        : "系統共用檢視";
   const currentDoctor = doctors.find((doctor) => doctor.id === session.activeDoctorId);
   const currentAdmin = admins.find((admin) => admin.id === session.activeAdminId) ?? admins[0];
   const currentUserId = shellRole === "doctor" ? session.activeDoctorId : session.activeAdminId;
@@ -82,8 +87,65 @@ export function AppShell() {
       : shellRole === "admin"
         ? "行政人員"
         : undefined;
+  const activeDoctorRoutePlan =
+    shellRole === "doctor"
+      ? session.activeRoutePlanId
+        ? repositories.visitRepository.getSavedRoutePlanById(session.activeRoutePlanId)
+        : repositories.visitRepository.getActiveRoutePlan(session.activeDoctorId)
+      : undefined;
+  const doctorRouteSchedules =
+    shellRole === "doctor"
+      ? repositories.visitRepository.getDoctorRouteSchedules(
+          session.activeDoctorId,
+          activeDoctorRoutePlan?.id ?? null
+        )
+      : [];
+  const activeDoctorSchedule =
+    shellRole === "doctor"
+      ? doctorRouteSchedules.find((schedule) =>
+          ["on_the_way", "tracking", "proximity_pending", "arrived", "in_treatment"].includes(schedule.status)
+        ) ??
+        doctorRouteSchedules.find((schedule) => {
+          const record = repositories.visitRepository.getVisitRecordByScheduleId(schedule.id);
+          return isVisitUnlocked(doctorRouteSchedules, schedule.id, record) && !isVisitFinished(schedule.status);
+        }) ??
+        null
+      : null;
+  const activeDoctorScheduleDetail =
+    activeDoctorSchedule && shellRole === "doctor"
+      ? repositories.visitRepository.getScheduleDetail(activeDoctorSchedule.id)
+      : undefined;
+  const latestDoctorLocation =
+    shellRole === "doctor"
+      ? repositories.visitRepository
+          .getDoctorLocationLogs(session.activeDoctorId)
+          .sort((left, right) => new Date(right.recorded_at).getTime() - new Date(left.recorded_at).getTime())[0]
+      : undefined;
+  const doctorNavigationSummaryItems =
+    shellRole === "doctor" && location.pathname.startsWith("/doctor/navigation")
+      ? [
+          `目前帳號：${currentDoctor?.name ?? "未指定醫師"}`,
+          `定位座標：${
+            latestDoctorLocation
+              ? services.maps.buildCoordinateLabel(latestDoctorLocation.latitude, latestDoctorLocation.longitude)
+              : "尚未取得精確座標"
+          }`,
+          `最後更新：${
+            latestDoctorLocation ? formatDateTimeFull(latestDoctorLocation.recorded_at) : "尚未回傳"
+          }`,
+          `定位精度：${latestDoctorLocation ? `${Math.round(latestDoctorLocation.accuracy)} 公尺` : "尚未回傳"}`,
+          `資料來源：${latestDoctorLocation?.source ?? "等待定位中"}`,
+          activeDoctorSchedule && activeDoctorScheduleDetail
+            ? `同步案件：第 ${activeDoctorSchedule.route_order} 站 / ${activeDoctorScheduleDetail.patient.name}`
+            : activeDoctorRoutePlan && doctorRouteSchedules.every((schedule) => isVisitFinished(schedule.status))
+              ? "同步案件：返院導航"
+              : "同步案件：等待路線"
+        ]
+      : [];
+  const isDoctorShell = shellRole === "doctor";
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
   const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
+  const [isDoctorQuickSummaryOpen, setIsDoctorQuickSummaryOpen] = useState(false);
   const [passwordForm, setPasswordForm] = useState({
     currentPassword: "",
     nextPassword: "",
@@ -121,7 +183,7 @@ export function AppShell() {
     if (typeof navigator === "undefined" || !("geolocation" in navigator)) {
       setDoctorLocationSync({
         status: "unsupported",
-        message: "目前裝置不支援瀏覽器定位。",
+        message: "目前未取得定位分享：這台裝置不支援瀏覽器定位，行政端無法看到即時位置。",
         lastUpdatedAt: null
       });
       return;
@@ -129,7 +191,7 @@ export function AppShell() {
 
     setDoctorLocationSync({
       status: "requesting",
-      message: "正在向醫師端要求位置授權。",
+      message: "醫師登入後正在要求定位授權；若未允許定位，行政端將無法看到即時位置。",
       lastUpdatedAt: null
     });
 
@@ -172,14 +234,14 @@ export function AppShell() {
         if (error.code === 1) {
           setDoctorLocationSync({
             status: "denied",
-            message: "醫師端尚未允許定位，行政端目前無法看到即時位置。",
+            message: "目前未取得定位分享：醫師端尚未允許定位，行政端目前無法看到即時位置。",
             lastUpdatedAt: null
           });
           return;
         }
         setDoctorLocationSync({
           status: "error",
-          message: "定位共享中斷，請確認手機定位與網路。",
+          message: "目前未取得定位分享：定位共享中斷，請確認手機定位與網路。",
           lastUpdatedAt: null
         });
       },
@@ -273,8 +335,13 @@ export function AppShell() {
       return null;
     }
 
+    const runtime = services.visitAutomation.getTrackingState(activeSchedule.id);
+    if (runtime?.watchStatus !== "running") {
+      return null;
+    }
+
     return repositories.visitRepository.getScheduleDetail(activeSchedule.id);
-  }, [repositories, session.activeDoctorId, shellRole]);
+  }, [repositories, services, session.activeDoctorId, shellRole]);
 
   const contactShortcut = useMemo(() => {
     if (!shellRole) {
@@ -440,31 +507,55 @@ export function AppShell() {
   }
 
   return (
-    <div className="min-h-screen bg-brand-sand text-brand-ink">
-      <div className="mx-auto grid min-h-screen max-w-[1600px] gap-6 px-4 py-4 lg:grid-cols-[280px_1fr]">
-        <aside className="rounded-[2rem] border border-white/70 bg-brand-ink p-6 text-white shadow-card">
+    <div className="min-h-dvh bg-brand-sand text-brand-ink">
+      <div
+        className={`mx-auto grid min-h-dvh max-w-[1600px] items-start ${
+          isDoctorShell ? "gap-2 px-2 py-2 lg:grid-cols-[280px_1fr] lg:gap-3 lg:px-3 lg:py-3" : "gap-6 px-4 py-4 lg:grid-cols-[280px_1fr]"
+        }`}
+      >
+        <aside
+          className={`border border-white/70 bg-brand-ink text-white shadow-card ${
+            isDoctorShell
+              ? "rounded-[1.35rem] p-3 pb-2.5 lg:rounded-[2rem] lg:p-6"
+              : "rounded-[2rem] p-6"
+          }`}
+        >
           <div>
-            <p className="text-sm tracking-[0.3em] text-brand-sand/70">TCM HOME CARE</p>
-            <h1 className="mt-2 text-2xl font-bold">中醫居家醫療輔助系統</h1>
-            <p className="mt-2 text-sm text-brand-sand/80">
-              先以假資料跑通排程、訪視、通知與行政協作流程。
+            <p className={`tracking-[0.3em] text-brand-sand/70 ${isDoctorShell ? "text-xs" : "text-sm"}`}>
+              TCM HOME CARE
+            </p>
+            <h1 className={`mt-1.5 font-bold ${isDoctorShell ? "text-lg leading-tight lg:mt-2 lg:text-2xl" : "text-2xl"}`}>
+              中醫居家醫療輔助系統
+            </h1>
+            <p className={`mt-1.5 text-brand-sand/80 ${isDoctorShell ? "text-[11px] lg:mt-2 lg:text-sm" : "text-sm"}`}>
+              {shellRole === "doctor"
+                ? "這是醫師端介面。"
+                : shellRole === "admin"
+                  ? "這是行政端介面。"
+                  : "這是系統共用介面。"}
             </p>
           </div>
 
-          <nav className="mt-6 space-y-2">
+          <nav
+            className={
+              isDoctorShell
+                ? "mt-3 flex gap-2 overflow-x-auto pb-1 lg:mt-6 lg:block lg:space-y-2 lg:overflow-visible lg:pb-0"
+                : "mt-6 space-y-2"
+            }
+          >
             {navItems.map((item) => (
               <NavLink
                 key={item.to}
                 to={item.to}
                 className={({ isActive }) =>
-                  `block rounded-3xl px-4 py-3 transition ${
+                  `${isDoctorShell ? "min-w-[104px] shrink-0 rounded-2xl px-3 py-2 text-sm lg:block lg:min-w-0 lg:rounded-3xl lg:px-4 lg:py-3" : "block rounded-3xl px-4 py-3"} transition ${
                     isActive ? "bg-white text-brand-ink" : "bg-white/5 hover:bg-white/10"
                   }`
                 }
               >
                 <div className="font-semibold">{item.label}</div>
                 <div
-                  className={`mt-1 text-xs ${
+                  className={`${isDoctorShell ? "mt-1 hidden text-[11px] lg:block" : "mt-1 text-xs"} ${
                     location.pathname === item.to ? "text-slate-500" : "text-brand-sand/70"
                   }`}
                 >
@@ -473,131 +564,174 @@ export function AppShell() {
               </NavLink>
             ))}
           </nav>
-
-          <div className="mt-6 space-y-3 rounded-3xl bg-white/10 p-4 text-sm">
-            <p className="font-semibold">模組入口</p>
-            <NavLink to="/demo-overview" className="block rounded-2xl bg-white/5 px-3 py-2">
-              系統總覽與假資料說明
-            </NavLink>
-            <NavLink to="/maps/overview" className="block rounded-2xl bg-white/5 px-3 py-2">
-              地圖與定位預留
-            </NavLink>
-          </div>
-        </aside>
-
-        <div className="space-y-4">
-          <header className="rounded-[2rem] border border-white/70 bg-white/90 p-5 shadow-card backdrop-blur">
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-              <div>
-                <p className="text-sm text-brand-moss">Web Demo Session</p>
-                <h2 className="text-2xl font-bold">{shellTitle}</h2>
-                <p className="mt-1 text-sm text-slate-500">
-                  {shellRole === "doctor"
-                    ? `目前登入醫師：${currentUserName ?? "未登入"}`
-                    : shellRole === "admin"
-                      ? `目前登入行政：${currentUserName ?? "未登入"}`
-                      : "系統共用頁面"}
-                </p>
-              </div>
-              <div className="grid gap-3 md:grid-cols-[160px_160px_auto_auto]">
+          {shellRole === "doctor" ? (
+            <div className="mt-3 space-y-2.5 lg:mt-6 lg:space-y-3">
+              <div className="rounded-2xl bg-white/10 p-2.5 text-sm lg:rounded-3xl lg:p-4">
                 <button
                   type="button"
-                  onClick={() => setIsNotificationOpen(true)}
-                  className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-brand-ink"
+                  onClick={handleLogout}
+                  className="w-full rounded-2xl bg-white px-4 py-2 font-semibold text-brand-ink lg:py-2.5"
                 >
-                  站內通知 {notificationItems.length > 0 ? `(${notificationItems.length})` : ""}
+                  登出
                 </button>
-                {shellRole ? (
+              </div>
+              <div className="rounded-[1.35rem] bg-white/95 p-3 pb-2.5 text-brand-ink shadow-sm lg:rounded-[1.75rem] lg:p-5">
+                <div className="text-[13px] text-slate-500 lg:text-sm">
+                  目前登入醫師：{currentUserName ?? "未登入"}
+                </div>
+                <div className="mt-2.5 grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsNotificationOpen(true)}
+                    className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-brand-ink lg:py-2.5"
+                  >
+                    站內通知 {notificationItems.length > 0 ? `(${notificationItems.length})` : ""}
+                  </button>
                   <button
                     type="button"
                     onClick={() => {
                       setPasswordMessage(null);
                       setIsPasswordModalOpen(true);
                     }}
-                    className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-brand-ink"
+                    className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-brand-ink lg:py-2.5"
                   >
                     修改密碼
                   </button>
-                ) : null}
-                <button
-                  type="button"
-                  onClick={resetMockData}
-                  className="rounded-2xl bg-brand-coral px-4 py-3 text-sm font-semibold text-white"
-                >
-                  重置假資料
-                </button>
-                {shellRole ? (
                   <button
                     type="button"
-                    onClick={handleLogout}
-                    className="rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white"
+                    onClick={resetMockData}
+                    className="col-span-2 rounded-2xl bg-brand-coral px-4 py-2 text-sm font-semibold text-white lg:py-2.5"
                   >
-                    登出
+                    重置假資料
+                  </button>
+                </div>
+                {doctorNavigationSummaryItems.length > 0 ? (
+                  <button
+                    type="button"
+                    onClick={() => setIsDoctorQuickSummaryOpen(true)}
+                    className="mt-2.5 w-full rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-brand-ink lg:mt-3 lg:py-2.5"
+                  >
+                    快捷摘要
                   </button>
                 ) : null}
+                <div
+                  className={`mt-2.5 rounded-2xl border px-4 py-2 text-sm ${resolveDoctorLocationBannerTone(
+                    doctorLocationSync.status
+                  )} lg:mt-3 lg:py-2.5`}
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
+                    <div className="min-w-0">
+                      <p className="font-semibold text-brand-ink">醫師手機定位共享</p>
+                      <p className="mt-0.5 text-xs leading-4 lg:leading-5">{doctorLocationSync.message}</p>
+                    </div>
+                    <p className="shrink-0 text-[11px] text-slate-500">
+                      最後更新：{formatDateTimeFull(doctorLocationSync.lastUpdatedAt)}
+                    </p>
+                  </div>
+                </div>
               </div>
             </div>
-            {shellRole === "doctor" ? (
-              <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-                <p className="font-semibold text-brand-ink">醫師手機定位共享</p>
-                <p className="mt-1">{doctorLocationSync.message}</p>
-                <p className="mt-1 text-xs text-slate-500">
-                  最後更新：{formatDateTimeFull(doctorLocationSync.lastUpdatedAt)}
-                </p>
-              </div>
-            ) : null}
-            {shellRole === "admin" && contactShortcut ? (
-              <div className="mt-4 flex flex-wrap items-end gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-                <label className="block min-w-[220px]">
-                  <span className="mb-1 block font-medium text-brand-ink">快捷聯絡醫師</span>
-                  <select
-                    aria-label="快捷聯絡醫師"
-                    value={session.activeDoctorId}
-                    onChange={(event) => setActiveDoctorId(event.target.value)}
-                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
-                  >
-                    {doctors.map((doctor) => (
-                      <option key={doctor.id} value={doctor.id}>
-                        {doctor.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <button
-                  type="button"
-                  onClick={() => {
-                    void handleAdminContactDoctor();
-                  }}
-                  disabled={isContactingDoctor}
-                  className="rounded-full bg-brand-forest px-4 py-3 text-sm font-semibold text-white"
-                >
-                  {isContactingDoctor ? "連線中..." : contactShortcut.primaryLabel}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => navigate("/doctor/location")}
-                  className="rounded-full border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-brand-ink"
-                >
-                  {contactShortcut.secondaryLabel}
-                </button>
-                <p className="text-xs text-slate-500">
-                  目前目標：{contactShortcut.contactName} / {contactShortcut.phone} / LINE 搜尋：
-                  {"lineSearchKeyword" in contactShortcut && contactShortcut.lineSearchKeyword
-                    ? contactShortcut.lineSearchKeyword
-                    : "未設定"}
-                </p>
-                {adminContactFeedback ? (
-                  <p
-                    className={`text-xs ${
-                      adminContactFeedback.tone === "success" ? "text-emerald-700" : "text-amber-700"
-                    }`}
-                  >
-                    {adminContactFeedback.message}
+          ) : null}
+        </aside>
+
+        <div className={`${isDoctorShell ? "space-y-3 lg:space-y-4" : "space-y-4"}`}>
+          {shellRole !== "doctor" ? (
+            <header className="rounded-[2rem] border border-white/70 bg-white/90 p-5 shadow-card backdrop-blur">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                  <p className="text-sm text-brand-moss">Web Demo Session</p>
+                  <h2 className="text-2xl font-bold">行政管理協作視圖</h2>
+                  <p className="mt-1 text-sm text-slate-500">
+                    {shellRole === "admin" ? `目前登入行政：${currentUserName ?? "未登入"}` : "系統共用頁面"}
                   </p>
-                ) : null}
+                </div>
+                <div className="grid gap-2 md:grid-cols-[160px_160px_auto_auto]">
+                  <button
+                    type="button"
+                    onClick={() => setIsNotificationOpen(true)}
+                    className="rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-brand-ink"
+                  >
+                    站內通知 {notificationItems.length > 0 ? `(${notificationItems.length})` : ""}
+                  </button>
+                  {shellRole ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPasswordMessage(null);
+                        setIsPasswordModalOpen(true);
+                      }}
+                      className="rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-brand-ink"
+                    >
+                      修改密碼
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={resetMockData}
+                    className="rounded-2xl bg-brand-coral px-4 py-2.5 text-sm font-semibold text-white"
+                  >
+                    重置假資料
+                  </button>
+                  {shellRole ? (
+                    <button
+                      type="button"
+                      onClick={handleLogout}
+                      className="rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white"
+                    >
+                      登出
+                    </button>
+                  ) : null}
+                </div>
               </div>
-            ) : null}
-          </header>
+              {shellRole === "admin" && contactShortcut && location.pathname.startsWith("/admin/doctor-tracking") ? (
+                <div className="mt-4 flex flex-wrap items-end gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                  <label className="block min-w-[220px]">
+                    <span className="mb-1 block font-medium text-brand-ink">快捷聯絡醫師</span>
+                    <select
+                      aria-label="快捷聯絡醫師"
+                      value={session.activeDoctorId}
+                      onChange={(event) => setActiveDoctorId(event.target.value)}
+                      className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
+                    >
+                      {doctors.map((doctor) => (
+                        <option key={doctor.id} value={doctor.id}>
+                          {doctor.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void handleAdminContactDoctor();
+                    }}
+                    disabled={isContactingDoctor}
+                    className="rounded-full bg-brand-forest px-4 py-3 text-sm font-semibold text-white"
+                  >
+                    {isContactingDoctor ? "連線中..." : contactShortcut.primaryLabel}
+                  </button>
+                  <p className="text-xs text-slate-500">
+                    目前目標：{contactShortcut.contactName} / {contactShortcut.phone} / LINE 搜尋：
+                    {"lineSearchKeyword" in contactShortcut && contactShortcut.lineSearchKeyword
+                      ? contactShortcut.lineSearchKeyword
+                      : "未設定"}
+                  </p>
+                  <p className="text-xs text-slate-500">
+                    醫師定位追蹤固定留在行政端頁面內查看；除非先登出，否則不會切換到醫師端操作介面。
+                  </p>
+                  {adminContactFeedback ? (
+                    <p
+                      className={`text-xs ${
+                        adminContactFeedback.tone === "success" ? "text-emerald-700" : "text-amber-700"
+                      }`}
+                    >
+                      {adminContactFeedback.message}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+            </header>
+          ) : null}
           <main>
             <Outlet />
           </main>
@@ -642,6 +776,31 @@ export function AppShell() {
             <p className="mt-2 text-[11px] text-slate-500">
               Google Maps 會另開分頁或外部 App；系統頁面內會持續保留這個求助按鈕。
             </p>
+          </div>
+        </div>
+      ) : null}
+
+      {shellRole === "doctor" && isDoctorQuickSummaryOpen ? (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/45 p-4">
+          <div className="w-full max-w-lg rounded-[1.5rem] bg-white p-5 shadow-2xl lg:rounded-[2rem] lg:p-6">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <p className="text-sm font-medium text-brand-coral">快捷摘要</p>
+                <h2 className="mt-1 text-xl font-semibold text-brand-ink">導航同步摘要</h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsDoctorQuickSummaryOpen(false)}
+                className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-600 ring-1 ring-slate-200"
+              >
+                關閉
+              </button>
+            </div>
+            <div className="mt-4 space-y-3 rounded-[1.25rem] border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+              {doctorNavigationSummaryItems.map((item) => (
+                <p key={item}>{item}</p>
+              ))}
+            </div>
           </div>
         </div>
       ) : null}

@@ -41,10 +41,10 @@ export function DemoOverviewPage() {
         <div className="grid gap-4 md:grid-cols-3">
           <div className="rounded-2xl bg-slate-50 p-4">
             <div className="flex items-center justify-between">
-              <p className="font-semibold text-brand-ink">ContactLog / 流程紀錄</p>
+              <p className="font-semibold text-brand-ink">通知任務</p>
               <Badge value="pending" compact />
             </div>
-            <p className="mt-2 text-sm text-slate-600">通知任務功能已停用，目前以 ContactLog、訪視紀錄與流程資料為主。</p>
+            <p className="mt-2 text-sm text-slate-600">通知任務功能已停用，目前以排程、定位與訪視資料為主。</p>
           </div>
           <div className="rounded-2xl bg-slate-50 p-4">
             <div className="flex items-center justify-between">
@@ -58,7 +58,7 @@ export function DemoOverviewPage() {
               <p className="font-semibold text-brand-ink">個案資料</p>
               <Badge value="scheduled" compact />
             </div>
-            <p className="mt-2 text-sm text-slate-600">目前以個案、排程、定位與流程紀錄為主，不再維護家屬聯絡模組。</p>
+            <p className="mt-2 text-sm text-slate-600">目前以個案、排程與定位為主，不再維護家屬聯絡模組。</p>
           </div>
         </div>
       </Panel>

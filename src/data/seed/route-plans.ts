@@ -1,4 +1,5 @@
 import type { SavedRoutePlan, VisitSchedule } from "../../domain/models";
+import { patientsSeed } from "./patients";
 import { visitSchedulesSeed } from "./visits";
 
 const defaultHospitalDestination = {
@@ -6,6 +7,9 @@ const defaultHospitalDestination = {
   latitude: 22.88794,
   longitude: 120.48341
 };
+
+const patientNameMap = new Map(patientsSeed.map((patient) => [patient.id, patient.name]));
+const todayRouteDate = new Date().toISOString().slice(0, 10);
 
 function resolveScheduleServiceTimeSlot(schedule: VisitSchedule): "上午" | "下午" {
   if (schedule.service_time_slot.includes("上午")) {
@@ -135,6 +139,7 @@ export const savedRoutePlansSeed: SavedRoutePlan[] = Array.from(
       );
     const firstSchedule = orderedSchedules[0];
     const metrics = calculateRouteMetrics(orderedSchedules);
+    const isExecutingRoute = firstSchedule.scheduled_start_at.slice(0, 10) === todayRouteDate;
     return {
       id: `route-${groupId}`,
       doctor_id: firstSchedule.assigned_doctor_id,
@@ -160,11 +165,11 @@ export const savedRoutePlansSeed: SavedRoutePlan[] = Array.from(
                 : schedule.status === "paused"
                   ? ("paused" as const)
                   : ("scheduled" as const),
-        patient_name: schedule.patient_id,
+        patient_name: patientNameMap.get(schedule.patient_id) ?? schedule.patient_id,
         address: schedule.address_snapshot
       })),
-      execution_status: "executing" as const,
-      executed_at: firstSchedule.updated_at,
+      execution_status: isExecutingRoute ? ("executing" as const) : ("archived" as const),
+      executed_at: isExecutingRoute ? firstSchedule.updated_at : null,
       start_address: defaultHospitalDestination.address,
       start_latitude: defaultHospitalDestination.latitude,
       start_longitude: defaultHospitalDestination.longitude,

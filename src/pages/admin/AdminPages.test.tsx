@@ -2,15 +2,17 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
+import { SESSION_STORAGE_KEY } from "../../app/auth-storage";
 import { AppProviders } from "../../app/providers";
 import { MOCK_DB_STORAGE_KEY } from "../../data/mock/db";
+import { DoctorLocationPage } from "../doctor/DoctorPages";
 import { DESKTOP_LINE_SETTINGS_STORAGE_KEY } from "../../services/line/desktop-line-settings";
 import {
   AdminDashboardPage,
   AdminGuidePage,
   AdminDoctorTrackingPage,
-  AdminNotificationsPage,
   AdminPatientsPage,
+  AdminRemindersPage,
   AdminSchedulesPage,
   AdminStaffPage
 } from "./AdminPages";
@@ -23,172 +25,164 @@ function renderWithProviders(page: ReactNode) {
   );
 }
 
+function selectScheduleFilters(routeDate = "2026-04-25") {
+  fireEvent.change(screen.getByRole("combobox", { name: "篩選醫師" }), {
+    target: { value: "doc-001" }
+  });
+  fireEvent.change(screen.getByRole("combobox", { name: "篩選星期" }), {
+    target: { value: "星期三" }
+  });
+  fireEvent.change(screen.getByRole("combobox", { name: "篩選時段" }), {
+    target: { value: "上午" }
+  });
+  fireEvent.change(screen.getByLabelText("路線日期"), {
+    target: { value: routeDate }
+  });
+}
+
 describe("AdminPages", () => {
   beforeEach(() => {
     window.localStorage.clear();
     vi.restoreAllMocks();
   });
 
-  it("AdminSchedulesPage 會先以時段為單位顯示，點進去再看路線明細", () => {
+  it("AdminSchedulesPage 會依醫師、星期與時段自動列出符合條件的個案", () => {
     renderWithProviders(<AdminSchedulesPage />);
 
-    expect(
-      screen.getByText(/先選醫師，再選星期幾，最後再選上午或下午。排程管理已直接整合自動排序、拖曳手動排序、導航接力與起終點設定/)
-    ).toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: "篩選星期" })).toBeInTheDocument();
+    selectScheduleFilters();
 
-    const targetSlotButton = screen
-      .getAllByRole("button")
-      .find((button) => button.textContent?.includes("蕭坤元醫師"));
-
-    if (!targetSlotButton) {
-      throw new Error("找不到蕭坤元醫師的時段按鈕。");
-    }
-
-    fireEvent.click(targetSlotButton);
-
-    expect(screen.getByRole("heading", { name: /蕭坤元醫師/ })).toBeInTheDocument();
-    expect(screen.getByText("路線明細與導航接力")).toBeInTheDocument();
-    expect(screen.getByText("第 1 站")).toBeInTheDocument();
-    expect(screen.getAllByDisplayValue("旗山醫院").length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/拖曳排序/).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/(定位|位置)關鍵字/).length).toBeGreaterThan(0);
+    expect(screen.getByText("共 8 位")).toBeInTheDocument();
+    expect(screen.getByLabelText("王麗珠 勾選")).toBeChecked();
+    expect(screen.getByLabelText("陳正雄 勾選")).toBeChecked();
+    expect(screen.getAllByText("高雄市旗山區延平一路 128 號").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("高雄市旗山區中華路 76 號").length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("button", { name: "結案" })).toHaveLength(8);
   });
 
-  it("AdminSchedulesPage 可在路線明細中模擬取消並顯示最近操作", () => {
-    renderWithProviders(<AdminSchedulesPage />);
-
-    const targetSlotButton = screen
-      .getAllByRole("button")
-      .find((button) => button.textContent?.includes("陳正雄") && button.textContent?.includes("蕭坤元醫師"));
-
-    if (!targetSlotButton) {
-      throw new Error("找不到陳正雄所在的時段按鈕。");
-    }
-
-    fireEvent.click(targetSlotButton);
-    fireEvent.click(screen.getAllByRole("button", { name: "模擬取消" })[0]);
-
-    expect(screen.getByRole("status")).toHaveTextContent("已模擬取消本次排程");
-  });
-
-  it("已完成或已取消的路線站點動作按鈕會停用", () => {
+  it("AdminSchedulesPage 選醫師後只顯示該醫師可服務的星期與時段", () => {
     renderWithProviders(<AdminSchedulesPage />);
 
     fireEvent.change(screen.getByRole("combobox", { name: "篩選醫師" }), {
       target: { value: "doc-001" }
     });
-    fireEvent.change(screen.getByRole("combobox", { name: "篩選星期" }), {
-      target: { value: "all" }
-    });
 
-    const completedSlotButton = screen
-      .getAllByRole("button")
-      .find((button) => button.textContent?.includes("王麗珠") && button.textContent?.includes("蕭坤元醫師"));
-
-    if (!completedSlotButton) {
-      throw new Error("找不到王麗珠所在的已完成時段按鈕。");
-    }
-
-    fireEvent.click(completedSlotButton);
-
-    expect(screen.getAllByRole("button", { name: "模擬改期" })[0]).toBeDisabled();
-    expect(screen.getAllByRole("button", { name: "模擬改派" })[0]).toBeDisabled();
-    expect(screen.getAllByRole("button", { name: "模擬取消" })[0]).toBeDisabled();
-  });
-
-  it("AdminNotificationsPage 會顯示通知任務已停用說明", () => {
-    renderWithProviders(<AdminNotificationsPage />);
-
-    expect(screen.getByText("通知任務已停用")).toBeInTheDocument();
-    expect(
-      screen.getByText("目前系統不再建立家屬聯絡、外部綁定或任何通訊軟體通知任務，流程統一改由排程、定位與 ContactLog 管理。")
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText("出發、抵達、治療完成與路線調整目前都直接記錄在排程、定位與訪視資料內，不另外建立通知任務。")
-    ).toBeInTheDocument();
-  });
-
-  it("AdminNotificationsPage 保留 ContactLog 回寫預覽與紀錄說明", () => {
-    renderWithProviders(<AdminNotificationsPage />);
-
-    expect(
-      screen.getByText("目前系統不再建立家屬聯絡、外部綁定或任何通訊軟體通知任務，流程統一改由排程、定位與 ContactLog 管理。")
-    ).toBeInTheDocument();
-    expect(screen.getByText("ContactLog 回寫預覽與紀錄")).toBeInTheDocument();
-    expect(
-      screen.getByText("外部 webhook、互動按鈕與家屬表單提交流程已移除；但 ContactLog 的流程紀錄仍保留，方便行政追蹤。")
-    ).toBeInTheDocument();
-    expect(screen.queryByText("標記待回覆")).not.toBeInTheDocument();
-  });
-
-  it("AdminSchedulesPage 可依時間或距離自動排序並顯示行車總時間與距離", () => {
-    renderWithProviders(<AdminSchedulesPage />);
-
-    fireEvent.change(screen.getByRole("combobox", { name: "自動排序依據" }), {
-      target: { value: "distance" }
-    });
-    fireEvent.click(screen.getByRole("button", { name: "套用自動排序" }));
-    expect(screen.getByRole("status")).toHaveTextContent("最少距離");
-    expect(screen.getAllByText(/行車總時間/).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/行車總距離/).length).toBeGreaterThan(0);
-    fireEvent.click(screen.getByRole("button", { name: "儲存此時段路線" }));
-    expect(screen.getByRole("status")).toHaveTextContent("醫師端可直接選擇這條路線導航");
-    expect(screen.getAllByText(/路線/).length).toBeGreaterThan(0);
-
-    fireEvent.click(screen.getByRole("button", { name: "醫師出發，傳送第一站導航" }));
-    expect(screen.getByRole("status")).toHaveTextContent("第一站導航");
-  });
-
-  it("AdminSchedulesPage 會用下拉選單顯示已儲存路線，避免佔用過多空間", () => {
-    renderWithProviders(<AdminSchedulesPage />);
-
-    expect(screen.getByRole("combobox", { name: "已儲存的路線" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /2026-.*路線/ })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "刪除這條路線" })).toBeInTheDocument();
-  });
-
-  it("AdminSchedulesPage 可從已儲存路線下拉選單直接切到對應時段並開啟查看", async () => {
-    renderWithProviders(<AdminSchedulesPage />);
-
-    const savedRouteSelect = screen.getByRole("combobox", { name: "已儲存的路線" });
-    const routeOptions = within(savedRouteSelect)
+    const weekdaySelect = screen.getByRole("combobox", { name: "篩選星期" });
+    const weekdayOptions = within(weekdaySelect)
       .getAllByRole("option")
-      .filter((option) => option.getAttribute("value"));
-    const targetOption = routeOptions[0];
+      .map((option) => option.textContent);
 
-    if (!targetOption) {
-      throw new Error("找不到可切換的已儲存路線。");
-    }
+    expect(weekdayOptions).toEqual(["請選擇星期", "星期三", "星期四"]);
 
-    const targetRouteId = targetOption.getAttribute("value");
-    const optionText = targetOption.textContent ?? "";
-    const [targetRouteName, targetRouteDate, targetServiceTimeSlot] = optionText.split("｜");
-
-    if (!targetRouteId || !targetRouteName || !targetRouteDate || !targetServiceTimeSlot) {
-      throw new Error("已儲存路線 option 格式不完整。");
-    }
-
-    const targetWeekday = String(new Date(targetRouteDate).getDay());
-    const differentWeekday = targetWeekday === "0" ? "1" : "0";
-    const differentTimeSlot = targetServiceTimeSlot === "上午" ? "下午" : "上午";
-
-    fireEvent.change(screen.getByRole("combobox", { name: "篩選星期" }), {
-      target: { value: differentWeekday }
+    fireEvent.change(weekdaySelect, {
+      target: { value: "星期三" }
     });
-    fireEvent.change(screen.getByRole("combobox", { name: "篩選時段" }), {
-      target: { value: differentTimeSlot }
-    });
+
+    const timeSlotSelect = screen.getByRole("combobox", { name: "篩選時段" });
+    const timeSlotOptions = within(timeSlotSelect)
+      .getAllByRole("option")
+      .map((option) => option.textContent);
+
+    expect(timeSlotOptions).toEqual(["請選擇時段", "上午"]);
+  });
+
+  it("AdminSchedulesPage 取消勾選後，個案會改成暫停且不進入路線排序", () => {
+    renderWithProviders(<AdminSchedulesPage />);
+
+    selectScheduleFilters();
+    fireEvent.click(screen.getByLabelText("王麗珠 勾選"));
+
+    expect(screen.getByLabelText("王麗珠 勾選")).not.toBeChecked();
+    expect(screen.queryByText("第 1 站 王麗珠")).not.toBeInTheDocument();
+    expect(screen.getByText("第 1 站 陳正雄")).toBeInTheDocument();
+    expect(screen.getByText("可執行 7 站")).toBeInTheDocument();
+    expect(screen.getAllByText("暫停").length).toBeGreaterThan(0);
+  });
+
+  it("AdminSchedulesPage 可儲存路線、清除頁面，再完整還原醫師、日期、勾選狀態與排序", async () => {
+    renderWithProviders(<AdminSchedulesPage />);
+
+    selectScheduleFilters();
+    fireEvent.click(screen.getByLabelText("王麗珠 勾選"));
+    fireEvent.click(screen.getAllByRole("button", { name: "下移" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "儲存路線" }));
+
+    expect(screen.getByRole("status")).toHaveTextContent("已儲存路線");
+    expect(screen.getByRole("combobox", { name: "已儲存的路線" })).toHaveValue(
+      "route-doc-001-2026-04-25-星期三-上午"
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "清除" }));
+
+    expect(screen.getByRole("combobox", { name: "篩選醫師" })).toHaveValue("");
+    expect(screen.getByRole("combobox", { name: "篩選星期" })).toHaveValue("");
+    expect(screen.getByRole("combobox", { name: "篩選時段" })).toHaveValue("");
+    expect(screen.getByLabelText("路線日期")).toHaveValue("");
+    expect(screen.getByText("共 0 位")).toBeInTheDocument();
+
     fireEvent.change(screen.getByRole("combobox", { name: "已儲存的路線" }), {
-      target: { value: targetRouteId }
+      target: { value: "route-doc-001-2026-04-25-星期三-上午" }
     });
 
     await waitFor(() => {
-      expect(screen.getByRole("combobox", { name: "篩選星期" })).toHaveValue(targetWeekday);
-      expect(screen.getByRole("combobox", { name: "篩選時段" })).toHaveValue(targetServiceTimeSlot);
-      expect(screen.getByRole("combobox", { name: "已儲存的路線" })).toHaveValue(targetRouteId);
-      expect(screen.getByRole("status")).toHaveTextContent(`已開啟 ${targetRouteName}`);
+      expect(screen.getByRole("combobox", { name: "篩選醫師" })).toHaveValue("doc-001");
+      expect(screen.getByRole("combobox", { name: "篩選星期" })).toHaveValue("星期三");
+      expect(screen.getByRole("combobox", { name: "篩選時段" })).toHaveValue("上午");
+      expect(screen.getByLabelText("路線日期")).toHaveValue("2026-04-25");
+      expect(screen.getByLabelText("王麗珠 勾選")).not.toBeChecked();
+      expect(screen.getByText("第 1 站 李美蘭")).toBeInTheDocument();
     });
+  });
+
+  it("AdminSchedulesPage 按下清除後會重置成初始狀態", () => {
+    renderWithProviders(<AdminSchedulesPage />);
+
+    selectScheduleFilters();
+    fireEvent.click(screen.getByRole("button", { name: "清除" }));
+
+    expect(screen.getByRole("status")).toHaveTextContent("已清除排程管理頁面內容");
+    expect(screen.getByRole("combobox", { name: "篩選醫師" })).toHaveValue("");
+    expect(screen.getByRole("combobox", { name: "篩選星期" })).toHaveValue("");
+    expect(screen.getByRole("combobox", { name: "篩選時段" })).toHaveValue("");
+    expect(screen.getByLabelText("路線日期")).toHaveValue("");
+    expect(screen.getByText("可執行 0 站")).toBeInTheDocument();
+  });
+
+  it("AdminSchedulesPage 按下實行路線後，醫師端可收到這次規劃路線", async () => {
+    const adminView = renderWithProviders(<AdminSchedulesPage />);
+
+    selectScheduleFilters("2026-04-25");
+    fireEvent.click(screen.getByRole("button", { name: "實行路線" }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent("醫師端會以這條路線作為本次執行清單")
+    );
+
+    adminView.unmount();
+    window.localStorage.setItem(
+      SESSION_STORAGE_KEY,
+      JSON.stringify({
+        role: "doctor",
+        activeDoctorId: "doc-001",
+        activeAdminId: "admin-001",
+        activeRoutePlanId: null,
+        authenticatedDoctorId: "doc-001",
+        authenticatedAdminId: null
+      })
+    );
+
+    renderWithProviders(<DoctorLocationPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText("即時導航")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /4月25日 星期三上午 \/ 8位/ })).toBeInTheDocument();
+    });
+  });
+
+  it("AdminSchedulesPage 會用下拉選單顯示已儲存路線", () => {
+    renderWithProviders(<AdminSchedulesPage />);
+
+    expect(screen.getByRole("combobox", { name: "已儲存的路線" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "刪除這條路線" })).toBeInTheDocument();
   });
 
   it("AdminSchedulesPage 可刪除已儲存路線", async () => {
@@ -229,11 +223,49 @@ describe("AdminPages", () => {
     });
   });
 
+  it("從排程頁結案後，個案管理頁會同步顯示結案結果", () => {
+    const scheduleView = renderWithProviders(<AdminSchedulesPage />);
+
+    selectScheduleFilters();
+    fireEvent.click(screen.getAllByRole("button", { name: "結案" })[0]);
+    expect(screen.getByRole("status")).toHaveTextContent("已結案 王麗珠");
+    expect(screen.queryByLabelText("王麗珠 勾選")).not.toBeInTheDocument();
+
+    scheduleView.unmount();
+    renderWithProviders(<AdminPatientsPage />);
+
+    const closedCard = screen.getByRole("button", { name: "編輯 王麗珠" }).closest("[data-patient-id='pat-001']");
+    expect(closedCard).toHaveAttribute("data-patient-status", "closed");
+    expect(closedCard?.className).toContain("bg-slate-100");
+  });
+
+  it("從個案管理頁結案後，排程頁不會再顯示該時段個案", () => {
+    const patientView = renderWithProviders(<AdminPatientsPage />);
+
+    fireEvent.click(screen.getByLabelText("王麗珠 勾選"));
+    fireEvent.click(screen.getByRole("button", { name: "結案" }));
+    expect(screen.getByRole("status")).toHaveTextContent("已結案 1 位個案");
+
+    patientView.unmount();
+    renderWithProviders(<AdminSchedulesPage />);
+    selectScheduleFilters();
+
+    expect(screen.queryByLabelText("王麗珠 勾選")).not.toBeInTheDocument();
+    expect(screen.getByText("共 7 位")).toBeInTheDocument();
+  });
+
   it("AdminDashboardPage 只保留行政儀表板，不在主內容區重複顯示醫師追蹤入口", () => {
     renderWithProviders(<AdminDashboardPage />);
 
     expect(screen.getByText("個案異常儀表板")).toBeInTheDocument();
     expect(screen.getByText("角色與任務儀表板")).toBeInTheDocument();
+    expect(screen.getAllByText("待實行路線").length).toBeGreaterThan(0);
+    expect(screen.getByText("待重排案件")).toBeInTheDocument();
+    expect(screen.getByText("暫停案件")).toBeInTheDocument();
+    expect(screen.getByText("待補紀錄")).toBeInTheDocument();
+    expect(screen.queryByText("待處理通知數")).not.toBeInTheDocument();
+    expect(screen.queryByText("待處理任務")).not.toBeInTheDocument();
+    expect(screen.queryByText("總提醒數")).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "醫師追蹤入口" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "打開醫師追蹤" })).not.toBeInTheDocument();
     expect(screen.queryByText("教學指引")).not.toBeInTheDocument();
@@ -250,6 +282,16 @@ describe("AdminPages", () => {
     expect(screen.getByText("最近移動軌跡")).toBeInTheDocument();
     expect(screen.getAllByText("已經過的地點").length).toBeGreaterThan(0);
     expect(screen.getByText("還沒有去的地點")).toBeInTheDocument();
+  });
+
+  it("AdminRemindersPage 會顯示與醫師同步的提醒內容", () => {
+    renderWithProviders(<AdminRemindersPage />);
+
+    expect(screen.getByText("提醒中心")).toBeInTheDocument();
+    expect(screen.getByText("出發前確認路線")).toBeInTheDocument();
+    expect(screen.getByText("檢查請假衝突")).toBeInTheDocument();
+    expect(screen.getAllByText("查看個案").length).toBeGreaterThan(0);
+    expect(screen.getByText("這裡會同步顯示醫師與行政共用的提醒內容；若有綁定案件，兩端看到的主題與內容會一致。")).toBeInTheDocument();
   });
 
   it("AdminGuidePage 會集中顯示登入、定位授權與角色設定說明", () => {
@@ -272,7 +314,7 @@ describe("AdminPages", () => {
 
     expect(screen.getByText("聯絡流程說明")).toBeInTheDocument();
     expect(
-      screen.getByText("目前系統不再提供家屬聯絡、綁定或外部通訊流程；行政首頁只保留排程、定位、角色與 ContactLog 流程紀錄。")
+      screen.getByText("目前系統不再提供家屬聯絡、綁定、外部通訊或流程紀錄；行政首頁只保留排程、定位與角色管理。")
     ).toBeInTheDocument();
   });
 
@@ -319,7 +361,7 @@ describe("AdminPages", () => {
     expect(screen.getByText("趙○華")).toBeInTheDocument();
   });
 
-  it("AdminPatientsPage 儲存個案後會自動排入服務時段", () => {
+  it("AdminPatientsPage 儲存個案後會提示改到排程管理頁建立或實行路線", () => {
     renderWithProviders(<AdminPatientsPage />);
 
     fireEvent.click(screen.getByRole("button", { name: "新增個案" }));
@@ -337,7 +379,7 @@ describe("AdminPages", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "儲存個案設定" }));
 
     expect(screen.getByRole("status")).toHaveTextContent("張○明");
-    expect(screen.getByRole("status")).toHaveTextContent("自動排入");
+    expect(screen.getByRole("status")).toHaveTextContent("請到排程管理頁建立或實行路線");
     expect(screen.queryByRole("dialog", { name: "新增個案視窗" })).not.toBeInTheDocument();
   });
 
@@ -370,7 +412,7 @@ describe("AdminPages", () => {
     });
     fireEvent.click(within(dialog).getByRole("button", { name: "儲存個案設定" }));
 
-    expect(screen.getByRole("status")).toHaveTextContent("個案非服務中，未自動排程");
+    expect(screen.getByRole("status")).toHaveTextContent("個案非服務中，未納入排程");
 
     fireEvent.click(screen.getByRole("button", { name: "編輯 王麗珠" }));
     dialog = screen.getByRole("dialog", { name: "王○珠 編輯資料" });

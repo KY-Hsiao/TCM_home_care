@@ -74,6 +74,20 @@ export const fourDiagnosisOptions = {
   ]
 } as const;
 
+export const medicalHistoryOptions = [
+  "相關外傷",
+  "中風",
+  "糖尿病",
+  "高血壓",
+  "高血脂",
+  "心臟病",
+  "退化性關節炎",
+  "下背痛",
+  "帕金森氏症",
+  "失智症",
+  "其他"
+] as const;
+
 export type FourDiagnosisSelections = {
   inspection_tags: string[];
   inspection_other: string;
@@ -88,6 +102,7 @@ export type FourDiagnosisSelections = {
 export type ReturnRecordDraftInput = FourDiagnosisSelections & {
   chiefComplaint: string;
   medicalHistory: string;
+  reminderNote?: string;
   treatmentStartTime: string;
   treatmentEndTime: string;
 };
@@ -110,6 +125,10 @@ function normalizeTagsWithOther(
 function joinTags(tags: string[], otherValue: string, orderedOptions: readonly string[]) {
   const normalized = normalizeTagsWithOther(tags, otherValue, orderedOptions);
   return normalized.length ? normalized.join("、") : "未勾選";
+}
+
+export function joinMedicalHistory(tags: string[], otherValue: string) {
+  return joinTags(tags, otherValue, medicalHistoryOptions);
 }
 
 function formatTimeRange(startValue: string, endValue: string) {
@@ -143,8 +162,11 @@ export function buildReturnRecordDraft(input: ReturnRecordDraftInput) {
     formatTimeRange(input.treatmentStartTime, input.treatmentEndTime),
     buildFourDiagnosisSummary(input),
     `主訴：${input.chiefComplaint || "未填寫"}`,
-    `病史：${input.medicalHistory || "未填寫"}`
-  ].join("\n");
+    `病史：${input.medicalHistory || "未填寫"}`,
+    input.reminderNote?.trim() ? `提醒：${input.reminderNote.trim()}` : ""
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 export function resolvePreviousMedicalHistory(record: VisitRecord | undefined, fallback = "") {
@@ -154,6 +176,37 @@ export function resolvePreviousMedicalHistory(record: VisitRecord | undefined, f
     record?.generated_record_text.match(/病史：(.+)/)?.[1] ||
     fallback
   );
+}
+
+export function buildPreviousMedicalHistorySelections(record: VisitRecord | undefined, fallback = "") {
+  const history = resolvePreviousMedicalHistory(record, fallback)
+    .split(/[、,\n]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  const selectedTags = medicalHistoryOptions.filter(
+    (option) =>
+      option !== "其他" &&
+      history.some((item) => item.includes(option))
+  );
+  const otherItem = history.find((item) => item.startsWith("其他："));
+  const hasGenericOther = history.includes("其他");
+  const unmatchedItems = history.filter(
+    (item) =>
+      !selectedTags.some((tag) => item.includes(tag)) &&
+      item !== "其他" &&
+      !item.startsWith("其他：")
+  );
+  const otherValue = otherItem?.replace(/^其他：/, "").trim() ?? unmatchedItems.join("、");
+  const tags =
+    hasGenericOther || Boolean(otherItem) || unmatchedItems.length > 0
+      ? [...selectedTags, "其他"]
+      : [...selectedTags];
+
+  return {
+    medical_history_tags: tags,
+    medical_history_other: otherValue
+  };
 }
 
 export function buildReturnVisitSummary(record: VisitRecord | undefined) {

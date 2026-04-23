@@ -162,17 +162,12 @@ function buildPatientDraft(patient?: Patient): Patient {
 export function AdminDashboardPage() {
   const { repositories, db } = useAppContext();
   const dashboard = repositories.staffingRepository.getAdminDashboard();
-  const doctorNotificationTasks = useMemo(
-    () => repositories.notificationRepository.getTasksByRecipientRole("doctor").slice(0, 4),
-    [repositories, db.notification_tasks]
-  );
-  const alertCount = dashboard.exceptionSchedules.length + dashboard.leaveRequests.length + doctorNotificationTasks.length;
 
   return (
     <div className="space-y-6">
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <StatCard label="今日訪視總數" value={dashboard.todayVisitTotal} hint="今日全部排程案件" />
-        <StatCard label="待處理通知數" value={dashboard.pendingNotificationCount} hint="院內流程通知仍在待送或待處理" />
+        <StatCard label="待實行路線" value={dashboard.draftRouteCount} hint="已儲存但尚未實行到醫師端的路線" />
         <StatCard label="追蹤中案件數" value={dashboard.trackingCount} hint="醫師已出發或正在追蹤中的案件" />
         <StatCard label="緊急處置數" value={dashboard.urgentCount} hint="醫師回覆緊急處置的案件" />
       </div>
@@ -195,12 +190,12 @@ export function AdminDashboardPage() {
               <p className="mt-2 text-2xl font-semibold text-brand-ink">{dashboard.exceptionSchedules.length}</p>
             </div>
             <div className="rounded-2xl border border-slate-200 bg-white p-4">
-              <p className="text-xs text-slate-500">追蹤中案件</p>
-              <p className="mt-2 text-2xl font-semibold text-brand-ink">{dashboard.trackingCount}</p>
+              <p className="text-xs text-slate-500">暫停案件</p>
+              <p className="mt-2 text-2xl font-semibold text-brand-ink">{dashboard.pausedCount}</p>
             </div>
             <div className="rounded-2xl border border-slate-200 bg-white p-4">
-              <p className="text-xs text-slate-500">總提醒數</p>
-              <p className="mt-2 text-2xl font-semibold text-brand-ink">{alertCount}</p>
+              <p className="text-xs text-slate-500">待補紀錄</p>
+              <p className="mt-2 text-2xl font-semibold text-brand-ink">{dashboard.unrecordedCount}</p>
             </div>
           </div>
           <div className="mt-4 space-y-3">
@@ -243,21 +238,21 @@ export function AdminDashboardPage() {
           <div className="grid gap-3 sm:grid-cols-3">
             <div className="rounded-2xl border border-slate-200 bg-white p-4">
               <p className="text-xs text-slate-500">待審請假</p>
-              <p className="mt-2 text-2xl font-semibold text-brand-ink">{dashboard.leaveRequests.length}</p>
+              <p className="mt-2 text-2xl font-semibold text-brand-ink">{dashboard.pendingLeaveRequests.length}</p>
             </div>
             <div className="rounded-2xl border border-slate-200 bg-white p-4">
-              <p className="text-xs text-slate-500">待處理任務</p>
-              <p className="mt-2 text-2xl font-semibold text-brand-ink">{doctorNotificationTasks.length}</p>
+              <p className="text-xs text-slate-500">待重排案件</p>
+              <p className="mt-2 text-2xl font-semibold text-brand-ink">{dashboard.rescheduleCount}</p>
             </div>
             <div className="rounded-2xl border border-slate-200 bg-white p-4">
-              <p className="text-xs text-slate-500">路線規劃</p>
-              <p className="mt-2 text-lg font-semibold text-brand-ink">已移到排程管理</p>
-              <p className="mt-1 text-xs text-slate-500">已移到排程管理處理</p>
+              <p className="text-xs text-slate-500">待實行路線</p>
+              <p className="mt-2 text-2xl font-semibold text-brand-ink">{dashboard.draftRoutePlans.length}</p>
+              <p className="mt-1 text-xs text-slate-500">已儲存但尚未送到醫師端</p>
             </div>
           </div>
           <div className="mt-4 grid gap-3 md:grid-cols-2">
             <div className="space-y-3">
-              {dashboard.leaveRequests.slice(0, 2).map((leave) => {
+              {dashboard.pendingLeaveRequests.slice(0, 2).map((leave) => {
                 const doctor = db.doctors.find((item) => item.id === leave.doctor_id);
                 return (
                   <div key={leave.id} className="rounded-2xl bg-slate-50 p-4 text-sm">
@@ -270,18 +265,34 @@ export function AdminDashboardPage() {
                   </div>
                 );
               })}
+              {dashboard.pendingLeaveRequests.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
+                  目前沒有待審請假。
+                </div>
+              ) : null}
             </div>
             <div className="space-y-3">
-              {doctorNotificationTasks.slice(0, 2).map((task) => (
-                <div key={task.id} className="rounded-2xl border border-slate-200 bg-white p-4 text-sm">
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="font-semibold text-brand-ink">{task.recipient_name}</p>
-                    <Badge value={task.status} compact />
+              {dashboard.pendingRescheduleActions.slice(0, 2).map((action) => {
+                const schedule = db.visit_schedules.find((item) => item.id === action.visit_schedule_id);
+                const patient = schedule
+                  ? db.patients.find((item) => item.id === schedule.patient_id)
+                  : undefined;
+                return (
+                  <div key={action.id} className="rounded-2xl border border-slate-200 bg-white p-4 text-sm">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="font-semibold text-brand-ink">{patient?.name ?? action.visit_schedule_id}</p>
+                      <Badge value={action.status} compact />
+                    </div>
+                    <p className="mt-2 text-slate-600">{formatDateTimeFull(action.new_start_at)}</p>
+                    <p className="mt-1 text-slate-500">{action.reason}</p>
                   </div>
-                  <p className="mt-2 text-slate-600">{task.trigger_type}</p>
-                  <p className="mt-1 text-slate-500">{task.preview_payload.body ?? "待發送導航 / 確認訊息"}</p>
+                );
+              })}
+              {dashboard.pendingRescheduleActions.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
+                  目前沒有待重排案件。
                 </div>
-              ))}
+              ) : null}
             </div>
           </div>
         </Panel>
@@ -289,7 +300,7 @@ export function AdminDashboardPage() {
 
       <Panel title="聯絡流程說明">
         <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-600">
-          目前系統不再提供家屬聯絡、綁定或外部通訊流程；行政首頁只保留排程、定位、角色與 ContactLog 流程紀錄。
+          目前系統不再提供家屬聯絡、綁定、外部通訊或流程紀錄；行政首頁只保留排程、定位與角色管理。
         </div>
       </Panel>
     </div>
@@ -343,7 +354,7 @@ export function AdminGuidePage() {
             <p className="font-semibold text-brand-ink">目前作業方式</p>
             <p className="mt-2">1. 每位行政與醫師登入時都需要輸入密碼，預設為 0000。</p>
             <p className="mt-1">2. 醫師端只要用手機開啟網頁並允許定位，行政端就能看到最新位置。</p>
-            <p className="mt-1">3. 家屬聯絡、綁定與外部通訊流程已移除，系統目前只保留個案、排程、定位與流程紀錄。</p>
+            <p className="mt-1">3. 家屬聯絡、綁定、外部通訊與流程紀錄已移除，系統目前只保留個案、排程與定位。</p>
             <p className="mt-1">4. 行政端統一使用共用帳號「行政人員」；角色設置頁只需要維護醫師資料。</p>
             <p className="mt-3 text-xs text-slate-500">
               提醒：這裡只保留院內定位、路線與通知流程；個案管理頁目前不再維護家屬聯絡欄位。
@@ -374,7 +385,7 @@ export function AdminGuidePage() {
 export function AdminDoctorTrackingPage() {
   const { repositories, db, services } = useAppContext();
   const [selectedDoctorId, setSelectedDoctorId] = useState<string>(db.doctors[0]?.id ?? "");
-  const [routeDate, setRouteDate] = useState<string>(formatDateOnly(new Date().toISOString()));
+  const [routeDate, setRouteDate] = useState<string>(new Date().toISOString().slice(0, 10));
   const [routeTimeSlot, setRouteTimeSlot] = useState<RouteTimeSlot>("上午");
   const selectedDoctor = db.doctors.find((doctor) => doctor.id === selectedDoctorId) ?? db.doctors[0];
   const suggestedRoute = useMemo(
@@ -821,7 +832,7 @@ export function AdminPatientsPage() {
       }${
         skippedActiveCount > 0 ? `，略過 ${skippedActiveCount} 位原本已在服務中的個案` : ""
       }${
-        unsyncedCount > 0 ? `，其中 ${unsyncedCount} 位尚未自動排程` : ""
+        unsyncedCount > 0 ? `，其中 ${unsyncedCount} 位尚未建立本次路線` : ""
       }。`
     );
   };
@@ -845,10 +856,7 @@ export function AdminPatientsPage() {
         return;
       }
 
-      repositories.patientRepository.upsertPatient({
-        ...patient,
-        status: "closed"
-      });
+      repositories.patientRepository.closePatient(patientId, actionLabel);
       closedCount += 1;
     });
 
@@ -875,6 +883,18 @@ export function AdminPatientsPage() {
   }, [availableServiceSlots, draft.preferred_service_slot]);
 
   const saveDraft = () => {
+    if (draft.status === "closed" && draft.id) {
+      const closeResult = repositories.patientRepository.closePatient(draft.id, "個案管理頁結案");
+      setSelectedPatientIds((current) => current.filter((id) => id !== draft.id));
+      const nextPatient = patients.find((patient) => patient.id !== draft.id && patient.status !== "closed");
+      if (selectedPatient?.id === draft.id && nextPatient) {
+        syncDraft(nextPatient);
+      }
+      setRecentAction(closeResult.message);
+      setEditorOpen(false);
+      return;
+    }
+
     const result = repositories.patientRepository.upsertPatient({
       ...draft,
       chart_number: draft.chart_number || `AUTO-${Date.now().toString().slice(-6)}`,
@@ -888,9 +908,7 @@ export function AdminPatientsPage() {
       reminder_tags: draft.reminder_tags.filter(Boolean)
     });
     setRecentAction(
-      result.scheduleSynced
-        ? `已儲存 ${maskPatientName(draft.name || "新個案")}，並自動排入 ${draft.preferred_service_slot || "服務時段"}。`
-        : `已儲存 ${maskPatientName(draft.name || "新個案")}，但未自動排程：${result.skippedReason ?? "未提供原因"}。`
+      `已儲存 ${maskPatientName(draft.name || "新個案")}。${result.skippedReason ?? "請到排程管理頁建立或實行路線。"}`
     );
     setDraft((current) => ({
       ...current,
@@ -990,12 +1008,7 @@ export function AdminPatientsPage() {
         status: normalizePatientStatus(statusRaw || "服務中")
       });
 
-      if (result.scheduleSynced || result.skippedReason === "個案非服務中，未自動排程") {
-        importedCount += 1;
-      } else {
-        skippedCount += 1;
-        skippedReasons.push(`第 ${index + 2} 列未排程：${result.skippedReason}`);
-      }
+      importedCount += 1;
     });
 
     setRecentAction(
@@ -1012,20 +1025,6 @@ export function AdminPatientsPage() {
         title="個案管理頁"
         action={
           <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => setSelectedPatientIds(patients.map((patient) => patient.id))}
-              className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-brand-ink ring-1 ring-slate-200"
-            >
-              全選
-            </button>
-            <button
-              type="button"
-              onClick={() => setSelectedPatientIds([])}
-              className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-brand-ink ring-1 ring-slate-200"
-            >
-              清除全選
-            </button>
             <a
               href={csvTemplateHref}
               download="patient-import-template.csv"
@@ -1091,6 +1090,20 @@ export function AdminPatientsPage() {
               className="rounded-full bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-700 ring-1 ring-slate-300"
             >
               結案
+            </button>
+            <button
+              type="button"
+              onClick={() => setSelectedPatientIds(patients.map((patient) => patient.id))}
+              className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-brand-ink ring-1 ring-slate-200"
+            >
+              全選
+            </button>
+            <button
+              type="button"
+              onClick={() => setSelectedPatientIds([])}
+              className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-brand-ink ring-1 ring-slate-200"
+            >
+              清除全選
             </button>
           </div>
         </div>
@@ -1340,7 +1353,7 @@ export function AdminPatientsPage() {
             </div>
 
             <p className="mt-4 text-xs text-slate-500">
-              儲存後會依據個案的負責醫師與服務時段自動排入排程；同一位醫師同一個服務時段最多 8 位個案。
+              儲存後會更新個案的負責醫師與服務時段；實際路線請改到排程管理頁建立、儲存與實行。
             </p>
             <div className="mt-4 flex flex-wrap gap-3">
               <button type="button" onClick={saveDraft} className="rounded-full bg-brand-forest px-5 py-3 text-sm font-semibold text-white">
@@ -1484,45 +1497,5 @@ export function AdminPatientDetailPage() {
         </Panel>
       </div>
     </div>
-  );
-}
-
-export function AdminRecordsPage() {
-  const { repositories, db } = useAppContext();
-  const todaySchedules = repositories.staffingRepository
-    .getAdminDashboard()
-    .exceptionSchedules.concat(
-      repositories.visitRepository
-        .getSchedules()
-        .filter((schedule) => formatDateOnly(schedule.scheduled_start_at) === formatDateOnly(new Date().toISOString()))
-    );
-  const uniqueSchedules = Array.from(new Map(todaySchedules.map((item) => [item.id, item])).values());
-
-  return (
-    <Panel title="紀錄流程稽核">
-      <div className="space-y-3">
-        {uniqueSchedules.map((schedule) => {
-          const record = db.visit_records.find((item) => item.visit_schedule_id === schedule.id);
-          const patient = db.patients.find((item) => item.id === schedule.patient_id);
-          return (
-            <div key={schedule.id} className="rounded-2xl border border-slate-200 p-4 text-sm">
-              <div className="flex items-center justify-between gap-3">
-                <p className="font-semibold text-brand-ink">{patient?.name ?? schedule.patient_id}</p>
-                <Badge value={schedule.status} compact />
-              </div>
-              <p className="mt-2 text-slate-600">預約：{formatDateTimeFull(schedule.scheduled_start_at)}</p>
-              <p className="mt-1 text-slate-500">
-                紀錄狀態：
-                {record
-                  ? record.physician_assessment && record.follow_up_note
-                    ? " 已完成主要欄位"
-                    : " 尚待補完"
-                  : " 尚未建立"}
-              </p>
-            </div>
-          );
-        })}
-      </div>
-    </Panel>
   );
 }

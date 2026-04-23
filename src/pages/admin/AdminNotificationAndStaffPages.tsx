@@ -206,49 +206,6 @@ function createId(prefix: string) {
   return `${prefix}-${Date.now().toString(36)}`;
 }
 
-export function AdminNotificationsPage() {
-  const { db } = useAppContext();
-  const relatedLogs = [...db.contact_logs]
-    .sort(
-      (left, right) =>
-        new Date(right.contacted_at).getTime() - new Date(left.contacted_at).getTime()
-    )
-    .slice(0, 12);
-
-  return (
-    <div className="space-y-6">
-      <Panel title="通知任務已停用">
-        <div className="mb-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-          目前系統不再建立家屬聯絡、外部綁定或任何通訊軟體通知任務，流程統一改由排程、定位與 ContactLog 管理。
-        </div>
-        <div className="rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-8 text-center text-sm text-slate-500">
-          出發、抵達、治療完成與路線調整目前都直接記錄在排程、定位與訪視資料內，不另外建立通知任務。
-        </div>
-      </Panel>
-
-      <Panel title="ContactLog 回寫預覽與紀錄">
-        <div className="mb-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-          外部 webhook、互動按鈕與家屬表單提交流程已移除；但 ContactLog 的流程紀錄仍保留，方便行政追蹤。
-        </div>
-        <div className="space-y-3">
-          <div className="space-y-3">
-            {relatedLogs.slice(0, 6).map((log) => (
-              <div key={log.id} className="rounded-2xl border border-slate-200 p-4 text-sm">
-                <div className="flex items-center justify-between gap-3">
-                  <p className="font-semibold text-brand-ink">{log.subject}</p>
-                  <Badge value={log.channel} compact />
-                </div>
-                <p className="mt-2 text-slate-600">{log.content}</p>
-                <p className="mt-1 text-slate-500">{log.outcome}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      </Panel>
-    </div>
-  );
-}
-
 export function AdminStaffPage() {
   const { repositories, db } = useAppContext();
   const defaultDoctorKey = db.doctors[0] ? `doctor:${db.doctors[0].id}` : "new:doctor";

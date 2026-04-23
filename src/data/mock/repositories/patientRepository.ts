@@ -1,5 +1,13 @@
 import { addDays, addMinutes, compareAsc, formatISO, isSameDay, startOfDay } from "date-fns";
-import type { AdminUser, AppDb, CaregiverChatBinding, Doctor, Patient, VisitSchedule } from "../../../domain/models";
+import type {
+  AdminUser,
+  AppDb,
+  CaregiverChatBinding,
+  Doctor,
+  Patient,
+  SavedRoutePlan,
+  VisitSchedule
+} from "../../../domain/models";
 import type {
   PatientRemoveResult,
   PatientRepository,
@@ -85,6 +93,21 @@ function parseServiceSlotSelections(slotText: string) {
 
 function createChartNumber(): string {
   return `AUTO-${Date.now().toString().slice(-6)}`;
+}
+
+function reindexRouteItems(routeItems: SavedRoutePlan["route_items"]) {
+  let checkedOrder = 1;
+  return routeItems.map((item) =>
+    item.checked
+      ? {
+          ...item,
+          route_order: checkedOrder++
+        }
+      : {
+          ...item,
+          route_order: null
+        }
+  );
 }
 
 function parseServiceSlot(slotLabel: string): ParsedServiceSlot | null {
@@ -314,6 +337,17 @@ export function createPatientRepository(
         )
       };
     },
+    getPatientsByDoctorSlot({ doctorId, weekday, serviceTimeSlot }) {
+      const targetSlot = `${weekday}${serviceTimeSlot}`;
+      return [...getDb().patients]
+        .filter(
+          (patient) =>
+            patient.status !== "closed" &&
+            patient.preferred_doctor_id === doctorId &&
+            patient.preferred_service_slot === targetSlot
+        )
+        .sort((left, right) => left.chart_number.localeCompare(right.chart_number, "zh-Hant"));
+    },
     getDoctors() {
       return [...getDb().doctors];
     },
@@ -468,74 +502,23 @@ export function createPatientRepository(
             : schedule
         );
 
-        if (normalizedPatient.status === "active" && doctor && normalizedPatient.preferred_service_slot) {
-          const existingSchedule = nextSchedules.find(
-            (schedule) =>
-              schedule.patient_id === normalizedPatient.id &&
-              !["completed", "cancelled"].includes(schedule.status)
-          );
-          const placement = findSchedulePlacement(
-            { ...db, visit_schedules: nextSchedules },
-            normalizedPatient,
-            normalizedPatient.preferred_service_slot,
-            existingSchedule?.id
-          );
-          if (placement) {
-            const autoSchedule = buildAutoSchedule(
-              { ...db, visit_schedules: nextSchedules },
-              normalizedPatient,
-              "",
-              normalizedPatient.preferred_service_slot,
-              placement.dayOffset,
-              placement.position
-            );
-            if (autoSchedule) {
-              nextSchedules = existingSchedule
-                ? nextSchedules.map((schedule) =>
-                    schedule.id === existingSchedule.id
-                      ? { ...autoSchedule, id: existingSchedule.id, created_at: schedule.created_at }
-                      : schedule
-                  )
-                : [autoSchedule, ...nextSchedules];
-              result = {
-                patientId: normalizedPatient.id,
-                chartNumber: normalizedPatient.chart_number,
-                scheduleId: existingSchedule?.id ?? autoSchedule.id,
-                scheduleSynced: true,
-                skippedReason: null
-              };
-            } else {
-              result = {
-                patientId: normalizedPatient.id,
-                chartNumber: normalizedPatient.chart_number,
-                scheduleId: existingSchedule?.id ?? null,
-                scheduleSynced: false,
-                skippedReason: "服務時段格式無法辨識"
-              };
-            }
-          } else {
-            result = {
-              patientId: normalizedPatient.id,
-              chartNumber: normalizedPatient.chart_number,
-              scheduleId: existingSchedule?.id ?? null,
-              scheduleSynced: false,
-              skippedReason: "同醫師同時段已達 8 位個案上限"
-            };
-          }
-        } else {
-          result = {
-            patientId: normalizedPatient.id,
-            chartNumber: normalizedPatient.chart_number,
-            scheduleId: null,
-            scheduleSynced: false,
-            skippedReason:
-              normalizedPatient.status !== "active"
-                ? "個案非服務中，未自動排程"
-                : doctor
-                  ? "請先設定服務時段"
-                  : "找不到負責醫師"
-          };
-        }
+        result = {
+          patientId: normalizedPatient.id,
+          chartNumber: normalizedPatient.chart_number,
+          scheduleId:
+            nextSchedules.find(
+              (schedule) =>
+                schedule.patient_id === normalizedPatient.id &&
+                !["completed", "cancelled"].includes(schedule.status)
+            )?.id ?? null,
+          scheduleSynced: false,
+          skippedReason:
+            normalizedPatient.status !== "active"
+              ? "個案非服務中，未納入排程"
+              : doctor
+                ? "請到排程管理頁建立或實行路線"
+                : "找不到負責醫師"
+        };
 
         return {
           ...db,
@@ -544,6 +527,103 @@ export function createPatientRepository(
         };
       });
       return result;
+    },
+    closePatient(patientId, reason = "管理端結案") {
+      let closeResult = {
+        patientId,
+        closed: false,
+        removedRoutePlans: 0,
+        removedSchedules: 0,
+        message: "找不到指定個案。"
+      };
+
+      updateDb((db) => {
+        const patient = db.patients.find((item) => item.id === patientId);
+        if (!patient) {
+          return db;
+        }
+
+        const now = new Date().toISOString();
+        let removedRoutePlans = 0;
+        let removedSchedules = 0;
+
+        const nextSavedRoutePlans = db.saved_route_plans
+          .map((routePlan) => {
+            const nextRouteItems = reindexRouteItems(
+              routePlan.route_items.filter((item) => item.patient_id !== patientId)
+            );
+            if (nextRouteItems.length !== routePlan.route_items.length) {
+              removedRoutePlans += 1;
+            }
+            return {
+              ...routePlan,
+              route_items: nextRouteItems,
+              schedule_ids: routePlan.schedule_ids.filter((scheduleId) =>
+                nextRouteItems.some((item) => item.schedule_id === scheduleId)
+              ),
+              updated_at: nextRouteItems.length !== routePlan.route_items.length ? now : routePlan.updated_at
+            };
+          })
+          .filter((routePlan) => routePlan.route_items.length > 0);
+
+        const routeOrderByScheduleId = new Map(
+          nextSavedRoutePlans.flatMap((routePlan) =>
+            routePlan.route_items
+              .filter((item) => item.schedule_id)
+              .map((item) => [item.schedule_id as string, item.route_order] as const)
+          )
+        );
+
+        const nextSchedules = db.visit_schedules.map((schedule) => {
+          if (
+            schedule.patient_id !== patientId ||
+            ["completed", "cancelled"].includes(schedule.status)
+          ) {
+            return schedule;
+          }
+          removedSchedules += 1;
+          return {
+            ...schedule,
+            status: "cancelled" as const,
+            note: `${schedule.note}｜結案：${reason}`,
+            updated_at: now
+          };
+        }).map((schedule) =>
+          routeOrderByScheduleId.has(schedule.id)
+            ? {
+                ...schedule,
+                route_order: routeOrderByScheduleId.get(schedule.id) ?? schedule.route_order,
+                updated_at: now
+              }
+            : schedule
+        );
+
+        closeResult = {
+          patientId,
+          closed: true,
+          removedRoutePlans,
+          removedSchedules,
+          message: `已結案 ${patient.name}，並移除原排定時段與相關路線。`
+        };
+
+        return {
+          ...db,
+          patients: db.patients.map((item) =>
+            item.id === patientId
+              ? {
+                  ...item,
+                  status: "closed",
+                  preferred_service_slot: "",
+                  updated_at: now
+                }
+              : item
+          ),
+          saved_route_plans: nextSavedRoutePlans,
+          visit_schedules: nextSchedules
+        };
+      });
+
+      return closeResult;
     },
     removePatient(patientId) {
       let result: PatientRemoveResult = {

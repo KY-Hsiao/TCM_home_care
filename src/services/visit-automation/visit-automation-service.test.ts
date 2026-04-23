@@ -39,7 +39,7 @@ describe("visit automation service", () => {
     vi.useRealTimers();
   });
 
-  it("正常情境會先觸發逼近確認，再由醫師確認後完成離開並記錄停用中的通知流程", () => {
+  it("正常情境會先記錄接近目的地時間，再由醫師手動確認抵達與離開", () => {
     const harness = createHarness();
     const detail = harness.repositories.visitRepository.getScheduleDetail("vs-015")!;
     const initialTaskCount = harness.repositories.notificationRepository.getTasks().length;
@@ -58,18 +58,20 @@ describe("visit automation service", () => {
     vi.advanceTimersByTime(1600);
 
     const proximitySchedule = harness.repositories.visitRepository.getScheduleDetail("vs-015")!.schedule;
-    expect(proximitySchedule.status).toBe("proximity_pending");
+    const proximityRuntime = harness.services.visitAutomation.getTrackingState(detail.schedule.id);
+    expect(proximitySchedule.status).toBe("on_the_way");
+    expect(proximityRuntime?.proximityTriggeredAt).not.toBeNull();
 
     harness.services.visitAutomation.confirmArrival("vs-015", "doctor");
     harness.services.visitAutomation.recordDoctorFeedback("vs-015", "normal");
-
-    vi.advanceTimersByTime(1200);
+    harness.services.visitAutomation.confirmDeparture("vs-015", "doctor");
 
     const updatedRecord = harness.repositories.visitRepository.getVisitRecordByScheduleId("vs-015");
     const updatedSchedule = harness.repositories.visitRepository.getScheduleDetail("vs-015")!.schedule;
 
     expect(updatedRecord?.arrival_time).not.toBeNull();
     expect(updatedRecord?.departure_from_patient_home_time).not.toBeNull();
+    expect(updatedRecord?.arrival_time).toBe(proximityRuntime?.proximityTriggeredAt);
     expect(updatedSchedule.status).toBe("completed");
     expect(updatedSchedule.geofence_status).toBe("completed");
     expect(harness.repositories.notificationRepository.getTasks().length).toBe(initialTaskCount);
@@ -78,8 +80,8 @@ describe("visit automation service", () => {
         .getTrackingState(detail.schedule.id)
         ?.eventLog.some(
           (entry) =>
-            entry.includes("通知任務功能已停用") ||
-            entry.includes("家屬追蹤訊息功能已停用")
+            entry.includes("已記錄接近目的地時間") ||
+            entry.includes("手動確認抵達")
         )
     ).toBe(true);
   });
@@ -140,16 +142,12 @@ describe("visit automation service", () => {
           task.linked_tracking_session_id === detail.schedule.id &&
           task.trigger_type.startsWith("family_followup_")
       );
+    const updatedSchedule = harness.repositories.visitRepository.getScheduleDetail("vs-015")!.schedule;
+    const runtime = harness.services.visitAutomation.getTrackingState(detail.schedule.id);
 
     expect(familyTasks).toHaveLength(0);
-    expect(
-      harness.services.visitAutomation
-        .getTrackingState(detail.schedule.id)
-        ?.eventLog.some(
-          (entry) =>
-            entry.includes("家屬通知功能已停用") ||
-            entry.includes("家屬追蹤訊息功能已停用")
-        )
-    ).toBe(true);
+    expect(updatedSchedule.status).toBe("paused");
+    expect(runtime?.stopReason).toBe("patient_absent");
+    expect(runtime?.eventLog.some((entry) => entry.includes("醫師回覆：absent"))).toBe(true);
   });
 });

@@ -86,23 +86,15 @@ export type DoctorDashboard = {
 
 export type AdminDashboard = {
   todayVisitTotal: number;
-  pendingSchedulingCount: number;
-  pendingNotificationCount: number;
-  doctorTaskCount: number;
-  caregiverTaskCount: number;
-  leaveAffectedCount: number;
-  arrivedCount: number;
-  inTreatmentCount: number;
-  completedCount: number;
+  draftRouteCount: number;
   trackingCount: number;
-  proximityPendingCount: number;
-  followupPendingCount: number;
+  pausedCount: number;
   urgentCount: number;
-  delayedCount: number;
   unrecordedCount: number;
-  totalPatients: number;
   rescheduleCount: number;
-  leaveRequests: LeaveRequest[];
+  pendingLeaveRequests: LeaveRequest[];
+  pendingRescheduleActions: RescheduleAction[];
+  draftRoutePlans: SavedRoutePlan[];
   exceptionSchedules: VisitSchedule[];
 };
 
@@ -205,6 +197,8 @@ export interface VisitRepository {
   upsertSavedRoutePlan(routePlan: SavedRoutePlan): void;
   deleteSavedRoutePlan(routePlanId: string): void;
   executeRoutePlan(routePlanId: string): SavedRoutePlan | undefined;
+  upsertSavedRoutePlanAndExecute(routePlan: SavedRoutePlan): SavedRoutePlan | undefined;
+  resetRoutePlanProgress(routePlanId: string): SavedRoutePlan | undefined;
   syncRouteItemStatus(routePlanId: string, patientId: string, status: RouteItemStatus): void;
   upsertVisitRecord(record: VisitRecord): void;
   startVisitTravel(visitScheduleId: string, departureTime?: string): VisitRecord | undefined;
@@ -247,6 +241,7 @@ export interface VisitRepository {
   cancelVisit(visitScheduleId: string, reason: string, changeSummary: string): void;
   pauseVisit(visitScheduleId: string, reason: string, changeSummary: string): void;
   getReminders(role: UserRole, ownerId?: string): Reminder[];
+  createReminder(reminder: Reminder): void;
   appendDoctorLocationLog(log: DoctorLocationLog): void;
   getDoctorLocationLogs(doctorId: string): DoctorLocationLog[];
 }

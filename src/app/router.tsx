@@ -5,22 +5,19 @@ import {
   AdminDashboardPage,
   AdminGuidePage,
   AdminDoctorTrackingPage,
-  AdminNotificationsPage,
   AdminPatientDetailPage,
   AdminPatientsPage,
-  AdminRecordsPage,
+  AdminRemindersPage,
   AdminSchedulesPage,
   AdminStaffPage
 } from "../pages/admin/AdminPages";
-  import {
-    DoctorDashboardPage,
-    DoctorLocationPage,
-    DoctorPatientPage,
-    DoctorRecordPage,
-    DoctorRemindersPage,
-    DoctorReturnRecordPage,
-  DoctorScheduleDetailPage,
-  DoctorSchedulesPage
+import {
+  DoctorLocationPage,
+  DoctorPatientPage,
+  DoctorRecordPage,
+  DoctorRemindersPage,
+  DoctorReturnRecordPage,
+  DoctorScheduleDetailPage
 } from "../pages/doctor/DoctorPages";
 import { DemoOverviewPage, DoctorTracePage, MapsOverviewPage } from "../pages/shared/SharedPages";
 
@@ -33,8 +30,7 @@ export const router = createBrowserRouter([
     element: <AppShell />,
     children: [
       { path: "/demo-overview", element: <DemoOverviewPage /> },
-      { path: "/doctor/dashboard", element: <DoctorDashboardPage /> },
-      { path: "/doctor/schedules", element: <DoctorSchedulesPage /> },
+      { path: "/doctor/navigation", element: <DoctorLocationPage /> },
       { path: "/doctor/location", element: <DoctorLocationPage /> },
       { path: "/doctor/return-records", element: <DoctorReturnRecordPage /> },
       { path: "/doctor/schedules/:id", element: <DoctorScheduleDetailPage /> },
@@ -46,9 +42,8 @@ export const router = createBrowserRouter([
       { path: "/admin/doctor-tracking", element: <AdminDoctorTrackingPage /> },
       { path: "/admin/patients", element: <AdminPatientsPage /> },
       { path: "/admin/patients/:id", element: <AdminPatientDetailPage /> },
+      { path: "/admin/reminders", element: <AdminRemindersPage /> },
       { path: "/admin/schedules", element: <AdminSchedulesPage /> },
-      { path: "/admin/records", element: <AdminRecordsPage /> },
-      { path: "/admin/notifications", element: <AdminNotificationsPage /> },
       { path: "/admin/staff", element: <AdminStaffPage /> },
       { path: "/maps/overview", element: <MapsOverviewPage /> },
       { path: "/maps/doctor-trace/:doctorId", element: <DoctorTracePage /> }

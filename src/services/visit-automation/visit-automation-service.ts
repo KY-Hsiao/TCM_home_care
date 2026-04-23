@@ -118,55 +118,6 @@ export class MockVisitAutomationService implements VisitAutomationService {
     );
   }
 
-  private autoConfirmArrival(
-    detail: VisitDetail,
-    runtime: TrackingRuntime,
-    recordedAt: string
-  ) {
-    const nextRecord = this.deps
-      .getRepositories()
-      .visitRepository.confirmArrival(detail.schedule.id, "system", recordedAt);
-    runtime.geofenceStatus = "arrived";
-    runtime.arrivalConfirmationPending = false;
-    appendEvent(runtime, `已自動判定抵達：${recordedAt}`);
-    this.noteDisabledNotification(
-      {
-        ...detail,
-        record: nextRecord ?? detail.record,
-        schedule: {
-          ...detail.schedule,
-          status: "arrived",
-          geofence_status: "arrived",
-          arrival_confirmed_by: "system"
-        }
-      },
-      runtime,
-      "doctor_arrival_feedback"
-    );
-  }
-
-  private autoConfirmCompleted(
-    detail: VisitDetail,
-    runtime: TrackingRuntime,
-    recordedAt: string
-  ) {
-    if (!detail.record?.arrival_time) {
-      return;
-    }
-
-    const nextRecord = this.deps
-      .getRepositories()
-      .visitRepository.confirmDeparture(detail.schedule.id, "system", recordedAt);
-    runtime.watchStatus = "completed";
-    runtime.geofenceStatus = "completed";
-    runtime.completedAt = recordedAt;
-    runtime.stopReason = "visit_completed";
-    runtime.familyFollowUpStatus = nextRecord?.family_followup_status ?? runtime.familyFollowUpStatus;
-    appendEvent(runtime, `已自動判定離開完成：${recordedAt}`);
-    appendEvent(runtime, "家屬追蹤訊息功能已停用，本次不自動建立通知。");
-    this.geolocationProvider.stopWatch(detail.schedule.id);
-  }
-
   private handleProviderEvent(event: GeolocationProviderEvent) {
     const detail = this.deps
       .getRepositories()
@@ -295,30 +246,15 @@ export class MockVisitAutomationService implements VisitAutomationService {
         if (
           runtime.insideCandidateCount >= 3 &&
           elapsedSeconds >= 15 &&
-          !runtime.arrivalConfirmationPending
+          !runtime.proximityTriggeredAt
         ) {
           runtime.proximityTriggeredAt = sample.recorded_at;
-          runtime.arrivalConfirmationPending = true;
-          runtime.geofenceStatus = "proximity_pending";
+          runtime.geofenceStatus = "inside_candidate";
           this.updateSchedule({
             ...(effectiveSchedule ?? detail.schedule),
-            status: "proximity_pending",
-            geofence_status: "proximity_pending"
+            geofence_status: "inside_candidate"
           });
-          appendEvent(runtime, `已逼近目的地，等待醫師 / 行政確認：${sample.recorded_at}`);
-          this.noteDisabledNotification(
-            {
-              ...detail,
-              record: effectiveRecord,
-              schedule: {
-                ...(effectiveSchedule ?? detail.schedule),
-                status: "proximity_pending",
-                geofence_status: "proximity_pending"
-              }
-            },
-            runtime,
-            "doctor_arrival_feedback"
-          );
+          appendEvent(runtime, `已記錄接近目的地時間：${sample.recorded_at}，請醫師手動確認抵達。`);
         }
       } else {
         runtime.insideCandidateCount = 0;
@@ -348,25 +284,10 @@ export class MockVisitAutomationService implements VisitAutomationService {
     runtime.geofenceStatus = "outside_candidate";
     runtime.outsideCandidateCount += 1;
     runtime.outsideCandidateStartedAt ??= sample.recorded_at;
-    const outsideCandidateStartedAt = runtime.outsideCandidateStartedAt ?? sample.recorded_at;
-    const elapsedSeconds = differenceInSeconds(
-      new Date(sample.recorded_at),
-      new Date(outsideCandidateStartedAt)
-    );
     this.updateSchedule({
       ...(effectiveSchedule ?? detail.schedule),
       geofence_status: "outside_candidate"
     });
-    if (runtime.outsideCandidateCount >= 3 && elapsedSeconds >= 60) {
-      this.autoConfirmCompleted(
-        {
-          ...detail,
-          record: effectiveRecord
-        },
-        runtime,
-        sample.recorded_at
-      );
-    }
     this.notify();
   }
 
@@ -408,9 +329,18 @@ export class MockVisitAutomationService implements VisitAutomationService {
     const runtime = this.getRuntime(detail);
     runtime.watchStatus = "running";
     runtime.startedAt = detail.record?.departure_time ?? new Date().toISOString();
+    runtime.completedAt = null;
+    runtime.lastUpdatedAt = new Date().toISOString();
     runtime.routeOrder = detail.schedule.route_order;
     runtime.googleShareFallbackActive = Boolean(detail.doctor.google_location_share_enabled);
     runtime.permissionState = this.geolocationProvider.getPermissionState(runtime.scenarioId);
+    runtime.proximityTriggeredAt = null;
+    runtime.arrivalConfirmationPending = false;
+    runtime.insideCandidateCount = 0;
+    runtime.insideCandidateStartedAt = null;
+    runtime.outsideCandidateCount = 0;
+    runtime.outsideCandidateStartedAt = null;
+    runtime.stopReason = null;
     runtime.geofenceStatus =
       runtime.scenarioId === "coordinate_missing" ||
       detail.schedule.home_latitude_snapshot === null ||
@@ -421,7 +351,7 @@ export class MockVisitAutomationService implements VisitAutomationService {
       runtime.geofenceStatus === "coordinate_missing"
         ? "住家尚未有精確座標，請先使用地址與地圖連結。"
         : null;
-    runtime.eventLog = ["開始模擬定位移動", ...runtime.eventLog].slice(0, 10);
+    runtime.eventLog = ["已開始導航追蹤，請改由 Google 地圖前往目的地。", ...runtime.eventLog].slice(0, 10);
     this.updateSchedule({
       ...detail.schedule,
       geofence_status: runtime.geofenceStatus
@@ -467,12 +397,18 @@ export class MockVisitAutomationService implements VisitAutomationService {
       return;
     }
     const runtime = this.getRuntime(detail);
+    const recordedAt = runtime.proximityTriggeredAt ?? new Date().toISOString();
     const nextRecord = this.deps
       .getRepositories()
-      .visitRepository.confirmArrival(scheduleId, confirmedBy);
+      .visitRepository.confirmArrival(scheduleId, confirmedBy, recordedAt);
     runtime.arrivalConfirmationPending = false;
     runtime.geofenceStatus = "arrived";
-    appendEvent(runtime, `已由 ${confirmedBy} 確認抵達。`);
+    appendEvent(
+      runtime,
+      runtime.proximityTriggeredAt
+        ? `已由 ${confirmedBy} 手動確認抵達，沿用接近目的地時間：${recordedAt}`
+        : `已由 ${confirmedBy} 手動確認抵達：${recordedAt}`
+    );
     this.notify();
     if (nextRecord?.visit_feedback_code === "normal") {
       runtime.doctorFeedbackCode = "normal";
@@ -493,6 +429,12 @@ export class MockVisitAutomationService implements VisitAutomationService {
     runtime.familyFollowUpStatus = feedbackCode === "normal" ? "not_needed" : "draft_ready";
     runtime.arrivalConfirmationPending = false;
     appendEvent(runtime, `醫師回覆：${feedbackCode}`);
+    if (feedbackCode === "absent") {
+      runtime.watchStatus = "completed";
+      runtime.geofenceStatus = "completed";
+      runtime.stopReason = "patient_absent";
+      this.geolocationProvider.stopWatch(scheduleId);
+    }
     if (feedbackCode === "urgent") {
       this.noteDisabledNotification(detail, runtime, "doctor_emergency_alert");
     }
@@ -505,15 +447,17 @@ export class MockVisitAutomationService implements VisitAutomationService {
       return;
     }
     const runtime = this.getRuntime(detail);
+    const recordedAt = new Date().toISOString();
     const nextRecord = this.deps
       .getRepositories()
-      .visitRepository.confirmDeparture(scheduleId, confirmedBy);
+      .visitRepository.confirmDeparture(scheduleId, confirmedBy, recordedAt);
     runtime.watchStatus = "completed";
     runtime.geofenceStatus = "completed";
+    runtime.completedAt = recordedAt;
     runtime.familyFollowUpStatus = nextRecord?.family_followup_status ?? runtime.familyFollowUpStatus;
     runtime.stopReason = "manual_confirmed";
     this.geolocationProvider.stopWatch(scheduleId);
-    appendEvent(runtime, `已由 ${confirmedBy} 確認離開。`);
+    appendEvent(runtime, `已由 ${confirmedBy} 手動確認離開：${recordedAt}`);
     this.notify();
   }
 
@@ -543,6 +487,9 @@ export class MockVisitAutomationService implements VisitAutomationService {
   }
 
   getDisplayStatus(schedule: VisitSchedule, arrivalTime: string | null, departureTime: string | null) {
+    if (schedule.status === "paused") {
+      return "paused";
+    }
     if (departureTime) {
       return "completed";
     }

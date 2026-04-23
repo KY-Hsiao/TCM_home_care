@@ -1,10 +1,14 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SESSION_STORAGE_KEY } from "../../app/auth-storage";
 import { AppProviders } from "../../app/providers";
-import { loadDb, persistDb } from "../../data/mock/db";
 import { DoctorVisitCard } from "./doctor-page-shared";
+
+function LocationProbe() {
+  const location = useLocation();
+  return <div data-testid="location-probe">{location.pathname}</div>;
+}
 
 function renderDoctorVisitCard(scheduleId: string, activeDoctorId = "doc-001") {
   window.localStorage.setItem(
@@ -19,9 +23,28 @@ function renderDoctorVisitCard(scheduleId: string, activeDoctorId = "doc-001") {
   );
 
   return render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={["/doctor/schedules"]}>
       <AppProviders>
-        <DoctorVisitCard scheduleId={scheduleId} />
+        <Routes>
+          <Route
+            path="/doctor/schedules"
+            element={
+              <>
+                <DoctorVisitCard scheduleId={scheduleId} />
+                <LocationProbe />
+              </>
+            }
+          />
+          <Route
+            path="/doctor/navigation"
+            element={
+              <>
+                <div>即時導航頁</div>
+                <LocationProbe />
+              </>
+            }
+          />
+        </Routes>
       </AppProviders>
     </MemoryRouter>
   );
@@ -33,65 +56,41 @@ describe("DoctorVisitCard", () => {
     vi.restoreAllMocks();
   });
 
-  it("按下開始行程時會直接開啟本站導航", () => {
-    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+  it("按下開始行程時會切到即時導航頁，並外接 Google 地圖", () => {
+    const openSpy = vi.spyOn(window, "open").mockReturnValue(window);
 
     renderDoctorVisitCard("vs-021", "doc-001");
 
     fireEvent.click(screen.getByRole("button", { name: "開始行程" }));
 
-    expect(openSpy).toHaveBeenCalledTimes(1);
-    expect(screen.getByText("導航進行中")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "叫出總目錄" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "結束導航" })).toBeInTheDocument();
-    expect(screen.getByText("靠近導航目的地 100 公尺內時會自動出現「已抵達」")).toBeInTheDocument();
+    expect(openSpy).toHaveBeenCalled();
+    expect(screen.getByText("即時導航頁")).toBeInTheDocument();
+    expect(screen.getByTestId("location-probe")).toHaveTextContent("/doctor/navigation");
   });
 
-  it("導航中可以結束導航並再接續行程", () => {
-    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+  it("已出發的案件會用前往即時導航按鈕切到即時導航頁，並外接 Google 地圖", () => {
+    const openSpy = vi.spyOn(window, "open").mockReturnValue(window);
 
-    renderDoctorVisitCard("vs-021", "doc-001");
-
-    fireEvent.click(screen.getByRole("button", { name: "開始行程" }));
-    fireEvent.click(screen.getByRole("button", { name: "結束導航" }));
-
-    expect(screen.queryByText("導航進行中")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "接續行程" })).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "接續行程" }));
-
-    expect(openSpy).toHaveBeenCalledTimes(2);
-    expect(screen.getByText("導航進行中")).toBeInTheDocument();
-  });
-
-  it("導航中可以叫出今日總目錄", () => {
-    vi.spyOn(window, "open").mockImplementation(() => null);
-
-    renderDoctorVisitCard("vs-021", "doc-001");
-
-    fireEvent.click(screen.getByRole("button", { name: "開始行程" }));
-    fireEvent.click(screen.getByRole("button", { name: "叫出總目錄" }));
-
-    expect(screen.getByText("今日總目錄")).toBeInTheDocument();
-  });
-
-  it("已抵達後會提示可啟程去下一個據點", () => {
     renderDoctorVisitCard("vs-005", "doc-001");
 
-    expect(screen.getByText("已抵達，完成治療後可按「啟程去下一個據點」。")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "啟程去下一個據點" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "前往即時導航" }));
+
+    expect(openSpy).toHaveBeenCalled();
+    expect(screen.getByText("即時導航頁")).toBeInTheDocument();
+    expect(screen.getByTestId("location-probe")).toHaveTextContent("/doctor/navigation");
+  });
+
+  it("排程卡不再直接顯示導航地圖 iframe", () => {
+    renderDoctorVisitCard("vs-021", "doc-001");
+
+    expect(screen.queryByTitle(/導航地圖-/)).not.toBeInTheDocument();
+    expect(
+      screen.getByText("排程清單目前只保留案件資訊與狀態操作；Google 地圖導航集中從「即時導航」開啟。")
+    ).toBeInTheDocument();
   });
 
   it("最後一站會顯示行程完畢按鈕", () => {
-    const db = loadDb();
-    persistDb({
-      ...db,
-      visit_schedules: db.visit_schedules.map((schedule) =>
-        schedule.id === "vs-006" ? { ...schedule, route_order: 99 } : schedule
-      )
-    });
-
-    renderDoctorVisitCard("vs-006", "doc-001");
+    renderDoctorVisitCard("vs-005", "doc-001");
 
     expect(screen.getByText("已抵達最後一站，完成治療後請按「行程完畢」。")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "行程完畢" })).toBeInTheDocument();

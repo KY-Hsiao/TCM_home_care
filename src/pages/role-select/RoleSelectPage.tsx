@@ -7,9 +7,9 @@ import { getDefaultPassword } from "../../app/auth-storage";
 const roles = [
   {
     title: "居家醫師",
-    to: "/doctor/dashboard",
+    to: "/doctor/navigation",
     role: "doctor" as const,
-    description: "快速查看今日訪視、記錄訪視內容，並掌握地圖與導航連結。"
+    description: "直接進入即時導航、查看今日路線、定位與治療流程。"
   },
   {
     title: "行政管理",
@@ -53,13 +53,13 @@ export function RoleSelectPage() {
     }
 
     if (role === "doctor") {
-      setDoctorMessage("登入成功，正在前往醫師首頁。");
+      setDoctorMessage("登入成功，正在前往醫師首頁並要求定位分享。");
       setDoctorPassword("");
     } else {
       setAdminMessage("登入成功，正在前往行政首頁。");
       setAdminPassword("");
     }
-    navigate(role === "doctor" ? "/doctor/dashboard" : "/admin/dashboard");
+    navigate(role === "doctor" ? "/doctor/navigation" : "/admin/dashboard");
   };
 
   return (
@@ -106,20 +106,25 @@ export function RoleSelectPage() {
               <div className="space-y-3 text-sm text-slate-600">
                 <p>{role.description}</p>
                 {isDoctor ? (
-                  <label className="block">
-                    <span className="mb-1 block font-medium text-brand-ink">選擇醫師帳號</span>
-                    <select
-                      value={doctorId}
-                      onChange={(event) => setDoctorId(event.target.value)}
-                      className="w-full rounded-2xl border border-slate-200 px-4 py-3"
-                    >
-                      {doctors.map((item) => (
-                        <option key={item.id} value={item.id}>
-                          {item.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                  <>
+                    <label className="block">
+                      <span className="mb-1 block font-medium text-brand-ink">選擇醫師帳號</span>
+                      <select
+                        value={doctorId}
+                        onChange={(event) => setDoctorId(event.target.value)}
+                        className="w-full rounded-2xl border border-slate-200 px-4 py-3"
+                      >
+                        {doctors.map((item) => (
+                          <option key={item.id} value={item.id}>
+                            {item.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
+                      醫師登入後會立即要求手機瀏覽器定位分享。若未允許或未取得定位，系統會明確顯示目前未取得定位分享，行政端也無法看到即時位置。
+                    </div>
+                  </>
                 ) : (
                   <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
                     <p className="font-medium text-brand-ink">共用行政帳號</p>

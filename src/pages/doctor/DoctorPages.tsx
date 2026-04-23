@@ -1,8 +1,7 @@
 export {
   DoctorDashboardPage,
   DoctorLocationPage,
-  DoctorScheduleDetailPage,
-  DoctorSchedulesPage
+  DoctorScheduleDetailPage
 } from "./DoctorDashboardAndSchedulePages";
 export { DoctorRecordPage } from "./DoctorRecordPage";
 export { DoctorReturnRecordPage } from "./DoctorReturnRecordPage";

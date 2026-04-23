@@ -3,11 +3,7 @@ export {
   AdminGuidePage,
   AdminDoctorTrackingPage,
   AdminPatientDetailPage,
-  AdminPatientsPage,
-  AdminRecordsPage
+  AdminPatientsPage
 } from "./AdminDashboardAndPatientPages";
-export { AdminSchedulesPage } from "./AdminScheduleAndContactsPages";
-export {
-  AdminNotificationsPage,
-  AdminStaffPage
-} from "./AdminNotificationAndStaffPages";
+export { AdminSchedulesPage, AdminRemindersPage } from "./AdminScheduleAndContactsPages";
+export { AdminStaffPage } from "./AdminNotificationAndStaffPages";

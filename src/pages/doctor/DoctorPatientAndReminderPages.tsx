@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useAppContext } from "../../app/use-app-context";
 import { buildReadonlySummary } from "../../modules/doctor/doctor-page-helpers";
+import { ReminderCenterPanel } from "../shared/ReminderCenterPanel";
 import { Badge } from "../../shared/ui/Badge";
 import { Panel } from "../../shared/ui/Panel";
 import {
@@ -164,6 +165,13 @@ export function DoctorRemindersPage() {
 
   return (
     <div className="space-y-6">
+      <ReminderCenterPanel
+        role="doctor"
+        ownerId={session.activeDoctorId}
+        title="提醒中心"
+        detailBasePath="/doctor/patients"
+      />
+
       {sectionItems.map(([title, items]) => (
         <Panel key={title} title={title}>
           <div className="grid gap-4 md:grid-cols-2">
