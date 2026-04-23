@@ -1,81 +1,140 @@
-# TCM Home Care
+# 中醫居家醫療輔助系統 MVP
 
-這是一個新的 Python 專案起始骨架，已包含下列內容：
+這個專案已轉為 `React + TypeScript + Vite + Tailwind CSS` 的 Web MVP，目標是先用假資料跑通中醫居家醫療的日常執行流程。
 
-- 本地 `.venv` 開發環境
-- 可直接啟動的桌面介面
-- 一個本地可按的「執行動作」按鈕
-- GitHub Actions 的手動執行按鈕
-- 專案級 `.codex` 環境設定與常用動作按鈕
+目前已包含：
 
-## 本地啟動
+- 居家醫師介面骨架
+- 行政管理介面骨架
+- 家屬 `Google Chat` 模組預留
+- 共用資料模型、enum、時間規則
+- local mock repository 與 SQLite-ready 結構
+- 完整 seed data
+- 通知模板 / 通知任務模組
+- 地圖與定位模組預留
 
-1. 建立虛擬環境
+## 技術棧
+
+- React 19
+- TypeScript
+- Vite
+- Tailwind CSS
+- React Router
+- React Hook Form
+- Zod
+- TanStack Table
+- date-fns
+
+## 啟動方式
+
+1. 執行專案 setup
 
    ```powershell
-   py -3.13 -m venv .venv
+   powershell -ExecutionPolicy Bypass -File .\.codex\scripts\setup.ps1
    ```
 
-2. 安裝需求
+   這個 setup 會完成三件事：
+
+   - 建立 `.venv`
+   - 安裝 `requirements.txt`
+   - 將前端依賴固定準備在 `C:\codex-deps\tcm-home-care`，供雲端同步路徑下的驗證副本共用
+
+2. 如需直接在目前資料夾補齊前端套件，也可以另外執行：
 
    ```powershell
-   .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+   npm install
    ```
 
-3. 啟動程式
+3. 啟動開發模式
 
    ```powershell
-   powershell -ExecutionPolicy Bypass -File .\launch_app.ps1
+   npm run dev
    ```
 
-## Codex 專案環境
+   如果你是從 VS Code / Codex 的「執行應用程式」或工作列按鈕啟動，現在預設也會走 Web MVP，而不是舊的 Python/Tkinter 示範。
+   若專案位於 `G:` 之類的雲端同步磁碟，`launch_app.ps1` 與 `app.py` 會自動同步到 `C:\codex-deps\tcm-home-care-verify` 後再啟動，避免 `node_modules` 寫入失敗。
+   若 `5173` 已被其他 Vite 程序占用，啟動器會自動改用下一個可用 port，避免直接啟動失敗。
 
-此專案新增了 `.codex/environments/environment.toml`，用途是讓 Codex 在這個專案中更快進入可工作的狀態，包含：
+4. 進行型別檢查
 
-- 自動執行 `.codex/scripts/setup.ps1`
-- 初始化 `.venv`
-- 安裝 `requirements.txt`
-- 清除會干擾 GitHub CLI 的代理環境變數
-- 提供「啟動程式」、「CLI 試跑」、「Git 狀態」、「推送 GitHub」動作按鈕
+   ```powershell
+   npm run typecheck
+   ```
 
-這些設定只針對此專案的常用流程加速，不會把權限無限制放大到工作區外。
+5. 執行測試
 
-## GitHub Actions 手動執行
+   ```powershell
+   npm run test
+   ```
 
-推送到 GitHub 後，在 `Actions` 頁面選擇 `Manual Run` 工作流程，就會看到手動執行按鈕。按下後會執行：
+6. 建置正式版
 
-```powershell
-python app.py --cli --message "GitHub Actions 手動執行完成" --repeat-count 1
-```
+   ```powershell
+   npm run build
+   ```
 
-執行結果會輸出到：
+## LINE helper（固定 Windows 管理電腦）
 
-- 本地預設：系統暫存資料夾中的 `TCM_home_care/latest_run.txt`
-- GitHub Actions：`artifacts/latest_run.txt`
-- GitHub Actions artifact `latest-run`
-
-## 連接 GitHub
-
-若本機尚未登入 GitHub CLI，先執行：
+若你要讓行政端的「聯絡目前醫師」直接嘗試切換到桌面版 LINE 對話，請在固定 Windows 管理電腦另外啟動本機 helper：
 
 ```powershell
-gh auth login --hostname github.com --git-protocol https --web
+powershell -ExecutionPolicy Bypass -File .\tools\line_helper\start_line_helper.ps1
 ```
 
-目前這個工作區已完成：
+預設會在 `http://127.0.0.1:8765` 提供：
 
-- `git init -b main`
-- `git remote add origin https://github.com/KY-Hsiao/TCM_home_care.git`
-- 初始 commit `Initial project setup`
+- `GET /health`
+- `POST /line/open-chat`
 
-完成登入後，可以直接建立 GitHub 倉庫並推送：
+注意事項：
 
-```powershell
-gh repo create TCM_home_care --public --source . --remote origin --push
-```
+- 這個 helper 只支援 Windows。
+- 需要桌面版 LINE 已安裝，且最佳情況是已登入並保持開啟。
+- 自動化流程屬於 best-effort；若 helper 無法聚焦視窗、搜尋失敗或 LINE 未正確啟動，前端會回退到電話聯絡。
 
-如果你已經先在 GitHub 網站手動建立同名倉庫，則改用：
+## 路徑注意事項
 
-```powershell
-git push -u origin main
-```
+若專案放在雲端同步資料夾或含特殊路徑限制的磁碟下，根目錄直接執行 `npm install` 可能會因 `node_modules` 大量寫檔而失敗。現在預設建議先跑 `.codex\scripts\setup.ps1`，它會把共用依賴固定準備在 `C:\codex-deps\tcm-home-care`，並讓 `launch_app.ps1` / `app.py` 把驗證副本同步到 `C:\codex-deps\tcm-home-care-verify` 後再啟動。
+
+## 權限與持續允許建議
+
+若你在 Codex / VS Code 內希望減少批准視窗，建議把下列高頻命令設為持續允許：
+
+- `powershell -ExecutionPolicy Bypass -File .\launch_app.ps1`
+- `Start-Process 'http://127.0.0.1:5173/'`
+- `Start-Process chrome.exe '--new-window http://127.0.0.1:5173/'`
+- `npm install`
+- `.\.venv\Scripts\python.exe -m pip install -r requirements.txt`
+- `py -3.13 -m venv .venv`
+- 與 `C:\codex-deps\tcm-home-care`、`C:\codex-deps\tcm-home-care-verify` 有關的既有同步與啟動流程
+
+下列項目則建議保留人工確認：
+
+- `git push -u origin HEAD` 與其他 push 類命令
+- `gh auth login`、`gh auth logout`
+- 變更 git remote
+- 破壞性 git / shell 操作，例如 `reset --hard`、大量刪除、清到未知路徑的 cache
+
+## 主要頁面
+
+- `/`：角色選擇
+- `/demo-overview`：系統總覽與 seed 資料摘要
+- `/doctor/*`：醫師端
+- `/admin/*`：行政端
+- `/chat/family/*`：家屬 Google Chat 入口預留
+- `/maps/*`：地圖與定位預留
+
+## 資料層說明
+
+- `src/domain`：資料模型、enum、rules、repository contract
+- `src/data/seed`：完整假資料
+- `src/data/mock`：local mock repository 與瀏覽器儲存
+
+## Legacy Python 骨架
+
+原本的 Python 起始骨架已搬到 `legacy-python/`，其中：
+
+- `legacy-python/app.py`：舊版 Tkinter 示範
+- `legacy-python/launch_legacy_app.ps1`：舊版啟動腳本
+
+根目錄的 `app.py` 與 `launch_app.ps1` 現在都會導向 Web MVP，避免誤啟動舊版畫面。

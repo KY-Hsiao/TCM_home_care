@@ -2,7 +2,7 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "執行應用程式",
+      "label": "啟動 Web MVP",
       "type": "shell",
       "command": "powershell",
       "args": [
@@ -15,6 +15,22 @@
         "kind": "build",
         "isDefault": true
       },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "啟動 Legacy Python 示範",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}\\legacy-python\\launch_legacy_app.ps1"
+      ],
       "presentation": {
         "reveal": "always",
         "panel": "shared"

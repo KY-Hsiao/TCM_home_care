@@ -1,0 +1,18 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "啟動 Web MVP",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "powershell -ExecutionPolicy Bypass -File .\\launch_app.ps1"
+    },
+    {
+      "name": "啟動 Legacy Python 示範",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}\\legacy-python\\app.py",
+      "console": "integratedTerminal"
+    }
+  ]
+}

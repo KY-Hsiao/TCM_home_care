@@ -1,119 +1,149 @@
 from __future__ import annotations
 
-import argparse
-from datetime import datetime
-import os
+import shutil
+import socket
+import subprocess
+import sys
 from pathlib import Path
-import tempfile
 
 BASE_DIR = Path(__file__).resolve().parent
-OUTPUT_DIR = Path(
-    os.getenv("TCM_HOME_CARE_DATA_DIR", Path(tempfile.gettempdir()) / "TCM_home_care")
+VERIFY_DIR = Path(r"C:\codex-deps\tcm-home-care-verify")
+BACKUP_NODE_MODULES = Path(r"C:\codex-deps\tcm-home-care\node_modules")
+SYNC_DIRECTORIES = ("src", "public", "legacy-python", ".vscode")
+SYNC_FILES = (
+    "package.json",
+    "index.html",
+    "tsconfig.json",
+    "vite.config.ts",
+    "tailwind.config.ts",
+    "postcss.config.js",
+    "eslint.config.js",
+    "README.md",
 )
-OUTPUT_FILE = OUTPUT_DIR / "latest_run.txt"
 
 
-def run_action(message: str, repeat_count: int) -> str:
-    """執行示範動作，並將結果寫到 latest_run.txt。"""
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    lines = [
-        f"[{timestamp}] 第 {index + 1} 次執行：{message}"
-        for index in range(repeat_count)
+def has_usable_node_modules(root: Path) -> bool:
+    required_files = [
+        root / "node_modules" / "react" / "package.json",
+        root / "node_modules" / "typescript" / "package.json",
+        root / "node_modules" / "vite" / "package.json",
     ]
+    for file_path in required_files:
+        if not file_path.exists():
+            return False
+        if file_path.stat().st_size <= 0:
+            return False
+    return True
 
-    OUTPUT_DIR.mkdir(exist_ok=True)
-    OUTPUT_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return "\n".join(lines)
 
+def ensure_verification_workspace(source_root: Path) -> Path:
+    if not BACKUP_NODE_MODULES.exists():
+        raise RuntimeError(
+            f"找不到備援依賴樹：{BACKUP_NODE_MODULES}。"
+            "請先執行 powershell -ExecutionPolicy Bypass -File .\\.codex\\scripts\\setup.ps1"
+        )
 
-def launch_gui() -> None:
-    import tkinter as tk
-    from tkinter import ttk
+    VERIFY_DIR.mkdir(parents=True, exist_ok=True)
 
-    root = tk.Tk()
-    root.title("TCM Home Care")
-    root.geometry("560x360")
-    root.minsize(520, 320)
+    print("目前專案位於雲端同步或受限路徑，將同步到本機驗證副本後啟動...")
+    for relative_path in SYNC_DIRECTORIES:
+        source_path = source_root / relative_path
+        target_path = VERIFY_DIR / relative_path
+        if source_path.exists():
+            shutil.copytree(source_path, target_path, dirs_exist_ok=True)
 
-    frame = ttk.Frame(root, padding=20)
-    frame.pack(fill="both", expand=True)
+    for relative_path in SYNC_FILES:
+        source_path = source_root / relative_path
+        target_path = VERIFY_DIR / relative_path
+        if source_path.exists():
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source_path, target_path)
 
-    title_label = ttk.Label(
-        frame,
-        text="TCM Home Care 執行面板",
-        font=("Microsoft JhengHei UI", 18, "bold"),
+    verify_node_modules = VERIFY_DIR / "node_modules"
+    verify_vite_cmd = verify_node_modules / ".bin" / "vite.cmd"
+    if verify_vite_cmd.exists():
+        return VERIFY_DIR
+
+    if verify_node_modules.exists():
+        remove_link_result = subprocess.run(
+            ["cmd", "/c", "rmdir", str(verify_node_modules)],
+            check=False,
+        )
+        if remove_link_result.returncode != 0 and verify_node_modules.exists():
+            shutil.rmtree(verify_node_modules)
+
+    subprocess.run(
+        [
+            "cmd",
+            "/c",
+            "mklink",
+            "/J",
+            str(verify_node_modules),
+            str(BACKUP_NODE_MODULES),
+        ],
+        check=True,
     )
-    title_label.pack(anchor="w")
-
-    description_label = ttk.Label(
-        frame,
-        text="按下按鈕後會執行動作，並將最新結果輸出到系統暫存資料夾。",
-        wraplength=500,
-    )
-    description_label.pack(anchor="w", pady=(8, 18))
-
-    input_label = ttk.Label(frame, text="動作訊息")
-    input_label.pack(anchor="w")
-
-    message_var = tk.StringVar(value="預設動作已完成")
-    message_entry = ttk.Entry(frame, textvariable=message_var)
-    message_entry.pack(fill="x", pady=(6, 14))
-
-    status_var = tk.StringVar(value="尚未執行")
-    status_label = ttk.Label(frame, textvariable=status_var, foreground="#0F6CBD")
-    status_label.pack(anchor="w", pady=(0, 10))
-
-    result_box = tk.Text(frame, height=9, wrap="word")
-    result_box.pack(fill="both", expand=True, pady=(0, 14))
-    result_box.insert("1.0", "等待執行...")
-    result_box.configure(state="disabled")
-
-    def on_run_click() -> None:
-        message = message_var.get().strip() or "預設動作已完成"
-        result = run_action(message=message, repeat_count=1)
-        status_var.set(f"執行完成，結果已寫入 {OUTPUT_FILE}")
-        result_box.configure(state="normal")
-        result_box.delete("1.0", "end")
-        result_box.insert("1.0", result)
-        result_box.configure(state="disabled")
-
-    run_button = ttk.Button(frame, text="執行動作", command=on_run_click)
-    run_button.pack(anchor="e")
-
-    root.mainloop()
+    return VERIFY_DIR
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="TCM Home Care 專案示範程式")
-    parser.add_argument(
-        "--cli",
-        action="store_true",
-        help="使用命令列模式執行，適合 GitHub Actions。",
-    )
-    parser.add_argument(
-        "--message",
-        default="GitHub Actions 手動執行完成",
-        help="執行時要寫入結果的訊息。",
-    )
-    parser.add_argument(
-        "--repeat-count",
-        type=int,
-        default=1,
-        help="要重複執行幾次，最小值為 1。",
-    )
-    return parser.parse_args()
+def resolve_run_root() -> Path:
+    if has_usable_node_modules(BASE_DIR):
+        return BASE_DIR
+    return ensure_verification_workspace(BASE_DIR)
+
+
+def resolve_vite_command(run_root: Path) -> list[str]:
+    vite_cmd = run_root / "node_modules" / ".bin" / "vite.cmd"
+    if vite_cmd.exists():
+        return [str(vite_cmd)]
+
+    npm_cmd = shutil.which("npm.cmd") or shutil.which("npm")
+    if not npm_cmd:
+        raise RuntimeError("找不到 npm，請先安裝 Node.js 並執行 npm install。")
+
+    subprocess.run([npm_cmd, "install"], cwd=run_root, check=True)
+
+    if not vite_cmd.exists():
+        raise RuntimeError(f"已執行 npm install，但仍找不到 {vite_cmd}")
+
+    return [str(vite_cmd)]
+
+
+def port_is_available(port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind(("127.0.0.1", port))
+        except OSError:
+            return False
+    return True
+
+
+def resolve_vite_port(preferred_port: int = 5173) -> int:
+    for candidate_port in range(preferred_port, preferred_port + 21):
+        if port_is_available(candidate_port):
+            return candidate_port
+    raise RuntimeError(f"找不到可用的 Vite port（{preferred_port} ~ {preferred_port + 20}）。")
 
 
 def main() -> None:
-    args = parse_args()
-    repeat_count = max(args.repeat_count, 1)
-
-    if args.cli:
-        print(run_action(message=args.message, repeat_count=repeat_count))
-        return
-
-    launch_gui()
+    print("目前專案主入口是 React Web MVP，正在啟動 Vite 開發伺服器...")
+    print("若你要開舊版 Python / Tkinter 示範，請改跑 legacy-python/app.py。")
+    run_root = resolve_run_root()
+    print(f"Web MVP 啟動路徑：{run_root}")
+    command = resolve_vite_command(run_root)
+    selected_port = resolve_vite_port()
+    if selected_port != 5173:
+        print(f"Port 5173 已被占用，改用 port {selected_port} 啟動。")
+    command.extend(["--host", "127.0.0.1", "--port", str(selected_port), "--open", "--strictPort"])
+    subprocess.run(command, cwd=run_root, check=True)
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        sys.exit(130)
+    except Exception as error:
+        print(f"啟動失敗：{error}", file=sys.stderr)
+        sys.exit(1)

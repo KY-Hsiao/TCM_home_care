@@ -1,0 +1,304 @@
+import type {
+  AdminUser,
+  Caregiver,
+  CaregiverChatBinding,
+  CommunicationSettings,
+  ContactLog,
+  Doctor,
+  DoctorLocationLog,
+  LeaveRequest,
+  NotificationTask,
+  NotificationTemplate,
+  Patient,
+  Reminder,
+  RescheduleAction,
+  SavedRoutePlan,
+  VisitRecord,
+  VisitSchedule
+} from "./models";
+import type {
+  ConfirmationSource,
+  FamilyFollowUpStatus,
+  NotificationStatus,
+  RecipientRole,
+  RouteItemStatus,
+  UserRole,
+  VisitFeedbackCode,
+  VisitStatus
+} from "./enums";
+
+export type SessionState = {
+  role: UserRole;
+  activeDoctorId: string;
+  activeAdminId: string;
+  activeRoutePlanId: string | null;
+  authenticatedDoctorId: string | null;
+  authenticatedAdminId: string | null;
+};
+
+export type PatientUpsertResult = {
+  patientId: string;
+  chartNumber: string;
+  scheduleId: string | null;
+  scheduleSynced: boolean;
+  skippedReason: string | null;
+};
+
+export type PatientRemoveResult = {
+  patientId: string;
+  removed: boolean;
+  removedScheduleCount: number;
+  blockedReason: string | null;
+};
+
+export type PatientProfile = {
+  patient: Patient;
+  caregivers: Caregiver[];
+  chatBindings: CaregiverChatBinding[];
+  recentSchedules: VisitSchedule[];
+  contactLogs: ContactLog[];
+  visitRecords: VisitRecord[];
+  todaySchedule: VisitSchedule | undefined;
+};
+
+export type VisitDetail = {
+  schedule: VisitSchedule;
+  patient: Patient;
+  doctor: Doctor;
+  caregiver: Caregiver | undefined;
+  record: VisitRecord | undefined;
+  notifications: NotificationTask[];
+};
+
+export type RoutePlanningWindow = {
+  date?: string;
+  serviceTimeSlot?: "上午" | "下午";
+};
+
+export type DoctorDashboard = {
+  doctor: Doctor;
+  todaySchedules: VisitSchedule[];
+  activeSchedules: VisitSchedule[];
+  reminders: Reminder[];
+  todayRecordCount: number;
+  pendingFamilyNotifications: number;
+};
+
+export type AdminDashboard = {
+  todayVisitTotal: number;
+  pendingSchedulingCount: number;
+  pendingNotificationCount: number;
+  doctorTaskCount: number;
+  caregiverTaskCount: number;
+  leaveAffectedCount: number;
+  arrivedCount: number;
+  inTreatmentCount: number;
+  completedCount: number;
+  trackingCount: number;
+  proximityPendingCount: number;
+  followupPendingCount: number;
+  urgentCount: number;
+  delayedCount: number;
+  unrecordedCount: number;
+  totalPatients: number;
+  rescheduleCount: number;
+  leaveRequests: LeaveRequest[];
+  exceptionSchedules: VisitSchedule[];
+};
+
+export interface PatientRepository {
+  getPatients(): Patient[];
+  getPatientById(id: string): Patient | undefined;
+  getPatientProfile(id: string): PatientProfile | undefined;
+  getPatientsByDoctorSlot(input: {
+    doctorId: string;
+    weekday: string;
+    serviceTimeSlot: "上午" | "下午";
+  }): Patient[];
+  getDoctors(): Doctor[];
+  getAdmins(): AdminUser[];
+  getCommunicationSettings(): CommunicationSettings;
+  upsertDoctor(doctor: Doctor): void;
+  removeDoctor(doctorId: string): void;
+  upsertAdmin(admin: AdminUser): void;
+  removeAdmin(adminId: string): void;
+  upsertCommunicationSettings(settings: CommunicationSettings): void;
+  upsertPatient(patient: Patient): PatientUpsertResult;
+  closePatient(patientId: string, reason?: string): {
+    patientId: string;
+    closed: boolean;
+    removedRoutePlans: number;
+    removedSchedules: number;
+    message: string;
+  };
+  removePatient(patientId: string): PatientRemoveResult;
+  updateCaregiver(
+    caregiverId: string,
+    patch: Partial<
+      Pick<
+        Caregiver,
+        | "name"
+        | "relationship"
+        | "phone"
+        | "is_primary"
+        | "receives_notifications"
+        | "preferred_contact_channel"
+        | "notes"
+      >
+    >
+  ): void;
+  upsertCaregiverChatBinding(
+    caregiverId: string,
+    payload: {
+      googleChatUserId: string;
+      googleAccountEmail: string;
+      googleAccountLoggedIn: boolean;
+      displayName: string;
+      isActive: boolean;
+    }
+  ): void;
+  updateDoctorIntegration(
+    doctorId: string,
+    patch: Partial<
+      Pick<
+        Doctor,
+        | "google_chat_user_id"
+        | "google_account_email"
+        | "google_account_logged_in"
+        | "google_location_share_url"
+        | "google_location_share_enabled"
+      >
+    >
+  ): void;
+}
+
+export interface ContactRepository {
+  createContactLog(log: ContactLog): void;
+  getContactLogsByScheduleId(scheduleId: string): ContactLog[];
+  getContactLogsByPatientId(patientId: string): ContactLog[];
+}
+
+export interface VisitRepository {
+  getDoctorDashboard(doctorId: string): DoctorDashboard;
+  getSchedules(filters?: {
+    doctorId?: string;
+    patientId?: string;
+    statuses?: VisitStatus[];
+    dateFrom?: string;
+    dateTo?: string;
+    area?: string;
+  }): VisitSchedule[];
+  getScheduleDetail(id: string): VisitDetail | undefined;
+  getVisitRecordByScheduleId(visitScheduleId: string): VisitRecord | undefined;
+  getSavedRoutePlans(filters?: {
+    doctorId?: string;
+    routeDate?: string;
+    serviceTimeSlot?: "上午" | "下午";
+    executionStatus?: "draft" | "executing" | "archived";
+  }): SavedRoutePlan[];
+  getSavedRoutePlanById(routePlanId: string): SavedRoutePlan | undefined;
+  getActiveRoutePlan(doctorId: string): SavedRoutePlan | undefined;
+  getDoctorRouteSchedules(doctorId: string, routePlanId?: string | null): VisitSchedule[];
+  getSuggestedRoute(doctorId: string, options?: RoutePlanningWindow): VisitSchedule[];
+  getShortestTravelRoute(doctorId: string, options?: RoutePlanningWindow): VisitSchedule[];
+  upsertSchedule(schedule: VisitSchedule): void;
+  upsertSavedRoutePlan(routePlan: SavedRoutePlan): void;
+  deleteSavedRoutePlan(routePlanId: string): void;
+  executeRoutePlan(routePlanId: string): SavedRoutePlan | undefined;
+  syncRouteItemStatus(routePlanId: string, patientId: string, status: RouteItemStatus): void;
+  upsertVisitRecord(record: VisitRecord): void;
+  startVisitTravel(visitScheduleId: string, departureTime?: string): VisitRecord | undefined;
+  updateRouteOrder(visitScheduleId: string, routeOrder: number): void;
+  confirmArrival(
+    visitScheduleId: string,
+    confirmedBy: ConfirmationSource,
+    recordedAt?: string
+  ): VisitRecord | undefined;
+  confirmDeparture(
+    visitScheduleId: string,
+    confirmedBy: ConfirmationSource,
+    recordedAt?: string
+  ): VisitRecord | undefined;
+  recordVisitFeedback(
+    visitScheduleId: string,
+    feedbackCode: VisitFeedbackCode,
+    recordedAt?: string
+  ): VisitRecord | undefined;
+  updateFamilyFollowUpStatus(
+    visitScheduleId: string,
+    status: FamilyFollowUpStatus,
+    sentAt?: string | null
+  ): VisitRecord | undefined;
+  rescheduleVisit(input: {
+    visitScheduleId: string;
+    requestedByRole: UserRole;
+    newStartAt: string;
+    newEndAt: string;
+    reason: string;
+    changeSummary: string;
+  }): void;
+  coverVisit(input: {
+    visitScheduleId: string;
+    requestedByRole: UserRole;
+    newDoctorId: string;
+    reason: string;
+    changeSummary: string;
+  }): void;
+  cancelVisit(visitScheduleId: string, reason: string, changeSummary: string): void;
+  pauseVisit(visitScheduleId: string, reason: string, changeSummary: string): void;
+  getReminders(role: UserRole, ownerId?: string): Reminder[];
+  appendDoctorLocationLog(log: DoctorLocationLog): void;
+  getDoctorLocationLogs(doctorId: string): DoctorLocationLog[];
+}
+
+export interface NotificationRepository {
+  getTemplates(): NotificationTemplate[];
+  getTasks(filters?: { status?: NotificationStatus }): NotificationTask[];
+  getTasksByScheduleId(scheduleId: string): NotificationTask[];
+  getTasksByRecipientRole(recipientRole: RecipientRole): NotificationTask[];
+  updateTaskDraft(
+    taskId: string,
+    input: {
+      previewPayload?: Record<string, string>;
+      caregiverId?: string | null;
+      recipientName?: string;
+      recipientTarget?: string;
+      channel?: NotificationTask["channel"];
+    }
+  ): void;
+  updateTaskStatus(
+    taskId: string,
+    input: {
+      status: NotificationStatus;
+      replyExcerpt?: string | null;
+      replyCode?: string | null;
+      failureReason?: string | null;
+    }
+  ): void;
+  batchUpdateStatuses(taskIds: string[], status: NotificationStatus): void;
+  upsertTemplate(template: NotificationTemplate): void;
+  createTask(task: NotificationTask): void;
+}
+
+export interface StaffingRepository {
+  getAdminDashboard(): AdminDashboard;
+  getLeaveRequests(): LeaveRequest[];
+  getRescheduleActions(): RescheduleAction[];
+  createLeaveRequest(input: {
+    doctorId: string;
+    startDate: string;
+    endDate: string;
+    reason: string;
+    handoffNote: string;
+    status?: LeaveRequest["status"];
+  }): void;
+  getImpactedSchedules(doctorId: string, startDate: string, endDate: string): VisitSchedule[];
+}
+
+export type AppRepositories = {
+  patientRepository: PatientRepository;
+  contactRepository: ContactRepository;
+  visitRepository: VisitRepository;
+  notificationRepository: NotificationRepository;
+  staffingRepository: StaffingRepository;
+};
