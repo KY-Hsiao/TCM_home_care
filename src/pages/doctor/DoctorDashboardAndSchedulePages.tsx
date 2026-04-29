@@ -2,7 +2,9 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useAppContext } from "../../app/use-app-context";
 import type { SavedRoutePlan } from "../../domain/models";
+import type { RouteMapInput } from "../../services/types";
 import { VisitAutomationPanel } from "../../modules/maps/VisitAutomationPanel";
+import { RouteMapPreviewCard } from "../../modules/maps/RouteMapPreviewCard";
 import {
   buildReadonlySummary,
   doctorActionButtonClass,
@@ -176,6 +178,41 @@ function resolveRoutePlanItemStatusLabel(status: string) {
     return "前往中";
   }
   return "已排程";
+}
+
+function buildRouteMapInputFromRoutePlan(routePlan: SavedRoutePlan): RouteMapInput | null {
+  const orderedStops = routePlan.route_items
+    .filter((item) => item.checked)
+    .slice()
+    .sort((left, right) => {
+      const leftOrder = left.route_order ?? Number.MAX_SAFE_INTEGER;
+      const rightOrder = right.route_order ?? Number.MAX_SAFE_INTEGER;
+      return leftOrder - rightOrder;
+    });
+
+  if (orderedStops.length === 0) {
+    return null;
+  }
+
+  return {
+    origin: {
+      address: routePlan.start_address,
+      latitude: routePlan.start_latitude,
+      longitude: routePlan.start_longitude
+    },
+    destination: {
+      address: routePlan.end_address,
+      latitude: routePlan.end_latitude,
+      longitude: routePlan.end_longitude
+    },
+    waypoints: orderedStops.map((item) => ({
+      address: item.address,
+      latitude: null,
+      longitude: null
+    })),
+    travelMode: "driving",
+    label: formatRoutePlanButtonLabel(routePlan)
+  };
 }
 
 function resolveRoutePlanNavigationState(input: {
@@ -441,6 +478,9 @@ function DoctorRouteSelector({ embedded = false }: { embedded?: boolean }) {
   const patientDetail = patientDetailScheduleId
     ? repositories.visitRepository.getScheduleDetail(patientDetailScheduleId)
     : undefined;
+  const patientDetailActiveRoutePlan = session.activeRoutePlanId
+    ? repositories.visitRepository.getSavedRoutePlanById(session.activeRoutePlanId)
+    : repositories.visitRepository.getActiveRoutePlan(session.activeDoctorId);
   const patientDetailTimeSummary = patientDetail ? buildReadonlySummary(patientDetail.record) : [];
   const orderedSchedules = repositories.visitRepository.getDoctorRouteSchedules(
     session.activeDoctorId,
@@ -483,6 +523,35 @@ function DoctorRouteSelector({ embedded = false }: { embedded?: boolean }) {
         originLongitude: patientDetailRuntime?.latestSample?.longitude ?? null
       })
     : null;
+  const patientDetailReturnHospitalNavigationUrl =
+    patientDetail && patientDetailActiveRoutePlan
+      ? services.maps.buildNavigationUrl({
+          destinationAddress: patientDetailActiveRoutePlan.end_address,
+          destinationLatitude: patientDetailActiveRoutePlan.end_latitude,
+          destinationLongitude: patientDetailActiveRoutePlan.end_longitude,
+          originLatitude:
+            patientDetailRuntime?.latestSample?.latitude ??
+            patientDetail.schedule.home_latitude_snapshot,
+          originLongitude:
+            patientDetailRuntime?.latestSample?.longitude ??
+            patientDetail.schedule.home_longitude_snapshot
+        })
+      : null;
+  const patientDetailNextStopNavigationUrl =
+    patientDetail && patientDetailNextScheduleDetail
+      ? services.maps.buildNavigationUrl({
+          destinationAddress: patientDetailNextScheduleDetail.schedule.address_snapshot,
+          destinationKeyword: patientDetailNextScheduleDetail.schedule.location_keyword_snapshot,
+          destinationLatitude: patientDetailNextScheduleDetail.schedule.home_latitude_snapshot,
+          destinationLongitude: patientDetailNextScheduleDetail.schedule.home_longitude_snapshot,
+          originLatitude:
+            patientDetailRuntime?.latestSample?.latitude ??
+            patientDetail.schedule.home_latitude_snapshot,
+          originLongitude:
+            patientDetailRuntime?.latestSample?.longitude ??
+            patientDetail.schedule.home_longitude_snapshot
+        })
+      : null;
 
   const handlePatientDetailDepart = () => {
     if (!patientDetail) {
@@ -531,6 +600,11 @@ function DoctorRouteSelector({ embedded = false }: { embedded?: boolean }) {
       return;
     }
     services.visitAutomation.confirmDeparture(patientDetail.schedule.id, "doctor");
+    setPatientDetailScheduleId(null);
+    navigate("/doctor/navigation");
+    if (patientDetailReturnHospitalNavigationUrl) {
+      openExternalNavigation(patientDetailReturnHospitalNavigationUrl);
+    }
   };
 
   const handlePatientDetailProceedToNextStop = () => {
@@ -557,8 +631,8 @@ function DoctorRouteSelector({ embedded = false }: { embedded?: boolean }) {
     });
     setPatientDetailScheduleId(null);
     navigate("/doctor/navigation");
-    if (patientDetailNavigationUrl) {
-      openExternalNavigation(patientDetailNavigationUrl);
+    if (patientDetailNextStopNavigationUrl) {
+      openExternalNavigation(patientDetailNextStopNavigationUrl);
     }
   };
 
@@ -634,8 +708,8 @@ function DoctorRouteSelector({ embedded = false }: { embedded?: boolean }) {
       {embedded ? routeListContent : <Panel title="今日導航路線">{routeListContent}</Panel>}
 
       {selectedRoutePlan ? (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/45 p-3 lg:p-4">
-          <div className="flex max-h-[92dvh] w-full max-w-3xl flex-col rounded-[1.5rem] bg-white p-4 shadow-2xl lg:max-h-[85vh] lg:rounded-[2rem] lg:p-6">
+        <div className="fixed inset-0 z-40 flex items-end justify-center overflow-y-auto bg-slate-950/45 px-3 pt-16 pb-0 lg:items-center lg:p-4">
+          <div className="flex max-h-[88dvh] w-full max-w-3xl flex-col rounded-t-[1.5rem] bg-white p-4 shadow-2xl lg:max-h-[85vh] lg:rounded-[2rem] lg:p-6">
             <div className="flex items-center justify-between gap-4">
               <div>
                 <p className="text-sm font-medium text-brand-coral">受試者名單</p>
@@ -653,6 +727,12 @@ function DoctorRouteSelector({ embedded = false }: { embedded?: boolean }) {
             </div>
             <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
               點任一位患者即可跳出單人的紀錄視窗；導航仍以右側的開始導航按鈕為主。
+            </div>
+            <div className="mt-4 lg:mt-5">
+              <RouteMapPreviewCard
+                route={buildRouteMapInputFromRoutePlan(selectedRoutePlan)}
+                emptyText="這條路線目前沒有已勾選的患者站點，因此無法建立整體路線預覽。"
+              />
             </div>
             <div className="mt-4 flex-1 space-y-2 overflow-y-auto pr-1 lg:mt-5 lg:space-y-3">
               {selectedRouteEntries.map(({ item, detail }) => (
@@ -982,9 +1062,25 @@ export function DoctorLocationPage() {
     if (!treatmentContext) {
       return;
     }
+    const returnHospitalNavigationUrl = activeRoutePlan
+      ? services.maps.buildNavigationUrl({
+          destinationAddress: activeRoutePlan.end_address,
+          destinationLatitude: activeRoutePlan.end_latitude,
+          destinationLongitude: activeRoutePlan.end_longitude,
+          originLatitude:
+            treatmentContext.runtime?.latestSample?.latitude ??
+            treatmentContext.schedule.home_latitude_snapshot,
+          originLongitude:
+            treatmentContext.runtime?.latestSample?.longitude ??
+            treatmentContext.schedule.home_longitude_snapshot
+        })
+      : null;
     services.visitAutomation.confirmDeparture(treatmentContext.schedule.id, "doctor");
     const nextContext = findNextSequentialRouteContext(routeContexts, treatmentContext.schedule.id);
     if (!nextContext) {
+      if (returnHospitalNavigationUrl) {
+        openExternalNavigation(returnHospitalNavigationUrl);
+      }
       return;
     }
     const nextRecord =
@@ -1006,8 +1102,12 @@ export function DoctorLocationPage() {
         destinationKeyword: nextContext.schedule.location_keyword_snapshot,
         destinationLatitude: nextContext.schedule.home_latitude_snapshot,
         destinationLongitude: nextContext.schedule.home_longitude_snapshot,
-        originLatitude: treatmentContext.runtime?.latestSample?.latitude ?? null,
-        originLongitude: treatmentContext.runtime?.latestSample?.longitude ?? null
+        originLatitude:
+          treatmentContext.runtime?.latestSample?.latitude ??
+          treatmentContext.schedule.home_latitude_snapshot,
+        originLongitude:
+          treatmentContext.runtime?.latestSample?.longitude ??
+          treatmentContext.schedule.home_longitude_snapshot
       })
     );
   };
@@ -1082,7 +1182,7 @@ export function DoctorLocationPage() {
               </h3>
               <p className="mt-1.5 text-sm text-slate-600">
                 {nextRouteContext
-                  ? `按下後會直接開啟下一位 ${nextRouteContext.detail.patient.name} 的 Google 地圖導航。`
+                  ? `按下後會直接開啟下一家 ${nextRouteContext.detail.patient.name} 的 Google 地圖導航。`
                   : "按下後可接續最後一段返院導航。"}
               </p>
               <button

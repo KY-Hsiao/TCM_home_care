@@ -354,9 +354,6 @@ export function createPatientRepository(
     getAdmins() {
       return [...getDb().admin_users];
     },
-    getCommunicationSettings() {
-      return { ...getDb().communication_settings };
-    },
     upsertDoctor(doctor: Doctor) {
       updateDb((db) => {
         const now = new Date().toISOString();
@@ -364,7 +361,6 @@ export function createPatientRepository(
         const index = nextDoctors.findIndex((item) => item.id === doctor.id);
         const normalizedDoctor = {
           ...doctor,
-          line_search_keyword: doctor.line_search_keyword ?? "",
           google_account_logged_in: doctor.google_account_logged_in ?? false,
           available_service_slots: doctor.available_service_slots ?? [],
           updated_at: now
@@ -424,21 +420,6 @@ export function createPatientRepository(
         ...db,
         admin_users: db.admin_users.filter((admin) => admin.id !== adminId)
       }));
-    },
-    upsertCommunicationSettings(settings) {
-      updateDb((db) => {
-        const now = new Date().toISOString();
-        return {
-          ...db,
-          communication_settings: {
-            ...db.communication_settings,
-            ...settings,
-            doctor_contact_line_url: settings.doctor_contact_line_url ?? "",
-            created_at: db.communication_settings.created_at || settings.created_at || now,
-            updated_at: now
-          }
-        };
-      });
     },
     upsertPatient(patient: Patient) {
       let result: PatientUpsertResult = {

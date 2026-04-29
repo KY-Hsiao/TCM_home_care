@@ -4,12 +4,6 @@ import { navigationByRole } from "../../shared/constants/navigation";
 import { useAppContext } from "../use-app-context";
 import { formatDateTimeFull } from "../../shared/utils/format";
 import { isVisitFinished, isVisitUnlocked } from "../../modules/doctor/doctor-page-helpers";
-import {
-  isConfiguredLineUrl,
-  openExternalContactTarget,
-  requestDoctorLineChat
-} from "../../services/line/desktop-line-helper";
-import { loadDesktopLineAutomationSettings } from "../../services/line/desktop-line-settings";
 
 type NotificationCenterItem = {
   id: string;
@@ -23,11 +17,6 @@ type DoctorLocationSyncState = {
   status: "idle" | "requesting" | "sharing" | "denied" | "unsupported" | "error";
   message: string;
   lastUpdatedAt: string | null;
-};
-
-type ContactFeedback = {
-  tone: "success" | "warning";
-  message: string;
 };
 
 function resolveDoctorLocationBannerTone(status: DoctorLocationSyncState["status"]) {
@@ -58,7 +47,6 @@ export function AppShell() {
   const navigate = useNavigate();
   const location = useLocation();
   const {
-    db,
     repositories,
     services,
     session,
@@ -66,11 +54,9 @@ export function AppShell() {
     changePassword,
     isAuthenticatedForRole,
     setRole,
-    setActiveDoctorId,
     resetMockData
   } = useAppContext();
   const doctors = repositories.patientRepository.getDoctors();
-  const admins = repositories.patientRepository.getAdmins();
   const shellRole = location.pathname.startsWith("/admin")
     ? "admin"
     : location.pathname.startsWith("/doctor")
@@ -79,7 +65,6 @@ export function AppShell() {
   const navItems = shellRole ? navigationByRole[shellRole] : [];
   const isAuthenticated = shellRole ? isAuthenticatedForRole(shellRole) : true;
   const currentDoctor = doctors.find((doctor) => doctor.id === session.activeDoctorId);
-  const currentAdmin = admins.find((admin) => admin.id === session.activeAdminId) ?? admins[0];
   const currentUserId = shellRole === "doctor" ? session.activeDoctorId : session.activeAdminId;
   const currentUserName =
     shellRole === "doctor"
@@ -157,9 +142,6 @@ export function AppShell() {
     message: "尚未開始定位共享。",
     lastUpdatedAt: null
   });
-  const [adminContactFeedback, setAdminContactFeedback] = useState<ContactFeedback | null>(null);
-  const [doctorContactFeedback, setDoctorContactFeedback] = useState<ContactFeedback | null>(null);
-  const [isContactingDoctor, setIsContactingDoctor] = useState(false);
   const repositoriesRef = useRef(repositories);
   const lastLocationWriteAtRef = useRef(0);
 
@@ -170,10 +152,6 @@ export function AppShell() {
       setRole(shellRole);
     }
   }, [session.role, setRole, shellRole]);
-
-  useEffect(() => {
-    setAdminContactFeedback(null);
-  }, [session.activeDoctorId]);
 
   useEffect(() => {
     if (shellRole !== "doctor" || !session.authenticatedDoctorId) {
@@ -314,158 +292,6 @@ export function AppShell() {
       .sort((left, right) => new Date(right.timestamp).getTime() - new Date(left.timestamp).getTime())
       .slice(0, 6);
   }, [repositories, session.activeAdminId, session.activeDoctorId, shellRole]);
-
-  const doctorNavigationShortcut = useMemo(() => {
-    if (shellRole !== "doctor") {
-      return null;
-    }
-
-    const orderedSchedules = repositories.visitRepository.getDoctorDashboard(session.activeDoctorId).todaySchedules;
-    const activeSchedule = orderedSchedules.find((schedule) => {
-      const record = repositories.visitRepository.getVisitRecordByScheduleId(schedule.id);
-      return (
-        isVisitUnlocked(orderedSchedules, schedule.id, record) &&
-        Boolean(record?.departure_time) &&
-        !record?.arrival_time &&
-        !isVisitFinished(schedule.status)
-      );
-    });
-
-    if (!activeSchedule) {
-      return null;
-    }
-
-    const runtime = services.visitAutomation.getTrackingState(activeSchedule.id);
-    if (runtime?.watchStatus !== "running") {
-      return null;
-    }
-
-    return repositories.visitRepository.getScheduleDetail(activeSchedule.id);
-  }, [repositories, services, session.activeDoctorId, shellRole]);
-
-  const contactShortcut = useMemo(() => {
-    if (!shellRole) {
-      return null;
-    }
-
-    if (shellRole === "admin") {
-      const targetDoctor = currentDoctor ?? doctors[0];
-      if (!targetDoctor) {
-        return null;
-      }
-
-      return {
-        title: "快捷聯絡醫師",
-        subtitle: "行政端可直接切換目標醫師後一鍵開啟 LINE，失敗時自動改用電話。",
-        phone: targetDoctor.phone,
-        lineSearchKeyword: targetDoctor.line_search_keyword,
-        contactName: targetDoctor.name,
-        primaryLabel: "聯絡目前醫師",
-        secondaryLabel: "查看醫師位置"
-      };
-    }
-
-    if (!currentAdmin) {
-      return null;
-    }
-
-    return {
-      title: "聯絡行政 / 緊急求救",
-      subtitle: doctorNavigationShortcut
-        ? `導航前往 ${doctorNavigationShortcut.patient.name} 期間會優先開啟行政 LINE，必要時立即改用電話求助。`
-        : "導航期間會優先開啟行政 LINE，必要時立即改用電話求助。",
-      phone: currentAdmin.phone,
-      lineUrl: db.communication_settings.doctor_contact_line_url,
-      contactName: "行政人員",
-      primaryLabel: "聯絡行政端",
-      secondaryLabel: "緊急求救"
-    };
-  }, [
-    currentAdmin,
-    currentDoctor,
-    db.communication_settings.doctor_contact_line_url,
-    doctorNavigationShortcut,
-    doctors,
-    shellRole
-  ]);
-
-  const openPhoneFallback = (phone: string) => {
-    openExternalContactTarget(`tel:${phone}`);
-  };
-
-  const handleDoctorContactAdmin = () => {
-    if (!contactShortcut || shellRole !== "doctor") {
-      return;
-    }
-
-    const lineUrl =
-      "lineUrl" in contactShortcut && typeof contactShortcut.lineUrl === "string"
-        ? contactShortcut.lineUrl
-        : "";
-
-    if (!isConfiguredLineUrl(lineUrl)) {
-      setDoctorContactFeedback({
-        tone: "warning",
-        message: "尚未設定 LINE 聯絡入口，已改用電話聯絡行政端。"
-      });
-      openPhoneFallback(contactShortcut.phone);
-      return;
-    }
-
-    const opened = openExternalContactTarget(lineUrl, "_blank");
-    if (opened) {
-      setDoctorContactFeedback({
-        tone: "success",
-        message: "已嘗試開啟行政 LINE 對話；若未跳轉，請改用電話聯絡。"
-      });
-      return;
-    }
-
-    setDoctorContactFeedback({
-      tone: "warning",
-      message: "LINE 連結開啟失敗，已改用電話聯絡行政端。"
-    });
-    openPhoneFallback(contactShortcut.phone);
-  };
-
-  const handleAdminContactDoctor = async () => {
-    if (!contactShortcut || shellRole !== "admin") {
-      return;
-    }
-
-    const targetDoctor = currentDoctor ?? doctors[0];
-    if (!targetDoctor) {
-      return;
-    }
-
-    setIsContactingDoctor(true);
-    const helperSettings = loadDesktopLineAutomationSettings();
-    const result = await requestDoctorLineChat(
-      {
-        doctorId: targetDoctor.id,
-        doctorName: targetDoctor.name,
-        lineSearchKeyword: targetDoctor.line_search_keyword,
-        phone: targetDoctor.phone
-      },
-      helperSettings
-    );
-
-    if (result.success) {
-      setAdminContactFeedback({
-        tone: "success",
-        message: result.message
-      });
-      setIsContactingDoctor(false);
-      return;
-    }
-
-    setAdminContactFeedback({
-      tone: "warning",
-      message: `${result.message} 已改用電話聯絡。`
-    });
-    openPhoneFallback(targetDoctor.phone);
-    setIsContactingDoctor(false);
-  };
 
   const handleLogout = () => {
     if (!shellRole) {
@@ -683,53 +509,6 @@ export function AppShell() {
                   ) : null}
                 </div>
               </div>
-              {shellRole === "admin" && contactShortcut && location.pathname.startsWith("/admin/doctor-tracking") ? (
-                <div className="mt-4 flex flex-wrap items-end gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-                  <label className="block min-w-[220px]">
-                    <span className="mb-1 block font-medium text-brand-ink">快捷聯絡醫師</span>
-                    <select
-                      aria-label="快捷聯絡醫師"
-                      value={session.activeDoctorId}
-                      onChange={(event) => setActiveDoctorId(event.target.value)}
-                      className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
-                    >
-                      {doctors.map((doctor) => (
-                        <option key={doctor.id} value={doctor.id}>
-                          {doctor.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      void handleAdminContactDoctor();
-                    }}
-                    disabled={isContactingDoctor}
-                    className="rounded-full bg-brand-forest px-4 py-3 text-sm font-semibold text-white"
-                  >
-                    {isContactingDoctor ? "連線中..." : contactShortcut.primaryLabel}
-                  </button>
-                  <p className="text-xs text-slate-500">
-                    目前目標：{contactShortcut.contactName} / {contactShortcut.phone} / LINE 搜尋：
-                    {"lineSearchKeyword" in contactShortcut && contactShortcut.lineSearchKeyword
-                      ? contactShortcut.lineSearchKeyword
-                      : "未設定"}
-                  </p>
-                  <p className="text-xs text-slate-500">
-                    醫師定位追蹤固定留在行政端頁面內查看；除非先登出，否則不會切換到醫師端操作介面。
-                  </p>
-                  {adminContactFeedback ? (
-                    <p
-                      className={`text-xs ${
-                        adminContactFeedback.tone === "success" ? "text-emerald-700" : "text-amber-700"
-                      }`}
-                    >
-                      {adminContactFeedback.message}
-                    </p>
-                  ) : null}
-                </div>
-              ) : null}
             </header>
           ) : null}
           <main>
@@ -737,48 +516,6 @@ export function AppShell() {
           </main>
         </div>
       </div>
-
-      {shellRole === "doctor" && contactShortcut && doctorNavigationShortcut ? (
-        <div className="pointer-events-none fixed right-4 top-4 z-50 md:right-6 md:top-6">
-          <div className="pointer-events-auto w-[260px] rounded-[28px] border border-rose-200 bg-white/95 p-4 shadow-2xl backdrop-blur">
-            <p className="text-sm font-semibold text-brand-ink">{contactShortcut.title}</p>
-            <p className="mt-1 text-xs text-slate-500">{contactShortcut.subtitle}</p>
-            <p className="mt-2 text-xs text-slate-500">
-              目前導航：{doctorNavigationShortcut.patient.name}
-            </p>
-            <p className="mt-2 text-xs text-slate-500">
-              連絡窗口：{contactShortcut.contactName} / {contactShortcut.phone}
-            </p>
-            <div className="mt-3 flex gap-2">
-              <button
-                type="button"
-                onClick={handleDoctorContactAdmin}
-                className="flex-1 rounded-full bg-brand-forest px-3 py-2 text-center text-sm font-semibold text-white"
-              >
-                {contactShortcut.primaryLabel}
-              </button>
-              <a
-                href={`tel:${contactShortcut.phone}`}
-                className="flex-1 rounded-full bg-rose-600 px-3 py-2 text-center text-sm font-semibold text-white"
-              >
-                {contactShortcut.secondaryLabel}
-              </a>
-            </div>
-            {doctorContactFeedback ? (
-              <p
-                className={`mt-2 text-[11px] ${
-                  doctorContactFeedback.tone === "success" ? "text-emerald-700" : "text-amber-700"
-                }`}
-              >
-                {doctorContactFeedback.message}
-              </p>
-            ) : null}
-            <p className="mt-2 text-[11px] text-slate-500">
-              Google Maps 會另開分頁或外部 App；系統頁面內會持續保留這個求助按鈕。
-            </p>
-          </div>
-        </div>
-      ) : null}
 
       {shellRole === "doctor" && isDoctorQuickSummaryOpen ? (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/45 p-4">

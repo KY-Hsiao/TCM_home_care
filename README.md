@@ -73,25 +73,6 @@
    npm run build
    ```
 
-## LINE helper（固定 Windows 管理電腦）
-
-若你要讓行政端的「聯絡目前醫師」直接嘗試切換到桌面版 LINE 對話，請在固定 Windows 管理電腦另外啟動本機 helper：
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\tools\line_helper\start_line_helper.ps1
-```
-
-預設會在 `http://127.0.0.1:8765` 提供：
-
-- `GET /health`
-- `POST /line/open-chat`
-
-注意事項：
-
-- 這個 helper 只支援 Windows。
-- 需要桌面版 LINE 已安裝，且最佳情況是已登入並保持開啟。
-- 自動化流程屬於 best-effort；若 helper 無法聚焦視窗、搜尋失敗或 LINE 未正確啟動，前端會回退到電話聯絡。
-
 ## 路徑注意事項
 
 若專案放在雲端同步資料夾或含特殊路徑限制的磁碟下，根目錄直接執行 `npm install` 可能會因 `node_modules` 大量寫檔而失敗。現在預設建議先跑 `.codex\scripts\setup.ps1`，它會把共用依賴固定準備在 `C:\codex-deps\tcm-home-care`，並讓 `launch_app.ps1` / `app.py` 把驗證副本同步到 `C:\codex-deps\tcm-home-care-verify` 後再啟動。

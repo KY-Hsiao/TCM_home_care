@@ -1,19 +1,13 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { useEffect, type ReactElement } from "react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import type { ReactElement } from "react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AppProviders } from "../providers";
-import { useAppContext } from "../use-app-context";
 import { AdminDashboardPage, AdminDoctorTrackingPage, AdminGuidePage } from "../../pages/admin/AdminPages";
 import { DoctorLocationPage } from "../../pages/doctor/DoctorPages";
 import { RoleSelectPage } from "../../pages/role-select/RoleSelectPage";
 import { AppShell } from "./AppShell";
 import { SESSION_STORAGE_KEY } from "../auth-storage";
-import { createSeedDb } from "../../data/seed";
-import { MOCK_DB_STORAGE_KEY } from "../../data/mock/db";
-import { DESKTOP_LINE_SETTINGS_STORAGE_KEY } from "../../services/line/desktop-line-settings";
-import { sameAddressLocationKeyword } from "../../shared/utils/location-keyword";
-import { isVisitFinished, isVisitUnlocked } from "../../modules/doctor/doctor-page-helpers";
 
 function renderShell(initialEntry: string, element: ReactElement) {
   return render(
@@ -28,48 +22,6 @@ function renderShell(initialEntry: string, element: ReactElement) {
       </AppProviders>
     </MemoryRouter>
   );
-}
-
-function StartDoctorTrackingOnMount({ doctorId }: { doctorId: string }) {
-  const { repositories, services } = useAppContext();
-
-  useEffect(() => {
-    const orderedSchedules = repositories.visitRepository.getDoctorDashboard(doctorId).todaySchedules;
-    const targetSchedule = orderedSchedules.find((schedule) => {
-      const record = repositories.visitRepository.getVisitRecordByScheduleId(schedule.id);
-      return isVisitUnlocked(orderedSchedules, schedule.id, record) && !isVisitFinished(schedule.status);
-    });
-
-    if (!targetSchedule) {
-      return;
-    }
-
-    const detail = repositories.visitRepository.getScheduleDetail(targetSchedule.id);
-    if (!detail) {
-      return;
-    }
-
-    if (services.visitAutomation.getTrackingState(targetSchedule.id)?.watchStatus === "running") {
-      return;
-    }
-
-    const nextRecord =
-      detail.record?.departure_time
-        ? detail.record
-        : repositories.visitRepository.startVisitTravel(targetSchedule.id) ?? detail.record;
-
-    services.visitAutomation.startTracking({
-      ...detail,
-      record: nextRecord ?? detail.record,
-      schedule: {
-        ...detail.schedule,
-        status: "on_the_way",
-        geofence_status: "tracking"
-      }
-    });
-  }, [doctorId, repositories, services]);
-
-  return null;
 }
 
 describe("AppShell", () => {
@@ -100,7 +52,7 @@ describe("AppShell", () => {
     expect(screen.getByText("行政管理")).toBeInTheDocument();
   });
 
-  it("行政頁只在醫師追蹤頁提供快捷聯絡醫師功能，且不提供切換到醫師端的入口", () => {
+  it("行政頁醫師追蹤頁不再顯示快捷聯絡醫師區塊", () => {
     window.localStorage.setItem(
       SESSION_STORAGE_KEY,
       JSON.stringify({
@@ -114,12 +66,9 @@ describe("AppShell", () => {
 
     renderShell("/admin/doctor-tracking", <AdminDoctorTrackingPage />);
 
-    expect(screen.getByLabelText("快捷聯絡醫師")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "聯絡目前醫師" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("快捷聯絡醫師")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "聯絡目前醫師" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "查看醫師位置" })).not.toBeInTheDocument();
-    expect(
-      screen.getByText("醫師定位追蹤固定留在行政端頁面內查看；除非先登出，否則不會切換到醫師端操作介面。")
-    ).toBeInTheDocument();
   });
 
   it("行政頁左側導覽會顯示教學指引標籤", () => {
@@ -169,97 +118,7 @@ describe("AppShell", () => {
     ]);
   });
 
-  it("醫師頁未設定 LINE 入口時會回退到電話聯絡行政", async () => {
-    const openSpy = vi.spyOn(window, "open").mockReturnValue(window);
-    const db = createSeedDb();
-    window.localStorage.setItem(MOCK_DB_STORAGE_KEY, JSON.stringify(db));
-    window.localStorage.setItem(
-      SESSION_STORAGE_KEY,
-      JSON.stringify({
-        role: "doctor",
-        activeDoctorId: "doc-001",
-        activeAdminId: "admin-001",
-        authenticatedDoctorId: "doc-001",
-        authenticatedAdminId: null
-      })
-    );
-
-    renderShell(
-      "/doctor/navigation",
-      <>
-        <StartDoctorTrackingOnMount doctorId="doc-001" />
-        <DoctorLocationPage />
-      </>
-    );
-
-    await waitFor(() => {
-      expect(screen.getByText("聯絡行政 / 緊急求救")).toBeInTheDocument();
-      expect(screen.getByText(/目前導航：/)).toBeInTheDocument();
-    });
-    fireEvent.click(screen.getByRole("button", { name: "聯絡行政端" }));
-
-    expect(openSpy).toHaveBeenCalledWith("tel:02-2765-2101", "_self", undefined);
-    expect(screen.getByText("尚未設定 LINE 聯絡入口，已改用電話聯絡行政端。")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "緊急求救" })).toBeInTheDocument();
-  });
-
-  it("醫師頁已設定 LINE 入口時會優先開啟 LINE", async () => {
-    const openSpy = vi.spyOn(window, "open").mockReturnValue(window);
-    const db = createSeedDb();
-    const activeSchedule = db.visit_schedules.find((schedule) => schedule.assigned_doctor_id === "doc-001");
-    if (activeSchedule) {
-      activeSchedule.location_keyword_snapshot = sameAddressLocationKeyword;
-    }
-    db.communication_settings.doctor_contact_line_url = "line://msg/text/admin";
-    window.localStorage.setItem(MOCK_DB_STORAGE_KEY, JSON.stringify(db));
-    window.localStorage.setItem(
-      SESSION_STORAGE_KEY,
-      JSON.stringify({
-        role: "doctor",
-        activeDoctorId: "doc-001",
-        activeAdminId: "admin-001",
-        authenticatedDoctorId: "doc-001",
-        authenticatedAdminId: null
-      })
-    );
-
-    renderShell(
-      "/doctor/navigation",
-      <>
-        <StartDoctorTrackingOnMount doctorId="doc-001" />
-        <DoctorLocationPage />
-      </>
-    );
-
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: "聯絡行政端" })).toBeInTheDocument();
-    });
-    fireEvent.click(screen.getByRole("button", { name: "聯絡行政端" }));
-
-    expect(openSpy).toHaveBeenCalledWith("line://msg/text/admin", "_blank", "noopener,noreferrer");
-    expect(screen.getByText("已嘗試開啟行政 LINE 對話；若未跳轉，請改用電話聯絡。")).toBeInTheDocument();
-  });
-
-  it("醫師未在導航期間時不顯示聯絡行政浮動卡", () => {
-    const db = createSeedDb();
-    db.visit_schedules
-      .filter((schedule) => schedule.assigned_doctor_id === "doc-001")
-      .forEach((schedule) => {
-        if (["on_the_way", "tracking", "proximity_pending"].includes(schedule.status)) {
-          schedule.status = "waiting_departure";
-        }
-      });
-    db.visit_records
-      .filter((record) =>
-        db.visit_schedules.some(
-          (schedule) => schedule.id === record.visit_schedule_id && schedule.assigned_doctor_id === "doc-001"
-        )
-      )
-      .forEach((record) => {
-        record.departure_time = null;
-        record.arrival_time = null;
-      });
-    window.localStorage.setItem(MOCK_DB_STORAGE_KEY, JSON.stringify(db));
+  it("醫師端導航頁不再顯示聯絡行政浮動卡", () => {
     window.localStorage.setItem(
       SESSION_STORAGE_KEY,
       JSON.stringify({
@@ -312,8 +171,8 @@ describe("AppShell", () => {
 
     expect(within(summaryList).getByText("目前帳號：蕭坤元醫師")).toBeInTheDocument();
     expect(within(summaryList).getByText("定位座標：24.99540, 121.55500")).toBeInTheDocument();
-    expect(within(summaryList).getByText("最後更新：2026/04/24 09:30")).toBeInTheDocument();
-    expect(within(summaryList).getByText("同步案件：第 2 站 / 蕭瑞芬")).toBeInTheDocument();
+    expect(within(summaryList).getByText("最後更新：2026/04/29 09:30")).toBeInTheDocument();
+    expect(within(summaryList).getByText("同步案件：第 2 站 / 李美蘭")).toBeInTheDocument();
   });
 
   it("醫師頁左側導覽不再顯示排程清單", () => {
@@ -368,27 +227,9 @@ describe("AppShell", () => {
     ).toBeInTheDocument();
   });
 
-  it("行政頁聯絡目前醫師時會呼叫桌面 LINE helper", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        success: true,
-        stage: "open_chat",
-        message: "已切換到蕭坤元醫師的 LINE 對話。",
-        fallbackRecommended: false
-      })
-    });
+  it("行政頁醫師追蹤頁不再呼叫外部 LINE helper", () => {
+    const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
-    vi.spyOn(window, "open").mockReturnValue(window);
-    window.localStorage.setItem(
-      DESKTOP_LINE_SETTINGS_STORAGE_KEY,
-      JSON.stringify({
-        enabled: true,
-        helper_base_url: "http://127.0.0.1:8765",
-        launch_line_if_needed: true,
-        line_window_hint: "LINE"
-      })
-    );
     window.localStorage.setItem(
       SESSION_STORAGE_KEY,
       JSON.stringify({
@@ -402,16 +243,7 @@ describe("AppShell", () => {
 
     renderShell("/admin/doctor-tracking", <AdminDoctorTrackingPage />);
 
-    fireEvent.click(screen.getByRole("button", { name: "聯絡目前醫師" }));
-
-    await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith(
-        "http://127.0.0.1:8765/line/open-chat",
-        expect.objectContaining({
-          method: "POST"
-        })
-      )
-    );
-    expect(screen.getByText("已切換到蕭坤元醫師的 LINE 對話。")).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "聯絡目前醫師" })).not.toBeInTheDocument();
   });
 });

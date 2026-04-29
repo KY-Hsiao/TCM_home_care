@@ -1,6 +1,5 @@
 import { adminUsersSeed } from "./admins";
 import { caregiverChatBindingsSeed, caregiversSeed } from "./caregivers";
-import { communicationSettingsSeed } from "./communication-settings";
 import { doctorsSeed } from "./doctors";
 import { contactLogsSeed } from "./logs";
 import { notificationTasksSeed, notificationTemplatesSeed } from "./notifications";
@@ -23,7 +22,6 @@ export function createSeedDb(): AppDb {
     caregiver_chat_bindings: caregiverChatBindingsSeed,
     doctors: doctorsSeed,
     admin_users: adminUsersSeed,
-    communication_settings: communicationSettingsSeed,
     visit_schedules: visitSchedulesSeed,
     saved_route_plans: savedRoutePlansSeed,
     visit_records: visitRecordsSeed,

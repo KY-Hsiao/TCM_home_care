@@ -150,6 +150,47 @@ describe("DoctorDashboardPage", () => {
     expect(screen.getByText("標記暫停")).toBeInTheDocument();
   });
 
+  it("受試者名單 modal 會顯示整條路線預覽 fallback 與外部 Google 路線按鈕", () => {
+    renderLocationPage();
+
+    const routeButton = screen.getAllByRole("button").find((button) =>
+      button.textContent?.includes("/ 8位")
+    );
+
+    if (!routeButton) {
+      throw new Error("找不到今日路線按鈕。");
+    }
+
+    fireEvent.click(routeButton);
+
+    expect(screen.getByText("路線圖預覽")).toBeInTheDocument();
+    expect(screen.getByText("頁內路線圖尚未啟用")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "用 Google 地圖開啟完整路線" })).toHaveAttribute(
+      "href",
+      expect.stringContaining("waypoints=")
+    );
+  });
+
+  it("受試者名單 modal 在小螢幕改為靠底展開，避免內容過度偏上", () => {
+    renderLocationPage();
+
+    const routeButton = screen.getAllByRole("button").find((button) =>
+      button.textContent?.includes("/ 8位")
+    );
+
+    if (!routeButton) {
+      throw new Error("找不到今日路線按鈕。");
+    }
+
+    fireEvent.click(routeButton);
+
+    const routeListHeading = screen.getByRole("heading", { name: /4月23日 星期四下午 \/ 8位/ });
+    const modalOverlay = routeListHeading.closest("div.fixed");
+
+    expect(modalOverlay).toHaveClass("items-end");
+    expect(modalOverlay).not.toHaveClass("items-center");
+  });
+
   it("關閉單人紀錄後，會回到前一層受試者名單", () => {
     renderLocationPage();
 
@@ -208,6 +249,7 @@ describe("DoctorDashboardPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "開始出發" }));
     fireEvent.click(screen.getByRole("button", { name: "已抵達，開始治療" }));
+    expect(screen.getByText(/按下後會直接開啟下一家 .+ 的 Google 地圖導航。/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "完成治療，前往下一家" }));
 
     expect(openSpy).toHaveBeenCalled();

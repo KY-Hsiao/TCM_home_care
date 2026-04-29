@@ -25,15 +25,6 @@ const baseTimestamps = {
   updated_at: z.string()
 };
 
-const defaultCommunicationSettingsValue = (() => {
-  const now = new Date().toISOString();
-  return {
-    doctor_contact_line_url: "",
-    created_at: now,
-    updated_at: now
-  };
-})();
-
 export const patientSchema = z.object({
   id: z.string(),
   chart_number: z.string(),
@@ -101,7 +92,6 @@ export const doctorSchema = z.object({
   name: z.string(),
   license_number: z.string().default(""),
   phone: z.string(),
-  line_search_keyword: z.string().default(""),
   specialty: z.string().default(""),
   service_area: z.string().default(""),
   google_chat_user_id: z.string().default(""),
@@ -129,13 +119,6 @@ export const adminUserSchema = z.object({
 });
 
 export type AdminUser = z.infer<typeof adminUserSchema>;
-
-export const communicationSettingsSchema = z.object({
-  doctor_contact_line_url: z.string().default(""),
-  ...baseTimestamps
-});
-
-export type CommunicationSettings = z.infer<typeof communicationSettingsSchema>;
 
 export const visitScheduleSchema = z.object({
   id: z.string(),
@@ -369,7 +352,6 @@ export const appDbSchema = z.object({
   caregiver_chat_bindings: z.array(caregiverChatBindingSchema),
   doctors: z.array(doctorSchema),
   admin_users: z.array(adminUserSchema),
-  communication_settings: communicationSettingsSchema.default(defaultCommunicationSettingsValue),
   visit_schedules: z.array(visitScheduleSchema),
   saved_route_plans: z.array(savedRoutePlanSchema),
   visit_records: z.array(visitRecordSchema),

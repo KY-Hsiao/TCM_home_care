@@ -7,7 +7,6 @@ export const doctorsSeed: Doctor[] = [
     name: "蕭坤元醫師",
     license_number: "中醫字第A10231號",
     phone: "0912-110-001",
-    line_search_keyword: "蕭坤元醫師",
     specialty: "居家中醫內科",
     service_area: "台北市文山區、信義區",
     google_chat_user_id: "spaces/doctors/users/001",

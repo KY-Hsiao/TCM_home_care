@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useAppContext } from "../../app/use-app-context";
 import type { SavedRoutePlan } from "../../domain/models";
+import type { RouteMapInput } from "../../services/types";
+import { RouteMapPreviewCard } from "../../modules/maps/RouteMapPreviewCard";
 import { ReminderCenterPanel } from "../shared/ReminderCenterPanel";
 import { Badge } from "../../shared/ui/Badge";
 import { Panel } from "../../shared/ui/Panel";
@@ -21,6 +23,16 @@ type PlannerRow = {
 
 const weekdayOptions = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"] as const;
 const routeTimeSlotOptions: RouteTimeSlot[] = ["上午", "下午"];
+const routeStartLocation = {
+  address: "旗山醫院",
+  latitude: 22.88794,
+  longitude: 120.48341
+} as const;
+const routeEndLocation = {
+  address: "旗山醫院",
+  latitude: 22.88794,
+  longitude: 120.48341
+} as const;
 
 function buildRoutePlanId(doctorId: string, routeDate: string, weekday: string, serviceTimeSlot: RouteTimeSlot) {
   return `route-${doctorId}-${routeDate}-${weekday}-${serviceTimeSlot}`;
@@ -110,6 +122,38 @@ function buildPlannerRowsFromRoutePlan(
   );
 }
 
+function buildRoutePreviewInput(input: {
+  routeDate: string;
+  doctorName?: string;
+  weekday: string;
+  timeSlot: RouteTimeSlot;
+  checkedRows: PlannerRow[];
+}): RouteMapInput | null {
+  if (!input.routeDate || input.checkedRows.length === 0) {
+    return null;
+  }
+
+  return {
+    origin: {
+      address: routeStartLocation.address,
+      latitude: routeStartLocation.latitude,
+      longitude: routeStartLocation.longitude
+    },
+    destination: {
+      address: routeEndLocation.address,
+      latitude: routeEndLocation.latitude,
+      longitude: routeEndLocation.longitude
+    },
+    waypoints: input.checkedRows.map((row) => ({
+      address: row.address,
+      latitude: null,
+      longitude: null
+    })),
+    travelMode: "driving",
+    label: `${formatDateOnly(input.routeDate)} ${input.doctorName ?? "未指定醫師"} ${input.weekday}${input.timeSlot}`
+  };
+}
+
 export function AdminSchedulesPage() {
   const { repositories, db } = useAppContext();
   const [selectedDoctorId, setSelectedDoctorId] = useState<string>("");
@@ -148,6 +192,19 @@ export function AdminSchedulesPage() {
   const checkedRows = useMemo(
     () => sortedPlannerRows.filter((row) => row.checked),
     [sortedPlannerRows]
+  );
+  const routePreview = useMemo(
+    () =>
+      selectedWeekday && selectedTimeSlot
+        ? buildRoutePreviewInput({
+            routeDate,
+            doctorName: selectedDoctor?.name,
+            weekday: selectedWeekday,
+            timeSlot: selectedTimeSlot,
+            checkedRows
+          })
+        : null,
+    [checkedRows, routeDate, selectedDoctor?.name, selectedTimeSlot, selectedWeekday]
   );
   const availableWeekdays = useMemo(() => {
     const serviceSlots = selectedDoctor?.available_service_slots ?? [];
@@ -304,11 +361,11 @@ export function AdminSchedulesPage() {
       execution_status: selectedSavedRoutePlan?.execution_status ?? "draft",
       executed_at: selectedSavedRoutePlan?.executed_at ?? null,
       start_address: "旗山醫院",
-      start_latitude: 22.88794,
-      start_longitude: 120.48341,
-      end_address: "旗山醫院",
-      end_latitude: 22.88794,
-      end_longitude: 120.48341,
+      start_latitude: routeStartLocation.latitude,
+      start_longitude: routeStartLocation.longitude,
+      end_address: routeEndLocation.address,
+      end_latitude: routeEndLocation.latitude,
+      end_longitude: routeEndLocation.longitude,
       total_minutes: checkedRows.length * 60,
       total_distance_kilometers: checkedRows.length * 2,
       saved_at: new Date().toISOString(),
@@ -518,6 +575,11 @@ export function AdminSchedulesPage() {
           <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
             選完醫師、星期與上午/下午後，系統會自動列出符合該時段的個案。取消勾選者會保留在名單中，但本次路線狀態會設為「暫停」，不會進入路線排序。
           </div>
+
+          <RouteMapPreviewCard
+            route={routePreview}
+            emptyText="請先選擇醫師、星期、上午/下午，並保留至少一位已勾選個案，才會產生路線預覽。"
+          />
 
           <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)]">
             <div className="rounded-3xl border border-slate-200 bg-white p-4">

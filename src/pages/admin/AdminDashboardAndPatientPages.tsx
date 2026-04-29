@@ -365,7 +365,7 @@ export function AdminGuidePage() {
             <div className="rounded-2xl border border-slate-200 bg-white p-4">
               <p className="font-semibold text-brand-ink">角色設定說明</p>
               <p className="mt-2">1. 醫師與行政現在都改用站內通知與帳密登入，預設密碼為 0000。</p>
-              <p className="mt-1">2. 行政端固定為共用帳號「行政人員」，醫師資料與 LINE 聯絡設定都在角色設置頁集中維護。</p>
+              <p className="mt-1">2. 行政端固定為共用帳號「行政人員」，醫師資料與可服務時段都在角色設置頁集中維護。</p>
               <p className="mt-1">3. 醫師資料刪除前會先檢查是否還有案件正在使用。</p>
             </div>
             <div className="rounded-2xl border border-slate-200 bg-white p-4">
@@ -373,7 +373,7 @@ export function AdminGuidePage() {
               <p className="mt-2">1. 醫師資料不用填醫師證號、專長與服務區域。</p>
               <p className="mt-1">2. 醫師會在網頁內收到出發、抵達、緊急與追蹤通知；行政端可同步查看距離、軌跡與站序。</p>
               <p className="mt-1">3. 可服務時段改為先選星期，再切換上午或下午，個案管理頁會沿用這些設定自動排班。</p>
-              <p className="mt-1">4. 若要讓行政端一鍵切換 LINE 對話，請在醫師資料內填寫 LINE 搜尋關鍵字。</p>
+              <p className="mt-1">4. 醫師聯絡資訊目前只維護姓名、電話與定位分享相關資料。</p>
             </div>
           </div>
         </div>
@@ -1066,9 +1066,6 @@ export function AdminPatientsPage() {
             </p>
             <p className="text-slate-500">目前已勾選 {selectedPatientIds.length} 位個案</p>
           </div>
-          <p className="mt-3 text-slate-600">
-            家屬通知功能已移除；這裡只保留個案批次狀態調整與資料管理。
-          </p>
           <div className="mt-3 flex flex-wrap gap-2">
             <button
               type="button"

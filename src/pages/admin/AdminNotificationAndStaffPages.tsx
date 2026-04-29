@@ -1,16 +1,7 @@
 import { addHours, format } from "date-fns";
 import { useMemo, useState } from "react";
 import { useAppContext } from "../../app/use-app-context";
-import type {
-  AdminUser,
-  CommunicationSettings,
-  Doctor,
-  VisitSchedule
-} from "../../domain/models";
-import {
-  loadDesktopLineAutomationSettings,
-  persistDesktopLineAutomationSettings
-} from "../../services/line/desktop-line-settings";
+import type { AdminUser, Doctor, VisitSchedule } from "../../domain/models";
 import { Badge } from "../../shared/ui/Badge";
 import { Panel } from "../../shared/ui/Panel";
 import { formatDateTimeFull } from "../../shared/utils/format";
@@ -23,7 +14,6 @@ type StaffDraft = {
   role: ManageableRole;
   name: string;
   phone: string;
-  lineSearchKeyword: string;
   jobTitle: string;
   googleChatUserId: string;
   googleAccountEmail: string;
@@ -41,14 +31,6 @@ type StaffListItem = {
   phone: string;
   accountLabel: string;
   secondaryLabel: string;
-};
-
-type LineSettingsDraft = {
-  doctorContactLineUrl: string;
-  helperEnabled: boolean;
-  helperBaseUrl: string;
-  launchLineIfNeeded: boolean;
-  lineWindowHint: string;
 };
 
 const serviceDayOptions = [
@@ -156,7 +138,6 @@ function buildDoctorDraft(doctor?: Doctor): StaffDraft {
     role: "doctor",
     name: doctor?.name ?? "",
     phone: doctor?.phone ?? "",
-    lineSearchKeyword: doctor?.line_search_keyword ?? "",
     jobTitle: "",
     googleChatUserId: doctor?.google_chat_user_id ?? "",
     googleAccountEmail: doctor?.google_account_email ?? "",
@@ -174,7 +155,6 @@ function buildAdminDraft(admin?: AdminUser): StaffDraft {
     role: "admin",
     name: admin?.name ?? "",
     phone: admin?.phone ?? "",
-    lineSearchKeyword: "",
     jobTitle: admin?.job_title ?? "",
     googleChatUserId: admin?.google_chat_user_id ?? "",
     googleAccountEmail: admin?.google_account_email ?? admin?.email ?? "",
@@ -189,19 +169,6 @@ function buildEmptyStaffDraft(role: ManageableRole = "doctor"): StaffDraft {
   return role === "doctor" ? buildDoctorDraft() : buildAdminDraft();
 }
 
-function buildLineSettingsDraft(
-  communicationSettings: CommunicationSettings
-): LineSettingsDraft {
-  const helperSettings = loadDesktopLineAutomationSettings();
-  return {
-    doctorContactLineUrl: communicationSettings.doctor_contact_line_url ?? "",
-    helperEnabled: helperSettings.enabled,
-    helperBaseUrl: helperSettings.helper_base_url,
-    launchLineIfNeeded: helperSettings.launch_line_if_needed,
-    lineWindowHint: helperSettings.line_window_hint
-  };
-}
-
 function createId(prefix: string) {
   return `${prefix}-${Date.now().toString(36)}`;
 }
@@ -211,13 +178,9 @@ export function AdminStaffPage() {
   const defaultDoctorKey = db.doctors[0] ? `doctor:${db.doctors[0].id}` : "new:doctor";
   const [selectedStaffKey, setSelectedStaffKey] = useState<string>(defaultDoctorKey);
   const [isEditorOpen, setIsEditorOpen] = useState(false);
-  const [isLineSettingsOpen, setIsLineSettingsOpen] = useState(false);
   const [activeServiceDay, setActiveServiceDay] = useState<ServiceDay>(serviceDayOptions[0]);
   const [showLeaveConsole, setShowLeaveConsole] = useState(false);
   const [recentAction, setRecentAction] = useState<string | null>(null);
-  const [lineSettingsDraft, setLineSettingsDraft] = useState<LineSettingsDraft>(() =>
-    buildLineSettingsDraft(db.communication_settings)
-  );
   const staffList = useMemo<StaffListItem[]>(
     () =>
       [
@@ -298,16 +261,6 @@ export function AdminStaffPage() {
     setIsEditorOpen(false);
   };
 
-  const openLineSettingsEditor = () => {
-    setLineSettingsDraft(buildLineSettingsDraft(db.communication_settings));
-    setIsLineSettingsOpen(true);
-  };
-
-  const closeLineSettingsEditor = () => {
-    setLineSettingsDraft(buildLineSettingsDraft(db.communication_settings));
-    setIsLineSettingsOpen(false);
-  };
-
   const updateDraftServiceSlot = (part: ServicePart, checked: boolean) => {
     setDraft((current) => ({
       ...current,
@@ -319,7 +272,6 @@ export function AdminStaffPage() {
     const now = new Date().toISOString();
     const normalizedName = draft.name.trim();
     const normalizedPhone = draft.phone.trim();
-    const normalizedLineSearchKeyword = draft.lineSearchKeyword.trim();
     const normalizedGoogleChatId = draft.googleChatUserId.trim();
     const normalizedGoogleAccount = draft.googleAccountEmail.trim();
     const normalizedGoogleLocationShareUrl = draft.googleLocationShareUrl.trim();
@@ -349,7 +301,6 @@ export function AdminStaffPage() {
         name: normalizedName,
         license_number: "",
         phone: normalizedPhone,
-        line_search_keyword: normalizedLineSearchKeyword,
         specialty: "",
         service_area: "",
         google_chat_user_id: normalizedGoogleChatId,
@@ -400,21 +351,6 @@ export function AdminStaffPage() {
     setSelectedStaffKey(`admin:${adminIdToSave}`);
     setDraft(buildAdminDraft(adminToSave));
     setRecentAction(`已將 ${normalizedName} 設為行政。`);
-  };
-
-  const saveLineSettings = () => {
-    repositories.patientRepository.upsertCommunicationSettings({
-      ...db.communication_settings,
-      doctor_contact_line_url: lineSettingsDraft.doctorContactLineUrl.trim()
-    });
-    persistDesktopLineAutomationSettings({
-      enabled: lineSettingsDraft.helperEnabled,
-      helper_base_url: lineSettingsDraft.helperBaseUrl,
-      launch_line_if_needed: lineSettingsDraft.launchLineIfNeeded,
-      line_window_hint: lineSettingsDraft.lineWindowHint
-    });
-    setIsLineSettingsOpen(false);
-    setRecentAction("已儲存 LINE 聯絡設定。");
   };
 
   const removeStaffRole = () => {
@@ -531,13 +467,6 @@ export function AdminStaffPage() {
               >
                 新增醫師
               </button>
-              <button
-                type="button"
-                onClick={openLineSettingsEditor}
-                className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-brand-ink ring-1 ring-slate-200"
-              >
-                LINE 聯絡設定
-              </button>
             </div>
           }
         >
@@ -599,7 +528,7 @@ export function AdminStaffPage() {
             </div>
 
             <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-              醫師資料只維護姓名、電話、LINE 搜尋關鍵字與可服務時段。登入後使用手機網頁接收站內提示並回傳即時位置，行政端可同步查看路線與進度。
+              醫師資料只維護姓名、電話與可服務時段。登入後使用手機網頁接收站內提示並回傳即時位置，行政端可同步查看路線與進度。
             </div>
 
             {legacyServiceSlotWarnings.length > 0 ? (
@@ -631,20 +560,6 @@ export function AdminStaffPage() {
                   className="w-full rounded-2xl border border-slate-200 px-4 py-3"
                 />
               </label>
-              {draft.role === "doctor" ? (
-                <label className="block md:col-span-2">
-                  <span className="mb-1 block font-medium text-brand-ink">LINE 搜尋關鍵字</span>
-                  <input
-                    aria-label="LINE 搜尋關鍵字"
-                    value={draft.lineSearchKeyword}
-                    onChange={(event) => setDraft({ ...draft, lineSearchKeyword: event.target.value })}
-                    className="w-full rounded-2xl border border-slate-200 px-4 py-3"
-                  />
-                  <p className="mt-1 text-xs text-slate-500">
-                    供行政端固定 Windows 管理電腦上的 LINE 桌面版搜尋這位醫師時使用。
-                  </p>
-                </label>
-              ) : null}
               <div className="md:col-span-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
                 醫師端改用手機網頁即時定位。醫師登入後若允許位置分享，行政端會直接看到最新位置、距離、軌跡與已過 / 未到站點。
               </div>
@@ -752,147 +667,6 @@ export function AdminStaffPage() {
                   移除此角色
                 </button>
               ) : null}
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {isLineSettingsOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4">
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="line-settings-title"
-            className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-[32px] bg-white p-6 shadow-2xl"
-          >
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div>
-                <p className="text-sm font-medium text-brand-coral">共享聯絡入口</p>
-                <h2 id="line-settings-title" className="mt-1 text-2xl font-semibold text-brand-ink">
-                  LINE 聯絡設定
-                </h2>
-                <p className="mt-2 text-sm text-slate-600">
-                  醫師端會使用這裡設定的行政 LINE 入口；行政端則會透過固定 Windows 管理電腦上的 localhost helper 嘗試切換到指定醫師的 LINE 對話。
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={closeLineSettingsEditor}
-                className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-600 ring-1 ring-slate-200"
-              >
-                關閉視窗
-              </button>
-            </div>
-
-            <div className="mt-6 grid gap-4 text-sm">
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-slate-600">
-                這組設定只保證固定 Windows 管理電腦上的桌面 LINE 自動化流程；若 helper 無法連線、視窗聚焦失敗或醫師尚未填搜尋關鍵字，系統會回退到電話聯絡。
-              </div>
-
-              <label className="block">
-                <span className="mb-1 block font-medium text-brand-ink">行政 LINE 入口連結</span>
-                <input
-                  aria-label="行政 LINE 入口連結"
-                  value={lineSettingsDraft.doctorContactLineUrl}
-                  onChange={(event) =>
-                    setLineSettingsDraft((current) => ({
-                      ...current,
-                      doctorContactLineUrl: event.target.value
-                    }))
-                  }
-                  className="w-full rounded-2xl border border-slate-200 px-4 py-3"
-                />
-                <p className="mt-1 text-xs text-slate-500">
-                  醫師端的「聯絡行政端」會優先開啟這個連結。請貼上你已實測可用的 LINE 連結或 URI。
-                </p>
-              </label>
-
-              <div className="rounded-2xl border border-slate-200 p-4">
-                <div className="flex items-center justify-between gap-4">
-                  <div>
-                    <p className="font-semibold text-brand-ink">桌面 LINE helper</p>
-                    <p className="mt-1 text-xs text-slate-500">固定 Windows 管理電腦使用，預設呼叫 localhost API。</p>
-                  </div>
-                  <label className="inline-flex items-center gap-2 text-sm font-medium text-brand-ink">
-                    <input
-                      type="checkbox"
-                      aria-label="啟用桌面 LINE 自動化"
-                      checked={lineSettingsDraft.helperEnabled}
-                      onChange={(event) =>
-                        setLineSettingsDraft((current) => ({
-                          ...current,
-                          helperEnabled: event.target.checked
-                        }))
-                      }
-                    />
-                    啟用桌面 LINE 自動化
-                  </label>
-                </div>
-
-                <div className="mt-4 grid gap-4 md:grid-cols-2">
-                  <label className="block md:col-span-2">
-                    <span className="mb-1 block font-medium text-brand-ink">LINE helper 位址</span>
-                    <input
-                      aria-label="LINE helper 位址"
-                      value={lineSettingsDraft.helperBaseUrl}
-                      onChange={(event) =>
-                        setLineSettingsDraft((current) => ({
-                          ...current,
-                          helperBaseUrl: event.target.value
-                        }))
-                      }
-                      className="w-full rounded-2xl border border-slate-200 px-4 py-3"
-                    />
-                  </label>
-
-                  <label className="block">
-                    <span className="mb-1 block font-medium text-brand-ink">LINE 視窗標題提示</span>
-                    <input
-                      aria-label="LINE 視窗標題提示"
-                      value={lineSettingsDraft.lineWindowHint}
-                      onChange={(event) =>
-                        setLineSettingsDraft((current) => ({
-                          ...current,
-                          lineWindowHint: event.target.value
-                        }))
-                      }
-                      className="w-full rounded-2xl border border-slate-200 px-4 py-3"
-                    />
-                  </label>
-
-                  <label className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 px-4 py-3">
-                    <input
-                      type="checkbox"
-                      aria-label="LINE 未開啟時自動喚起"
-                      checked={lineSettingsDraft.launchLineIfNeeded}
-                      onChange={(event) =>
-                        setLineSettingsDraft((current) => ({
-                          ...current,
-                          launchLineIfNeeded: event.target.checked
-                        }))
-                      }
-                    />
-                    <span className="text-sm font-medium text-brand-ink">LINE 未開啟時自動喚起</span>
-                  </label>
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-6 flex flex-wrap gap-3">
-              <button
-                type="button"
-                onClick={saveLineSettings}
-                className="rounded-full bg-brand-forest px-5 py-3 font-semibold text-white"
-              >
-                儲存 LINE 設定
-              </button>
-              <button
-                type="button"
-                onClick={closeLineSettingsEditor}
-                className="rounded-full bg-white px-5 py-3 font-semibold text-slate-600 ring-1 ring-slate-200"
-              >
-                取消
-              </button>
             </div>
           </div>
         </div>

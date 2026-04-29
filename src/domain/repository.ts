@@ -2,7 +2,6 @@ import type {
   AdminUser,
   Caregiver,
   CaregiverChatBinding,
-  CommunicationSettings,
   ContactLog,
   Doctor,
   DoctorLocationLog,
@@ -109,12 +108,10 @@ export interface PatientRepository {
   }): Patient[];
   getDoctors(): Doctor[];
   getAdmins(): AdminUser[];
-  getCommunicationSettings(): CommunicationSettings;
   upsertDoctor(doctor: Doctor): void;
   removeDoctor(doctorId: string): void;
   upsertAdmin(admin: AdminUser): void;
   removeAdmin(adminId: string): void;
-  upsertCommunicationSettings(settings: CommunicationSettings): void;
   upsertPatient(patient: Patient): PatientUpsertResult;
   closePatient(patientId: string, reason?: string): {
     patientId: string;

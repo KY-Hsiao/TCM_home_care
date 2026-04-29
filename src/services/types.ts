@@ -84,6 +84,28 @@ export type WebhookReplyInput = {
   action: WebhookReplyAction;
 };
 
+export type RouteMapLocation = {
+  address: string;
+  locationKeyword?: string | null;
+  latitude: number | null;
+  longitude: number | null;
+};
+
+export type RouteMapInput = {
+  origin: RouteMapLocation;
+  destination: RouteMapLocation;
+  waypoints: RouteMapLocation[];
+  travelMode: "driving";
+  label: string;
+};
+
+export type RouteMapPreviewState = {
+  embedUrl: string | null;
+  externalUrl: string | null;
+  fallbackReason: string | null;
+  waypointCount: number;
+};
+
 export type FamilyEntryContext = {
   patientId?: string;
   scheduleId?: string;
@@ -96,37 +118,6 @@ export type ProviderPermissionState =
   | "prompt"
   | "denied"
   | "unsupported";
-
-export type DesktopLineAutomationSettings = {
-  enabled: boolean;
-  helper_base_url: string;
-  launch_line_if_needed: boolean;
-  line_window_hint: string;
-};
-
-export type LineAutomationStage =
-  | "validate_request"
-  | "helper_request"
-  | "locate_window"
-  | "launch_line"
-  | "focus_window"
-  | "search_contact"
-  | "open_chat"
-  | "fallback";
-
-export type OpenDoctorLineChatRequest = {
-  doctorId: string;
-  doctorName: string;
-  lineSearchKeyword: string;
-  phone: string;
-};
-
-export type OpenDoctorLineChatResult = {
-  success: boolean;
-  stage: LineAutomationStage;
-  message: string;
-  fallbackRecommended: boolean;
-};
 
 export type GeolocationScenarioId =
   | "normal_arrival_complete"
@@ -257,6 +248,9 @@ export interface MapsUrlBuilder {
     originLatitude?: number | null;
     originLongitude?: number | null;
   }): string;
+  buildRouteDirectionsUrl(input: RouteMapInput): string;
+  buildRouteEmbedDirectionsUrl(input: RouteMapInput): string | null;
+  getRoutePreviewState(input: RouteMapInput): RouteMapPreviewState;
   buildCoordinateLabel(latitude: number | null, longitude: number | null): string;
 }
 

@@ -6,7 +6,6 @@ import { SESSION_STORAGE_KEY } from "../../app/auth-storage";
 import { AppProviders } from "../../app/providers";
 import { MOCK_DB_STORAGE_KEY } from "../../data/mock/db";
 import { DoctorLocationPage } from "../doctor/DoctorPages";
-import { DESKTOP_LINE_SETTINGS_STORAGE_KEY } from "../../services/line/desktop-line-settings";
 import {
   AdminDashboardPage,
   AdminGuidePage,
@@ -96,6 +95,25 @@ describe("AdminPages", () => {
     expect(screen.getByText("第 1 站 陳正雄")).toBeInTheDocument();
     expect(screen.getByText("可執行 7 站")).toBeInTheDocument();
     expect(screen.getAllByText("暫停").length).toBeGreaterThan(0);
+  });
+
+  it("AdminSchedulesPage 會顯示路線圖預覽 fallback 與外部 Google 路線按鈕", () => {
+    renderWithProviders(<AdminSchedulesPage />);
+
+    selectScheduleFilters();
+
+    expect(screen.getByText("路線圖預覽")).toBeInTheDocument();
+    expect(screen.queryByTitle(/路線圖預覽/)).not.toBeInTheDocument();
+    expect(screen.getByText("頁內路線圖尚未啟用")).toBeInTheDocument();
+    const routeLink = screen.getByRole("link", { name: "用 Google 地圖開啟完整路線" });
+    expect(routeLink).toHaveAttribute("href", expect.stringContaining("waypoints="));
+
+    fireEvent.click(screen.getByLabelText("王麗珠 勾選"));
+
+    expect(routeLink).not.toHaveAttribute(
+      "href",
+      expect.stringContaining(encodeURIComponent("高雄市旗山區延平一路 128 號"))
+    );
   });
 
   it("AdminSchedulesPage 可儲存路線、清除頁面，再完整還原醫師、日期、勾選狀態與排序", async () => {
@@ -305,7 +323,7 @@ describe("AdminPages", () => {
       screen.getByText("這裡集中放登入、定位授權與角色維護的操作備忘，改成左側獨立標籤後，不再占用行政首頁主畫面空間。")
     ).toBeInTheDocument();
     expect(
-      screen.getByText("2. 行政端固定為共用帳號「行政人員」，醫師資料與 LINE 聯絡設定都在角色設置頁集中維護。")
+      screen.getByText("2. 行政端固定為共用帳號「行政人員」，醫師資料與可服務時段都在角色設置頁集中維護。")
     ).toBeInTheDocument();
   });
 
@@ -491,7 +509,7 @@ describe("AdminPages", () => {
 
     expect(screen.queryByText("角色設定說明")).not.toBeInTheDocument();
     expect(screen.queryByText("1. 醫師與行政現在都改用站內通知與帳密登入，預設密碼為 0000。")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "LINE 聯絡設定" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "LINE 聯絡設定" })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /蕭坤元醫師/ }));
 
@@ -518,23 +536,6 @@ describe("AdminPages", () => {
     expect(screen.getByRole("button", { name: /蕭坤元主任醫師/ })).toBeInTheDocument();
   });
 
-  it("AdminStaffPage 可儲存醫師的 LINE 搜尋關鍵字", () => {
-    renderWithProviders(<AdminStaffPage />);
-
-    fireEvent.click(screen.getByRole("button", { name: /蕭坤元醫師/ }));
-
-    const dialog = screen.getByRole("dialog");
-    fireEvent.change(within(dialog).getByLabelText("LINE 搜尋關鍵字"), {
-      target: { value: "蕭坤元主治" }
-    });
-    fireEvent.click(within(dialog).getByRole("button", { name: "儲存角色設置" }));
-
-    const storedDb = JSON.parse(window.localStorage.getItem(MOCK_DB_STORAGE_KEY) ?? "{}");
-    expect(
-      storedDb.doctors.find((doctor: { id: string }) => doctor.id === "doc-001")?.line_search_keyword
-    ).toBe("蕭坤元主治");
-  });
-
   it("AdminStaffPage 可新增醫師並用分離式時段勾選", () => {
     renderWithProviders(<AdminStaffPage />);
 
@@ -554,6 +555,18 @@ describe("AdminPages", () => {
 
     expect(screen.getByRole("status")).toHaveTextContent("已將 新加入醫師 設為醫師");
     expect(screen.getAllByText("醫師").length).toBeGreaterThan(0);
+  });
+
+  it("AdminStaffPage 醫師資料視窗不再顯示 LINE 搜尋欄位", () => {
+    renderWithProviders(<AdminStaffPage />);
+
+    fireEvent.click(screen.getByRole("button", { name: /蕭坤元醫師/ }));
+
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).queryByLabelText("LINE 搜尋關鍵字")).not.toBeInTheDocument();
+    expect(
+      within(dialog).getByText("醫師資料只維護姓名、電話與可服務時段。登入後使用手機網頁接收站內提示並回傳即時位置，行政端可同步查看路線與進度。")
+    ).toBeInTheDocument();
   });
 
   it("AdminStaffPage 醫師角色視窗不再顯示 Google 欄位，仍可直接儲存", () => {
@@ -596,33 +609,10 @@ describe("AdminPages", () => {
     expect(within(dialog).getAllByText("星期四下午").length).toBeGreaterThan(0);
   });
 
-  it("AdminStaffPage 可開啟並儲存 LINE 聯絡設定", () => {
+  it("AdminStaffPage 不再提供 LINE 聯絡設定入口", () => {
     renderWithProviders(<AdminStaffPage />);
 
-    fireEvent.click(screen.getByRole("button", { name: "LINE 聯絡設定" }));
-
-    const dialog = screen.getByRole("dialog");
-    expect(within(dialog).getByRole("heading", { name: "LINE 聯絡設定" })).toBeInTheDocument();
-    fireEvent.change(within(dialog).getByLabelText("行政 LINE 入口連結"), {
-      target: { value: "line://msg/text/admin-link" }
-    });
-    fireEvent.click(within(dialog).getByLabelText("啟用桌面 LINE 自動化"));
-    fireEvent.change(within(dialog).getByLabelText("LINE helper 位址"), {
-      target: { value: "http://127.0.0.1:9000/" }
-    });
-    fireEvent.change(within(dialog).getByLabelText("LINE 視窗標題提示"), {
-      target: { value: "LINE 視窗" }
-    });
-    fireEvent.click(within(dialog).getByRole("button", { name: "儲存 LINE 設定" }));
-
-    expect(screen.getByRole("status")).toHaveTextContent("已儲存 LINE 聯絡設定。");
-    const storedDb = JSON.parse(window.localStorage.getItem(MOCK_DB_STORAGE_KEY) ?? "{}");
-    expect(storedDb.communication_settings?.doctor_contact_line_url).toBe("line://msg/text/admin-link");
-    const helperSettings = JSON.parse(
-      window.localStorage.getItem(DESKTOP_LINE_SETTINGS_STORAGE_KEY) ?? "{}"
-    );
-    expect(helperSettings.enabled).toBe(true);
-    expect(helperSettings.helper_base_url).toBe("http://127.0.0.1:9000");
-    expect(helperSettings.line_window_hint).toBe("LINE 視窗");
+    expect(screen.queryByRole("button", { name: "LINE 聯絡設定" })).not.toBeInTheDocument();
+    expect(screen.queryByText("共享聯絡入口")).not.toBeInTheDocument();
   });
 });

@@ -67,6 +67,16 @@ export function DoctorVisitCard({
     originLatitude: runtime?.latestSample?.latitude ?? null,
     originLongitude: runtime?.latestSample?.longitude ?? null
   });
+  const nextNavigationUrl = nextScheduleDetail
+    ? services.maps.buildNavigationUrl({
+        destinationAddress: nextScheduleDetail.schedule.address_snapshot,
+        destinationKeyword: nextScheduleDetail.schedule.location_keyword_snapshot,
+        destinationLatitude: nextScheduleDetail.schedule.home_latitude_snapshot,
+        destinationLongitude: nextScheduleDetail.schedule.home_longitude_snapshot,
+        originLatitude: runtime?.latestSample?.latitude ?? detail.schedule.home_latitude_snapshot,
+        originLongitude: runtime?.latestSample?.longitude ?? detail.schedule.home_longitude_snapshot
+      })
+    : null;
 
   const handleDepart = () => {
     const nextRecord = repositories.visitRepository.startVisitTravel(detail.schedule.id);
@@ -108,6 +118,9 @@ export function DoctorVisitCard({
       }
     });
     navigate("/doctor/navigation");
+    if (nextNavigationUrl) {
+      openExternalNavigation(nextNavigationUrl);
+    }
   };
 
   const handleResumeNavigation = () => {
