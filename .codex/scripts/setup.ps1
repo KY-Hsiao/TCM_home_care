@@ -4,7 +4,6 @@ $workspace = Split-Path -Parent $PSScriptRoot
 $projectRoot = Split-Path -Parent $workspace
 $venvDir = Join-Path $projectRoot ".venv"
 $venvPython = Join-Path $venvDir "Scripts\python.exe"
-$requirementsFile = Join-Path $projectRoot "requirements.txt"
 $preferredPython = "3.13"
 $localDepsRoot = "C:\codex-deps\tcm-home-care"
 $verifyRoot = "C:\codex-deps\tcm-home-care-verify"
@@ -77,10 +76,6 @@ function Sync-PackageManifests {
     return $copiedOrChanged
 }
 
-if (-not (Test-Path -LiteralPath $requirementsFile)) {
-    throw "requirements.txt was not found, so setup cannot continue."
-}
-
 try {
     $null = py -$preferredPython --version
 } catch {
@@ -91,13 +86,7 @@ if (-not (Test-Path -LiteralPath $venvPython)) {
     Write-Host "Creating Python $preferredPython virtual environment .venv ..."
     py -$preferredPython -m venv $venvDir
 }
-
-Write-Host "Installing requirements.txt dependencies ..."
-& $venvPython -m pip install -r $requirementsFile
-
-if ($LASTEXITCODE -ne 0) {
-    throw "Dependency installation failed. Check requirements.txt or network access."
-}
+Write-Host "No additional Python packages are required for the current Web MVP."
 
 $npmCommand = Get-Command npm.cmd -ErrorAction SilentlyContinue
 if (-not $npmCommand) {

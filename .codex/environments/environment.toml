@@ -17,7 +17,7 @@ platform = "win32"
 [[actions]]
 name = "CLI 試跑"
 icon = "tool"
-command = ".\\.venv\\Scripts\\python.exe .\\app.py --cli --message \"專案環境檢查完成\" --repeat-count 1"
+command = ".\\.venv\\Scripts\\python.exe .\\legacy-python\\app.py --cli --message \"專案環境檢查完成\" --repeat-count 1"
 platform = "win32"
 
 [[actions]]

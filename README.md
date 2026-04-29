@@ -36,7 +36,6 @@
    這個 setup 會完成三件事：
 
    - 建立 `.venv`
-   - 安裝 `requirements.txt`
    - 將前端依賴固定準備在 `C:\codex-deps\tcm-home-care`，供雲端同步路徑下的驗證副本共用
 
 2. 如需直接在目前資料夾補齊前端套件，也可以另外執行：
@@ -52,7 +51,7 @@
    ```
 
    如果你是從 VS Code / Codex 的「執行應用程式」或工作列按鈕啟動，現在預設也會走 Web MVP，而不是舊的 Python/Tkinter 示範。
-   若專案位於 `G:` 之類的雲端同步磁碟，`launch_app.ps1` 與 `app.py` 會自動同步到 `C:\codex-deps\tcm-home-care-verify` 後再啟動，避免 `node_modules` 寫入失敗。
+   若專案位於 `G:` 之類的雲端同步磁碟，`launch_app.ps1` 會自動同步到 `C:\codex-deps\tcm-home-care-verify` 後再啟動，避免 `node_modules` 寫入失敗。
    若 `5173` 已被其他 Vite 程序占用，啟動器會自動改用下一個可用 port，避免直接啟動失敗。
 
 4. 進行型別檢查
@@ -75,7 +74,7 @@
 
 ## 路徑注意事項
 
-若專案放在雲端同步資料夾或含特殊路徑限制的磁碟下，根目錄直接執行 `npm install` 可能會因 `node_modules` 大量寫檔而失敗。現在預設建議先跑 `.codex\scripts\setup.ps1`，它會把共用依賴固定準備在 `C:\codex-deps\tcm-home-care`，並讓 `launch_app.ps1` / `app.py` 把驗證副本同步到 `C:\codex-deps\tcm-home-care-verify` 後再啟動。
+若專案放在雲端同步資料夾或含特殊路徑限制的磁碟下，根目錄直接執行 `npm install` 可能會因 `node_modules` 大量寫檔而失敗。現在預設建議先跑 `.codex\scripts\setup.ps1`，它會把共用依賴固定準備在 `C:\codex-deps\tcm-home-care`，並讓 `launch_app.ps1` 把驗證副本同步到 `C:\codex-deps\tcm-home-care-verify` 後再啟動。
 
 ## 權限與持續允許建議
 
@@ -85,7 +84,6 @@
 - `Start-Process 'http://127.0.0.1:5173/'`
 - `Start-Process chrome.exe '--new-window http://127.0.0.1:5173/'`
 - `npm install`
-- `.\.venv\Scripts\python.exe -m pip install -r requirements.txt`
 - `py -3.13 -m venv .venv`
 - 與 `C:\codex-deps\tcm-home-care`、`C:\codex-deps\tcm-home-care-verify` 有關的既有同步與啟動流程
 
@@ -118,4 +116,4 @@
 - `legacy-python/app.py`：舊版 Tkinter 示範
 - `legacy-python/launch_legacy_app.ps1`：舊版啟動腳本
 
-根目錄的 `app.py` 與 `launch_app.ps1` 現在都會導向 Web MVP，避免誤啟動舊版畫面。
+根目錄的 Web 啟動以 `launch_app.ps1` 為主；若需要 Python 版啟動輔助腳本，請使用 `run_web_mvp.py`。為避免部署平台誤判成 Python 後端，根目錄不再保留 `app.py`。
