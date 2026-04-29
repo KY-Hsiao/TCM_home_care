@@ -1,4 +1,8 @@
-import type { NotificationTask, NotificationTemplate } from "../../domain/models";
+import type {
+  NotificationCenterItem,
+  NotificationTask,
+  NotificationTemplate
+} from "../../domain/models";
 import { at, stamp } from "./helpers";
 
 export const notificationTemplatesSeed: NotificationTemplate[] = [
@@ -76,47 +80,6 @@ export const notificationTemplatesSeed: NotificationTemplate[] = [
   }
 ];
 
-export const notificationTasksSeed: NotificationTask[] = [
-  {
-    id: "nt-013",
-    template_id: "tpl-007",
-    patient_id: "pat-002",
-    caregiver_id: null,
-    visit_schedule_id: "vs-002",
-    status: "pending",
-    channel: "google_chat",
-    scheduled_send_at: at(0, 8, 5),
-    sent_at: null,
-    recipient_name: "蕭坤元醫師",
-    recipient_role: "doctor",
-    recipient_target: "GOOGLE_CHAT:spaces/doctors/users/001",
-    trigger_type: "doctor_departure_check",
-    preview_payload: { doctor_name: "蕭坤元醫師", patient_name: "陳正雄" },
-    reply_excerpt: null,
-    reply_code: null,
-    failure_reason: null,
-    linked_tracking_session_id: "vs-002",
-    ...stamp(0)
-  },
-  {
-    id: "nt-014",
-    template_id: "tpl-008",
-    patient_id: "pat-004",
-    caregiver_id: null,
-    visit_schedule_id: "vs-004",
-    status: "awaiting_reply",
-    channel: "google_chat",
-    scheduled_send_at: at(0, 9, 20),
-    sent_at: at(0, 9, 22),
-    recipient_name: "蕭坤元醫師",
-    recipient_role: "doctor",
-    recipient_target: "GOOGLE_CHAT:spaces/doctors/users/001",
-    trigger_type: "doctor_arrival_feedback",
-    preview_payload: { patient_name: "陳淑惠" },
-    reply_excerpt: null,
-    reply_code: null,
-    failure_reason: null,
-    linked_tracking_session_id: "vs-004",
-    ...stamp(0)
-  }
-];
+export const notificationTasksSeed: NotificationTask[] = [];
+
+export const notificationCenterItemsSeed: NotificationCenterItem[] = [];

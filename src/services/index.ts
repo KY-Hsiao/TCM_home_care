@@ -1,6 +1,7 @@
 import { BrowserGeolocationAdapter } from "./geolocation/browser-geolocation-adapter";
 import { HybridGeolocationProvider } from "./geolocation/hybrid-geolocation-provider";
 import { MockGeolocationProvider } from "./geolocation/mock-geolocation-provider";
+import { createMockDoctorLocationSyncService } from "./location-sync/mock-doctor-location-sync-service";
 import { createNotificationPayloadBuilder } from "./chat/notification-payload-builder";
 import { createMapsUrlBuilder } from "./maps/maps-url-builder";
 import type { AppServices, ServicesContextDeps } from "./types";
@@ -13,15 +14,18 @@ export function createAppServices(deps: ServicesContextDeps): AppServices {
     new BrowserGeolocationAdapter(),
     new MockGeolocationProvider()
   );
+  const doctorLocationSync = createMockDoctorLocationSyncService(deps);
   const visitAutomation = new MockVisitAutomationService(
     deps,
-    geolocation
+    geolocation,
+    doctorLocationSync
   );
 
   return {
     payloadBuilder,
     maps,
     geolocation,
+    doctorLocationSync,
     visitAutomation
   };
 }

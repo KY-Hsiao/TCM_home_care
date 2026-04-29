@@ -1,6 +1,5 @@
 export {
   AdminDashboardPage,
-  AdminGuidePage,
   AdminDoctorTrackingPage,
   AdminPatientDetailPage,
   AdminPatientsPage

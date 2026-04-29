@@ -1,4 +1,3 @@
-import { useMemo } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useAppContext } from "../../app/use-app-context";
 import { buildReadonlySummary } from "../../modules/doctor/doctor-page-helpers";
@@ -116,90 +115,17 @@ export function DoctorPatientPage() {
 }
 
 export function DoctorRemindersPage() {
-  const { repositories, session } = useAppContext();
-  const doctorSchedules = repositories.visitRepository.getSchedules({
-    doctorId: session.activeDoctorId
-  });
-  const doctorDetails = doctorSchedules
-    .map((schedule) => repositories.visitRepository.getScheduleDetail(schedule.id))
-    .filter((detail): detail is NonNullable<typeof detail> => Boolean(detail));
-
-  const reminderSections = useMemo(
-    () => ({
-      incompleteRecords: doctorDetails.filter(
-        (detail) =>
-          ["completed", "in_treatment", "arrived"].includes(detail.schedule.status) &&
-          (!detail.record || !detail.record.physician_assessment || !detail.record.follow_up_note)
-      ),
-      callbackCases: doctorDetails.filter(
-        (detail) =>
-          detail.notifications.some(
-            (task) => task.channel === "phone" && ["pending", "awaiting_reply"].includes(task.status)
-          ) || detail.schedule.note.includes("電話")
-      ),
-      rescheduledCases: doctorDetails.filter((detail) => detail.schedule.status === "rescheduled"),
-      repliedPendingCases: doctorDetails.filter((detail) =>
-        detail.notifications.some((task) => task.status === "replied")
-      ),
-      followUpCases: doctorDetails.filter((detail) => {
-        const nextDate = detail.record?.next_visit_suggestion_date;
-        if (!nextDate) {
-          return false;
-        }
-        const next = new Date(nextDate);
-        const now = new Date();
-        const diff = next.getTime() - now.getTime();
-        return diff >= 0 && diff <= 1000 * 60 * 60 * 24 * 10;
-      })
-    }),
-    [doctorDetails]
-  );
-
-  const sectionItems = [
-    ["今日未完成紀錄", reminderSections.incompleteRecords],
-    ["待回電個案", reminderSections.callbackCases],
-    ["已改期待重新安排個案", reminderSections.rescheduledCases],
-    ["已有回覆待處理案件", reminderSections.repliedPendingCases],
-    ["近期應追蹤個案", reminderSections.followUpCases]
-  ] as const;
+  const { session } = useAppContext();
 
   return (
     <div className="space-y-6">
       <ReminderCenterPanel
         role="doctor"
         ownerId={session.activeDoctorId}
-        title="提醒中心"
+        title="通知中心"
         detailBasePath="/doctor/patients"
+        emptyText="目前醫師端沒有待處理通知。"
       />
-
-      {sectionItems.map(([title, items]) => (
-        <Panel key={title} title={title}>
-          <div className="grid gap-4 md:grid-cols-2">
-            {items.length ? (
-              items.map((detail) => (
-                <div key={detail.schedule.id} className="rounded-3xl border border-slate-200 bg-white p-5">
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="font-semibold text-brand-ink">{detail.patient.name}</p>
-                    <Badge value={detail.schedule.status} compact />
-                  </div>
-                  <p className="mt-2 text-sm text-slate-600">{detail.schedule.note}</p>
-                  <p className="mt-2 text-xs text-slate-500">
-                    預約：{formatDateTimeFull(detail.schedule.scheduled_start_at)}
-                  </p>
-                  <Link
-                    to={`/doctor/records/${detail.schedule.id}`}
-                    className="mt-4 inline-flex rounded-full bg-brand-sand px-3 py-2 text-xs font-semibold text-brand-forest"
-                  >
-                    前往處理
-                  </Link>
-                </div>
-              ))
-            ) : (
-              <p className="text-sm text-slate-500">目前此分類沒有待處理案件。</p>
-            )}
-          </div>
-        </Panel>
-      ))}
     </div>
   );
 }

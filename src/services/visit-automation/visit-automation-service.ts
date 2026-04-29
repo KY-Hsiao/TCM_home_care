@@ -2,6 +2,7 @@ import { differenceInSeconds } from "date-fns";
 import type { VisitSchedule } from "../../domain/models";
 import type { VisitDetail } from "../../domain/repository";
 import type {
+  DoctorLocationSyncService,
   GeolocationProviderAdapter,
   GeolocationProviderEvent,
   GeolocationScenario,
@@ -73,7 +74,8 @@ export class MockVisitAutomationService implements VisitAutomationService {
 
   constructor(
     private readonly deps: ServicesContextDeps,
-    private readonly geolocationProvider: GeolocationProviderAdapter
+    private readonly geolocationProvider: GeolocationProviderAdapter,
+    private readonly doctorLocationSync: DoctorLocationSyncService
   ) {
     this.geolocationProvider.subscribe((event) => {
       this.handleProviderEvent(event);
@@ -169,8 +171,7 @@ export class MockVisitAutomationService implements VisitAutomationService {
       return;
     }
 
-    this.deps.getRepositories().visitRepository.appendDoctorLocationLog({
-      id: `loc-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    this.doctorLocationSync.pushSample({
       doctor_id: detail.doctor.id,
       recorded_at: sample.recorded_at,
       latitude: sample.latitude,

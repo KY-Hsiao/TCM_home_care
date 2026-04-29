@@ -68,12 +68,14 @@ describe("visit automation service", () => {
 
     const updatedRecord = harness.repositories.visitRepository.getVisitRecordByScheduleId("vs-015");
     const updatedSchedule = harness.repositories.visitRepository.getScheduleDetail("vs-015")!.schedule;
+    const locationLogs = harness.repositories.visitRepository.getDoctorLocationLogs(detail.doctor.id);
 
     expect(updatedRecord?.arrival_time).not.toBeNull();
     expect(updatedRecord?.departure_from_patient_home_time).not.toBeNull();
     expect(updatedRecord?.arrival_time).toBe(proximityRuntime?.proximityTriggeredAt);
     expect(updatedSchedule.status).toBe("completed");
     expect(updatedSchedule.geofence_status).toBe("completed");
+    expect(locationLogs.some((log) => log.linked_visit_schedule_id === detail.schedule.id)).toBe(true);
     expect(harness.repositories.notificationRepository.getTasks().length).toBe(initialTaskCount);
     expect(
       harness.services.visitAutomation

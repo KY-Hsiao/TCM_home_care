@@ -703,16 +703,278 @@ export function AdminContactsPage() {
 }
 
 export function AdminRemindersPage() {
-  const { session } = useAppContext();
+  const { repositories, db, session } = useAppContext();
+  const [noticeAudience, setNoticeAudience] = useState<"admin" | "doctor">("admin");
+  const [doctorId, setDoctorId] = useState<string>(db.doctors[0]?.id ?? "");
+  const [noticeTitle, setNoticeTitle] = useState("");
+  const [noticeContent, setNoticeContent] = useState("");
+  const [leaveDoctorId, setLeaveDoctorId] = useState<string>(db.doctors[0]?.id ?? "");
+  const [leaveStartDate, setLeaveStartDate] = useState<string>(new Date().toISOString().slice(0, 10));
+  const [leaveEndDate, setLeaveEndDate] = useState<string>(new Date().toISOString().slice(0, 10));
+  const [leaveReason, setLeaveReason] = useState("請假登記");
+  const [leaveHandoffNote, setLeaveHandoffNote] = useState("請協助檢查受影響個案");
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const impactedSchedules = useMemo(
+    () =>
+      repositories.staffingRepository.getImpactedSchedules(
+        leaveDoctorId,
+        leaveStartDate,
+        leaveEndDate
+      ),
+    [leaveDoctorId, leaveEndDate, leaveStartDate, repositories]
+  );
+  const pendingLeaveRequests = repositories.staffingRepository
+    .getLeaveRequests()
+    .filter((leaveRequest) => leaveRequest.status === "pending");
+
+  const handleCreateNotice = () => {
+    const normalizedTitle = noticeTitle.trim();
+    const normalizedContent = noticeContent.trim();
+    if (!normalizedTitle || !normalizedContent) {
+      setStatusMessage("請先輸入通知標題與內容。");
+      return;
+    }
+
+    const now = new Date().toISOString();
+    repositories.notificationRepository.createNotificationCenterItem({
+      id: `nc-manual-${Date.now()}`,
+      role: noticeAudience === "admin" ? "admin" : "doctor",
+      owner_user_id: noticeAudience === "doctor" ? doctorId : null,
+      source_type: "manual_notice",
+      title: normalizedTitle,
+      content: normalizedContent,
+      linked_patient_id: null,
+      linked_visit_schedule_id: null,
+      linked_doctor_id: noticeAudience === "doctor" ? doctorId : null,
+      linked_leave_request_id: null,
+      status: "pending",
+      is_unread: true,
+      reply_text: null,
+      reply_updated_at: null,
+      reply_updated_by_role: null,
+      created_at: now,
+      updated_at: now
+    });
+    setNoticeTitle("");
+    setNoticeContent("");
+    setStatusMessage(noticeAudience === "admin" ? "行政內部公告已建立。" : "指定醫師通知已建立。");
+  };
+
+  const handleCreateLeaveRequest = () => {
+    if (!leaveStartDate || !leaveEndDate || !leaveReason.trim()) {
+      setStatusMessage("請完整填寫請假期間與原因。");
+      return;
+    }
+    repositories.staffingRepository.createLeaveRequest({
+      doctorId: leaveDoctorId,
+      startDate: leaveStartDate,
+      endDate: leaveEndDate,
+      reason: leaveReason.trim(),
+      handoffNote: leaveHandoffNote.trim(),
+      status: "pending"
+    });
+    setStatusMessage("請假申請已送入通知中心。");
+  };
 
   return (
     <div className="space-y-6">
+      <div className="grid gap-6 xl:grid-cols-[1fr_1fr]">
+        <Panel title="手動建立站內通知">
+          <div className="space-y-4 text-sm">
+            <div className="grid gap-3 md:grid-cols-[180px_1fr]">
+              <label className="block">
+                <span className="mb-1 block font-medium text-brand-ink">通知類型</span>
+                <select
+                  value={noticeAudience}
+                  onChange={(event) => setNoticeAudience(event.target.value as "admin" | "doctor")}
+                  className="w-full rounded-2xl border border-slate-200 px-4 py-3"
+                >
+                  <option value="admin">行政內部公告</option>
+                  <option value="doctor">指定醫師通知</option>
+                </select>
+              </label>
+              {noticeAudience === "doctor" ? (
+                <label className="block">
+                  <span className="mb-1 block font-medium text-brand-ink">指定醫師</span>
+                  <select
+                    value={doctorId}
+                    onChange={(event) => setDoctorId(event.target.value)}
+                    className="w-full rounded-2xl border border-slate-200 px-4 py-3"
+                  >
+                    {db.doctors.map((doctor) => (
+                      <option key={doctor.id} value={doctor.id}>
+                        {doctor.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : (
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-slate-600">
+                  行政內部公告只會顯示在行政人員的通知中心。
+                </div>
+              )}
+            </div>
+
+            <label className="block">
+              <span className="mb-1 block font-medium text-brand-ink">標題</span>
+              <input
+                type="text"
+                value={noticeTitle}
+                onChange={(event) => setNoticeTitle(event.target.value)}
+                className="w-full rounded-2xl border border-slate-200 px-4 py-3"
+              />
+            </label>
+            <label className="block">
+              <span className="mb-1 block font-medium text-brand-ink">內容</span>
+              <textarea
+                value={noticeContent}
+                onChange={(event) => setNoticeContent(event.target.value)}
+                rows={5}
+                className="w-full rounded-2xl border border-slate-200 px-4 py-3"
+              />
+            </label>
+            <button
+              type="button"
+              onClick={handleCreateNotice}
+              className="rounded-full bg-brand-forest px-5 py-3 font-semibold text-white"
+            >
+              建立站內通知
+            </button>
+          </div>
+        </Panel>
+
+        <Panel title="醫師請假與受影響案件">
+          <div className="space-y-4 text-sm">
+            <div className="grid gap-3 md:grid-cols-3">
+              <label className="block">
+                <span className="mb-1 block font-medium text-brand-ink">請假醫師</span>
+                <select
+                  value={leaveDoctorId}
+                  onChange={(event) => setLeaveDoctorId(event.target.value)}
+                  className="w-full rounded-2xl border border-slate-200 px-4 py-3"
+                >
+                  {db.doctors.map((doctor) => (
+                    <option key={doctor.id} value={doctor.id}>
+                      {doctor.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="block">
+                <span className="mb-1 block font-medium text-brand-ink">開始日期</span>
+                <input
+                  type="date"
+                  value={leaveStartDate}
+                  onChange={(event) => setLeaveStartDate(event.target.value)}
+                  className="w-full rounded-2xl border border-slate-200 px-4 py-3"
+                />
+              </label>
+              <label className="block">
+                <span className="mb-1 block font-medium text-brand-ink">結束日期</span>
+                <input
+                  type="date"
+                  value={leaveEndDate}
+                  onChange={(event) => setLeaveEndDate(event.target.value)}
+                  className="w-full rounded-2xl border border-slate-200 px-4 py-3"
+                />
+              </label>
+            </div>
+            <label className="block">
+              <span className="mb-1 block font-medium text-brand-ink">請假原因</span>
+              <input
+                type="text"
+                value={leaveReason}
+                onChange={(event) => setLeaveReason(event.target.value)}
+                className="w-full rounded-2xl border border-slate-200 px-4 py-3"
+              />
+            </label>
+            <label className="block">
+              <span className="mb-1 block font-medium text-brand-ink">交班備註</span>
+              <textarea
+                value={leaveHandoffNote}
+                onChange={(event) => setLeaveHandoffNote(event.target.value)}
+                rows={4}
+                className="w-full rounded-2xl border border-slate-200 px-4 py-3"
+              />
+            </label>
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-slate-600">
+              <p className="font-medium text-brand-ink">受影響案件</p>
+              <p className="mt-1">共 {impactedSchedules.length} 筆會受到這次請假影響。</p>
+              <div className="mt-3 space-y-2 text-xs">
+                {impactedSchedules.slice(0, 4).map((schedule) => {
+                  const patient = db.patients.find((item) => item.id === schedule.patient_id);
+                  return (
+                    <p key={schedule.id}>
+                      {patient?.name ?? schedule.patient_id} / {formatDateOnly(schedule.scheduled_start_at)} /{" "}
+                      {schedule.service_time_slot}
+                    </p>
+                  );
+                })}
+                {impactedSchedules.length === 0 ? <p>目前這段期間沒有待執行案件。</p> : null}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={handleCreateLeaveRequest}
+              className="rounded-full bg-brand-coral px-5 py-3 font-semibold text-white"
+            >
+              建立請假申請
+            </button>
+          </div>
+        </Panel>
+      </div>
+
+      {statusMessage ? (
+        <div
+          role="status"
+          className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800"
+        >
+          {statusMessage}
+        </div>
+      ) : null}
+
+      {pendingLeaveRequests.length > 0 ? (
+        <Panel title="待處理請假卡片">
+          <div className="grid gap-4 xl:grid-cols-2">
+            {pendingLeaveRequests.map((leaveRequest) => {
+              const doctor = db.doctors.find((item) => item.id === leaveRequest.doctor_id);
+              return (
+                <div key={leaveRequest.id} className="rounded-3xl border border-slate-200 bg-white p-5">
+                  <p className="font-semibold text-brand-ink">{doctor?.name ?? leaveRequest.doctor_id}</p>
+                  <p className="mt-2 text-sm text-slate-600">
+                    {leaveRequest.start_date} 至 {leaveRequest.end_date}
+                  </p>
+                  <p className="mt-1 text-sm text-slate-600">{leaveRequest.reason}</p>
+                  <p className="mt-1 text-xs text-slate-500">{leaveRequest.handoff_note}</p>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => repositories.staffingRepository.updateLeaveRequestStatus(leaveRequest.id, "approved")}
+                      className="rounded-full bg-brand-forest px-4 py-2 text-xs font-semibold text-white"
+                    >
+                      核准
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => repositories.staffingRepository.updateLeaveRequestStatus(leaveRequest.id, "rejected")}
+                      className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-brand-ink"
+                    >
+                      駁回
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </Panel>
+      ) : null}
+
       <ReminderCenterPanel
         role="admin"
         ownerId={session.activeAdminId}
-        title="提醒中心"
+        title="通知中心"
         detailBasePath="/admin/patients"
-        emptyText="目前行政端沒有待處理提醒。"
+        emptyText="目前行政端沒有待處理通知。"
       />
     </div>
   );

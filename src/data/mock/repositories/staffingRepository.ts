@@ -1,6 +1,10 @@
 import { isSameDay } from "date-fns";
 import type { AppDb } from "../../../domain/models";
 import type { StaffingRepository } from "../../../domain/repository";
+import {
+  buildNotificationCenterItemFromLeaveRequest,
+  upsertNotificationCenterItem
+} from "./notificationCenter";
 
 export function createStaffingRepository(
   getDb: () => AppDb,
@@ -68,22 +72,69 @@ export function createStaffingRepository(
     createLeaveRequest(input) {
       updateDb((db) => {
         const now = new Date().toISOString();
+        const nextLeaveRequest = {
+          id: `leave-${Date.now()}`,
+          doctor_id: input.doctorId,
+          start_date: input.startDate,
+          end_date: input.endDate,
+          reason: input.reason,
+          status: input.status ?? "pending",
+          handoff_note: input.handoffNote,
+          created_at: now,
+          updated_at: now
+        } as const;
         return {
           ...db,
-          leave_requests: [
-            {
-              id: `leave-${Date.now()}`,
-              doctor_id: input.doctorId,
-              start_date: input.startDate,
-              end_date: input.endDate,
-              reason: input.reason,
-              status: input.status ?? "pending",
-              handoff_note: input.handoffNote,
-              created_at: now,
-              updated_at: now
-            },
-            ...db.leave_requests
-          ]
+          leave_requests: [nextLeaveRequest, ...db.leave_requests],
+          notification_center_items: upsertNotificationCenterItem(
+            db,
+            buildNotificationCenterItemFromLeaveRequest(
+              {
+                ...db,
+                leave_requests: [nextLeaveRequest, ...db.leave_requests]
+              },
+              nextLeaveRequest
+            )
+          )
+        };
+      });
+    },
+    updateLeaveRequestStatus(leaveRequestId, status) {
+      updateDb((db) => {
+        const now = new Date().toISOString();
+        const nextLeaveRequests = db.leave_requests.map((leaveRequest) =>
+          leaveRequest.id === leaveRequestId
+            ? {
+                ...leaveRequest,
+                status,
+                updated_at: now
+              }
+            : leaveRequest
+        );
+        const targetLeaveRequest = nextLeaveRequests.find((leaveRequest) => leaveRequest.id === leaveRequestId);
+
+        return {
+          ...db,
+          leave_requests: nextLeaveRequests,
+          notification_center_items: targetLeaveRequest
+            ? upsertNotificationCenterItem(
+                {
+                  ...db,
+                  leave_requests: nextLeaveRequests
+                },
+                {
+                  ...buildNotificationCenterItemFromLeaveRequest(
+                    {
+                      ...db,
+                      leave_requests: nextLeaveRequests
+                    },
+                    targetLeaveRequest
+                  ),
+                  is_unread: false,
+                  updated_at: now
+                }
+              )
+            : db.notification_center_items
         };
       });
     },

@@ -119,6 +119,12 @@ export type ProviderPermissionState =
   | "denied"
   | "unsupported";
 
+export type DoctorLocationTimeSlot = "上午" | "下午";
+
+export type DoctorLocationSyncMode = "mock_local_storage" | "api_polling";
+
+export type DoctorLocationSampleUpload = Omit<DoctorLocationLog, "id">;
+
 export type GeolocationScenarioId =
   | "normal_arrival_complete"
   | "gps_drift"
@@ -272,6 +278,17 @@ export interface GeolocationProviderAdapter {
   ): ProviderPermissionState;
 }
 
+export interface DoctorLocationSyncService {
+  mode: DoctorLocationSyncMode;
+  pollingIntervalMs: number;
+  buildUploadPath(): string;
+  buildAdminFeedPath(input: {
+    date: string;
+    timeSlot: DoctorLocationTimeSlot;
+  }): string;
+  pushSample(sample: DoctorLocationSampleUpload): Promise<void> | void;
+}
+
 export interface VisitAutomationService {
   getScenarios(): GeolocationScenario[];
   getTrackingState(scheduleId: string): TrackingRuntime | undefined;
@@ -300,6 +317,7 @@ export type AppServices = {
   payloadBuilder: NotificationPayloadBuilder;
   maps: MapsUrlBuilder;
   geolocation: GeolocationProviderAdapter;
+  doctorLocationSync: DoctorLocationSyncService;
   visitAutomation: VisitAutomationService;
 };
 

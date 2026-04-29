@@ -235,7 +235,7 @@ export type VisitRecord = z.infer<typeof visitRecordSchema>;
 
 export const contactLogSchema = z.object({
   id: z.string(),
-  patient_id: z.string(),
+  patient_id: z.string().nullable(),
   visit_schedule_id: z.string().nullable(),
   caregiver_id: z.string().nullable(),
   doctor_id: z.string().nullable(),
@@ -333,6 +333,35 @@ export const reminderSchema = z.object({
 
 export type Reminder = z.infer<typeof reminderSchema>;
 
+export const notificationCenterSourceValues = [
+  "manual_notice",
+  "system_notification",
+  "reminder",
+  "patient_exception",
+  "leave_request"
+] as const;
+
+export const notificationCenterItemSchema = z.object({
+  id: z.string(),
+  role: z.enum(userRoleValues),
+  owner_user_id: z.string().nullable(),
+  source_type: z.enum(notificationCenterSourceValues),
+  title: z.string(),
+  content: z.string(),
+  linked_patient_id: z.string().nullable(),
+  linked_visit_schedule_id: z.string().nullable(),
+  linked_doctor_id: z.string().nullable(),
+  linked_leave_request_id: z.string().nullable(),
+  status: z.string(),
+  is_unread: z.boolean(),
+  reply_text: z.string().nullable(),
+  reply_updated_at: z.string().nullable(),
+  reply_updated_by_role: z.enum(userRoleValues).nullable(),
+  ...baseTimestamps
+});
+
+export type NotificationCenterItem = z.infer<typeof notificationCenterItemSchema>;
+
 export const doctorLocationLogSchema = z.object({
   id: z.string(),
   doctor_id: z.string(),
@@ -361,6 +390,7 @@ export const appDbSchema = z.object({
   leave_requests: z.array(leaveRequestSchema),
   reschedule_actions: z.array(rescheduleActionSchema),
   reminders: z.array(reminderSchema),
+  notification_center_items: z.array(notificationCenterItemSchema),
   doctor_location_logs: z.array(doctorLocationLogSchema)
 });
 

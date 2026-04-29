@@ -1,14 +1,14 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 import { SESSION_STORAGE_KEY } from "../../app/auth-storage";
 import { AppProviders } from "../../app/providers";
 import { MOCK_DB_STORAGE_KEY } from "../../data/mock/db";
+import { createSeedDb } from "../../data/seed";
 import { DoctorLocationPage } from "../doctor/DoctorPages";
 import {
   AdminDashboardPage,
-  AdminGuidePage,
   AdminDoctorTrackingPage,
   AdminPatientsPage,
   AdminRemindersPage,
@@ -22,6 +22,24 @@ function renderWithProviders(page: ReactNode) {
       <AppProviders>{page}</AppProviders>
     </MemoryRouter>
   );
+}
+
+async function readBlobAsText(blob: Blob) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result ?? ""));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsText(blob);
+  });
+}
+
+async function readBlobAsBytes(blob: Blob) {
+  return new Promise<Uint8Array>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(new Uint8Array(reader.result as ArrayBuffer));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsArrayBuffer(blob);
+  });
 }
 
 function selectScheduleFilters(routeDate = "2026-04-25") {
@@ -43,6 +61,7 @@ describe("AdminPages", () => {
   beforeEach(() => {
     window.localStorage.clear();
     vi.restoreAllMocks();
+    vi.useRealTimers();
   });
 
   it("AdminSchedulesPage 會依醫師、星期與時段自動列出符合條件的個案", () => {
@@ -246,7 +265,7 @@ describe("AdminPages", () => {
 
     selectScheduleFilters();
     fireEvent.click(screen.getAllByRole("button", { name: "結案" })[0]);
-    expect(screen.getByRole("status")).toHaveTextContent("已結案 王麗珠");
+    expect(screen.getByRole("status")).toHaveTextContent("已結案 王○珠");
     expect(screen.queryByLabelText("王麗珠 勾選")).not.toBeInTheDocument();
 
     scheduleView.unmount();
@@ -276,7 +295,7 @@ describe("AdminPages", () => {
     renderWithProviders(<AdminDashboardPage />);
 
     expect(screen.getByText("個案異常儀表板")).toBeInTheDocument();
-    expect(screen.getByText("角色與任務儀表板")).toBeInTheDocument();
+    expect(screen.getByText("通知與任務儀表板")).toBeInTheDocument();
     expect(screen.getAllByText("待實行路線").length).toBeGreaterThan(0);
     expect(screen.getByText("待重排案件")).toBeInTheDocument();
     expect(screen.getByText("暫停案件")).toBeInTheDocument();
@@ -291,49 +310,145 @@ describe("AdminPages", () => {
     expect(screen.queryByText("目前距離")).not.toBeInTheDocument();
   });
 
-  it("AdminDoctorTrackingPage 會集中顯示 Google Map 追蹤圖與站點進度", () => {
+  it("AdminDoctorTrackingPage 會集中顯示多醫師總覽圖與個別站點進度", () => {
     renderWithProviders(<AdminDoctorTrackingPage />);
 
-    expect(screen.getByText("Google Map 追蹤圖")).toBeInTheDocument();
-    expect(screen.getByTitle("Google Map 追蹤圖")).toBeInTheDocument();
-    expect(screen.getByText("目前距離")).toBeInTheDocument();
-    expect(screen.getByText("最近移動軌跡")).toBeInTheDocument();
+    expect(screen.getByText("同時段醫師追蹤總覽")).toBeInTheDocument();
+    expect(screen.getByLabelText("多醫師追蹤總覽圖")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "蕭坤元醫師" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "林若謙醫師" })).toBeInTheDocument();
     expect(screen.getAllByText("已經過的地點").length).toBeGreaterThan(0);
-    expect(screen.getByText("還沒有去的地點")).toBeInTheDocument();
+    expect(screen.getByText("最近定位軌跡")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "聯絡此醫師" })).toBeInTheDocument();
   });
 
-  it("AdminRemindersPage 會顯示與醫師同步的提醒內容", () => {
+  it("AdminDoctorTrackingPage 會標示定位延遲與尚未收到定位", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-29T10:00:00+08:00"));
+
+    const seededDb = createSeedDb();
+    window.localStorage.setItem(
+      MOCK_DB_STORAGE_KEY,
+      JSON.stringify({
+        ...seededDb,
+        doctor_location_logs: []
+      })
+    );
+
+    const missingView = renderWithProviders(<AdminDoctorTrackingPage />);
+
+    expect(screen.getAllByText("尚未收到定位").length).toBeGreaterThan(0);
+    missingView.unmount();
+
+    window.localStorage.setItem(MOCK_DB_STORAGE_KEY, JSON.stringify(seededDb));
+    renderWithProviders(<AdminDoctorTrackingPage />);
+
+    expect(screen.getAllByText("定位延遲").length).toBeGreaterThan(0);
+  });
+
+  it("AdminDoctorTrackingPage 會在 storage 事件後同步更新醫師定位", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-29T09:00:00+08:00"));
+
+    const seededDb = createSeedDb();
+    const emptyLocationDb = {
+      ...seededDb,
+      doctor_location_logs: []
+    };
+    window.localStorage.setItem(MOCK_DB_STORAGE_KEY, JSON.stringify(emptyLocationDb));
+
+    renderWithProviders(<AdminDoctorTrackingPage />);
+
+    expect(screen.getAllByText("尚未收到定位").length).toBeGreaterThan(0);
+
+    const nextDb = {
+      ...emptyLocationDb,
+      doctor_location_logs: [
+        {
+          id: "loc-sync-001",
+          doctor_id: "doc-001",
+          recorded_at: "2026-04-29T08:58:00+08:00",
+          latitude: 24.9982,
+          longitude: 121.5499,
+          accuracy: 8,
+          source: "gps",
+          linked_visit_schedule_id: "vs-003"
+        }
+      ]
+    };
+    window.localStorage.setItem(MOCK_DB_STORAGE_KEY, JSON.stringify(nextDb));
+    act(() => {
+      window.dispatchEvent(
+        new StorageEvent("storage", {
+          key: MOCK_DB_STORAGE_KEY,
+          newValue: JSON.stringify(nextDb)
+        })
+      );
+    });
+
+    expect(screen.getAllByText("定位正常").length).toBeGreaterThan(0);
+    expect(screen.getByText(/最後定位/)).toBeInTheDocument();
+  });
+
+  it("AdminDoctorTrackingPage 可直接送出給醫師的院內文字訊息", () => {
+    renderWithProviders(<AdminDoctorTrackingPage />);
+
+    fireEvent.click(screen.getByRole("button", { name: "聯絡此醫師" }));
+    fireEvent.change(screen.getByLabelText("訊息內容"), {
+      target: { value: "回院後請優先補上剛完成案件的病歷與提醒摘要。" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "送出站內訊息" }));
+
+    expect(screen.getByRole("status")).toHaveTextContent("站內訊息已送出");
+  });
+
+  it("AdminRemindersPage 初始為空，並可新增行政公告、指定醫師通知與請假申請", async () => {
     renderWithProviders(<AdminRemindersPage />);
 
-    expect(screen.getByText("提醒中心")).toBeInTheDocument();
-    expect(screen.getByText("出發前確認路線")).toBeInTheDocument();
-    expect(screen.getByText("檢查請假衝突")).toBeInTheDocument();
-    expect(screen.getAllByText("查看個案").length).toBeGreaterThan(0);
-    expect(screen.getByText("這裡會同步顯示醫師與行政共用的提醒內容；若有綁定案件，兩端看到的主題與內容會一致。")).toBeInTheDocument();
-  });
+    expect(screen.getByText("通知中心")).toBeInTheDocument();
+    expect(screen.getByText("目前行政端沒有待處理通知。")).toBeInTheDocument();
 
-  it("AdminGuidePage 會集中顯示登入、定位授權與角色設定說明", () => {
-    renderWithProviders(<AdminGuidePage />);
+    fireEvent.change(screen.getByLabelText("標題"), {
+      target: { value: "今日交班提醒" }
+    });
+    fireEvent.change(screen.getByLabelText("內容"), {
+      target: { value: "上午案件請先整理成同批摘要再交班。" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "建立站內通知" }));
 
-    expect(screen.getByText("教學指引")).toBeInTheDocument();
-    expect(screen.getByText("目前作業方式")).toBeInTheDocument();
-    expect(screen.getByText("角色設定說明")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "前往角色設置" })).toBeInTheDocument();
-    expect(
-      screen.getByText("這裡集中放登入、定位授權與角色維護的操作備忘，改成左側獨立標籤後，不再占用行政首頁主畫面空間。")
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText("2. 行政端固定為共用帳號「行政人員」，醫師資料與可服務時段都在角色設置頁集中維護。")
-    ).toBeInTheDocument();
-  });
+    await waitFor(() => {
+      expect(screen.getByRole("status")).toHaveTextContent("行政內部公告已建立");
+      expect(screen.getByText("今日交班提醒")).toBeInTheDocument();
+    });
 
-  it("AdminDashboardPage 會顯示已移除家屬聯絡流程說明", () => {
-    renderWithProviders(<AdminDashboardPage />);
+    fireEvent.change(screen.getByRole("combobox", { name: "通知類型" }), {
+      target: { value: "doctor" }
+    });
+    fireEvent.change(screen.getByLabelText("指定醫師"), {
+      target: { value: "doc-001" }
+    });
+    fireEvent.change(screen.getByLabelText("標題"), {
+      target: { value: "請補回院病歷" }
+    });
+    fireEvent.change(screen.getByLabelText("內容"), {
+      target: { value: "回院後請優先補上剛完成案件。" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "建立站內通知" }));
 
-    expect(screen.getByText("聯絡流程說明")).toBeInTheDocument();
-    expect(
-      screen.getByText("目前系統不再提供家屬聯絡、綁定、外部通訊或流程紀錄；行政首頁只保留排程、定位與角色管理。")
-    ).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole("status")).toHaveTextContent("指定醫師通知已建立");
+      expect(screen.getByText("請補回院病歷")).toBeInTheDocument();
+    });
+
+    fireEvent.change(screen.getByLabelText("請假原因"), {
+      target: { value: "上午院內會議" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "建立請假申請" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("status")).toHaveTextContent("請假申請已送入通知中心");
+      expect(screen.getByText(/醫師請假申請｜/)).toBeInTheDocument();
+    });
   });
 
   it("AdminDashboardPage 不再提供家屬草稿與綁定編輯欄位", () => {
@@ -377,6 +492,68 @@ describe("AdminPages", () => {
       expect(screen.getByRole("status")).toHaveTextContent("CSV 匯入完成：成功 1 筆")
     );
     expect(screen.getByText("趙○華")).toBeInTheDocument();
+    const storedDb = JSON.parse(window.localStorage.getItem(MOCK_DB_STORAGE_KEY) ?? "{}");
+    expect(
+      (storedDb.patients ?? []).some(
+        (patient: { name: string }) => patient.name === "趙○華"
+      )
+    ).toBe(true);
+  });
+
+  it("AdminPatientsPage 可匯入帶 UTF-8 BOM 的 CSV", async () => {
+    renderWithProviders(<AdminPatientsPage />);
+
+    const csvFile = new File(
+      [
+        "\uFEFF個案姓名,主診斷,需求項目,地址,狀態管理,負責醫師,服務時段\n",
+        "林小芳,膝痛追蹤,中藥,台北市松山區八德路 88 號,服務中,蕭坤元醫師,星期三上午\n"
+      ],
+      "patients-bom.csv",
+      { type: "text/csv" }
+    );
+
+    fireEvent.change(screen.getByLabelText("CSV 匯入"), {
+      target: { files: [csvFile] }
+    });
+
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent("CSV 匯入完成：成功 1 筆")
+    );
+    expect(screen.getByText("林○芳")).toBeInTheDocument();
+  });
+
+  it("AdminPatientsPage 下載 CSV 範本時會輸出含 UTF-8 BOM 的檔案", async () => {
+    renderWithProviders(<AdminPatientsPage />);
+
+    const exportedBlobRef: { current: Blob | null } = { current: null };
+    const originalCreateElement = document.createElement.bind(document);
+    vi.stubGlobal(
+      "URL",
+      Object.assign(URL, {
+        createObjectURL: vi.fn((blob: Blob) => {
+          exportedBlobRef.current = blob;
+          return "blob:patient-template";
+        }),
+        revokeObjectURL: vi.fn()
+      })
+    );
+    vi.spyOn(document, "createElement").mockImplementation(((tagName: string, options?: ElementCreationOptions) => {
+      return originalCreateElement(tagName, options);
+    }) as typeof document.createElement);
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+
+    fireEvent.click(screen.getByRole("button", { name: "下載 CSV 範本" }));
+
+    if (!exportedBlobRef.current) {
+      throw new Error("CSV 範本 blob 未建立");
+    }
+
+    const blob = exportedBlobRef.current;
+    expect(blob.type).toBe("text/csv;charset=utf-8;");
+    const exportedBytes = await readBlobAsBytes(blob);
+    expect(Array.from(exportedBytes.slice(0, 3))).toEqual([0xef, 0xbb, 0xbf]);
+    const exportedText = await readBlobAsText(blob);
+    expect(exportedText).toContain("個案姓名,主診斷,需求項目,地址,狀態管理,負責醫師,服務時段");
   });
 
   it("AdminPatientsPage 儲存個案後會提示改到排程管理頁建立或實行路線", () => {
@@ -399,6 +576,12 @@ describe("AdminPages", () => {
     expect(screen.getByRole("status")).toHaveTextContent("張○明");
     expect(screen.getByRole("status")).toHaveTextContent("請到排程管理頁建立或實行路線");
     expect(screen.queryByRole("dialog", { name: "新增個案視窗" })).not.toBeInTheDocument();
+    const storedDb = JSON.parse(window.localStorage.getItem(MOCK_DB_STORAGE_KEY) ?? "{}");
+    expect(
+      (storedDb.patients ?? []).some(
+        (patient: { name: string }) => patient.name === "張○明"
+      )
+    ).toBe(true);
   });
 
   it("AdminPatientsPage 只在編輯時才顯示個案詳細資料視窗", () => {
@@ -432,19 +615,19 @@ describe("AdminPages", () => {
 
     expect(screen.getByRole("status")).toHaveTextContent("個案非服務中，未納入排程");
 
-    fireEvent.click(screen.getByRole("button", { name: "編輯 王麗珠" }));
+    fireEvent.click(screen.getByRole("button", { name: "編輯 王○珠" }));
     dialog = screen.getByRole("dialog", { name: "王○珠 編輯資料" });
     const statusSelect = within(dialog).getByRole("combobox", { name: "狀態管理" });
     expect(statusSelect).toHaveValue("paused");
     expect(within(statusSelect).getByRole("option", { name: "恢復治療" })).toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole("button", { name: "取消" }));
 
-    fireEvent.click(screen.getByLabelText("王麗珠 勾選"));
+    fireEvent.click(screen.getByLabelText("王○珠 勾選"));
     fireEvent.click(screen.getByRole("button", { name: "恢復" }));
 
     expect(screen.getByRole("status")).toHaveTextContent("已恢復 1 位個案");
 
-    fireEvent.click(screen.getByRole("button", { name: "編輯 王麗珠" }));
+    fireEvent.click(screen.getByRole("button", { name: "編輯 王○珠" }));
     dialog = screen.getByRole("dialog", { name: "王○珠 編輯資料" });
     expect(within(dialog).getByRole("combobox", { name: "狀態管理" })).toHaveValue("active");
     expect(within(dialog).getByRole("option", { name: "服務中" })).toBeInTheDocument();

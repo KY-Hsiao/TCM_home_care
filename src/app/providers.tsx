@@ -6,7 +6,7 @@ import {
   type PropsWithChildren
 } from "react";
 import { AppContext, type AppContextValue } from "./app-context";
-import { loadDb, persistDb, resetDb } from "../data/mock/db";
+import { loadDb, persistDb, resetDb, subscribeDbStorage } from "../data/mock/db";
 import { createRepositories } from "../data/mock/repositories";
 import type { AppDb } from "../domain/models";
 import type { SessionState } from "../domain/repository";
@@ -61,6 +61,12 @@ export function AppProviders({ children }: PropsWithChildren) {
   useEffect(() => {
     persistDb(db);
   }, [db]);
+
+  useEffect(() => {
+    return subscribeDbStorage((nextDb) => {
+      setDb(nextDb);
+    });
+  }, []);
 
   useEffect(() => {
     persistStoredSession(session);

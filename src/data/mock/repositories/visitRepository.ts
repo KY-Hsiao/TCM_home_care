@@ -16,6 +16,10 @@ import type {
 } from "../../../domain/enums";
 import { applyVisitRecordRules } from "../../../domain/rules";
 import type { RoutePlanningWindow, VisitRepository } from "../../../domain/repository";
+import {
+  buildNotificationCenterItemFromReminder,
+  upsertNotificationCenterItem
+} from "./notificationCenter";
 
 function sortSchedules<T extends { scheduled_start_at: string; route_order?: number }>(items: T[]): T[] {
   return [...items].sort((left, right) => {
@@ -298,6 +302,37 @@ function upsertReminderList(db: AppDb, reminder: AppDb["reminders"][number]) {
     return db.reminders.map((item, itemIndex) => (itemIndex === index ? reminder : item));
   }
   return [reminder, ...db.reminders];
+}
+
+function buildVisitAlertNotification(
+  db: AppDb,
+  input: {
+    scheduleId: string;
+    title: string;
+    content: string;
+    sourceType: "patient_exception" | "system_notification";
+  }
+) {
+  const schedule = db.visit_schedules.find((item) => item.id === input.scheduleId);
+  return {
+    id: `nc-visit-${input.scheduleId}-${input.sourceType}-${Date.now()}`,
+    role: "admin" as const,
+    owner_user_id: null,
+    source_type: input.sourceType,
+    title: input.title,
+    content: input.content,
+    linked_patient_id: schedule?.patient_id ?? null,
+    linked_visit_schedule_id: input.scheduleId,
+    linked_doctor_id: schedule?.assigned_doctor_id ?? null,
+    linked_leave_request_id: null,
+    status: "pending",
+    is_unread: true,
+    reply_text: null,
+    reply_updated_at: null,
+    reply_updated_by_role: null,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  };
 }
 
 function deleteSavedRoutePlanList(db: AppDb, routePlanId: string) {
@@ -1174,7 +1209,19 @@ export function createVisitRepository(
         }),
         saved_route_plans: syncRoutePlansForSchedule(currentDb, visitScheduleId, {
           status: resolveRouteItemStatus(nextStatus)
-        })
+        }),
+        notification_center_items:
+          feedbackCode === "normal"
+            ? currentDb.notification_center_items
+            : upsertNotificationCenterItem(
+                currentDb,
+                buildVisitAlertNotification(currentDb, {
+                  scheduleId: visitScheduleId,
+                  title: `個案異常通報｜${feedbackCode}`,
+                  content: `案件已回報 ${feedbackCode}，請行政人員查看對應排程並後續追蹤。`,
+                  sourceType: "patient_exception"
+                })
+              )
       }));
       return nextRecord;
     },
@@ -1245,7 +1292,16 @@ export function createVisitRepository(
               status: "approved"
             }),
             ...db.reschedule_actions
-          ]
+          ],
+          notification_center_items: upsertNotificationCenterItem(
+            db,
+            buildVisitAlertNotification(db, {
+              scheduleId: input.visitScheduleId,
+              title: "個案通報｜改期處理",
+              content: `${input.reason}｜${input.changeSummary}`,
+              sourceType: "system_notification"
+            })
+          )
         };
       });
     },
@@ -1286,7 +1342,16 @@ export function createVisitRepository(
               status: "approved"
             }),
             ...db.reschedule_actions
-          ]
+          ],
+          notification_center_items: upsertNotificationCenterItem(
+            db,
+            buildVisitAlertNotification(db, {
+              scheduleId: input.visitScheduleId,
+              title: "個案通報｜代班處理",
+              content: `${input.reason}｜${input.changeSummary}`,
+              sourceType: "system_notification"
+            })
+          )
         };
       });
     },
@@ -1322,7 +1387,16 @@ export function createVisitRepository(
               status: "approved"
             }),
             ...db.reschedule_actions
-          ]
+          ],
+          notification_center_items: upsertNotificationCenterItem(
+            db,
+            buildVisitAlertNotification(db, {
+              scheduleId: visitScheduleId,
+              title: "個案通報｜取消訪視",
+              content: `${reason}｜${changeSummary}`,
+              sourceType: "patient_exception"
+            })
+          )
         };
       });
     },
@@ -1405,7 +1479,11 @@ export function createVisitRepository(
     createReminder(reminder) {
       updateDb((db) => ({
         ...db,
-        reminders: upsertReminderList(db, reminder)
+        reminders: upsertReminderList(db, reminder),
+        notification_center_items: upsertNotificationCenterItem(
+          db,
+          buildNotificationCenterItemFromReminder(db, reminder)
+        )
       }));
     },
     appendDoctorLocationLog(log) {

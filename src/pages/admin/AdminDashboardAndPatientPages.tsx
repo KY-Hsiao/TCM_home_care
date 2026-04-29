@@ -2,10 +2,13 @@ import { useEffect, useMemo, useState, type ChangeEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useAppContext } from "../../app/use-app-context";
 import type { Patient, VisitSchedule } from "../../domain/models";
+import type { RouteMapInput } from "../../services/types";
 import { Badge } from "../../shared/ui/Badge";
 import { Panel } from "../../shared/ui/Panel";
 import { StatCard } from "../../shared/ui/StatCard";
 import { formatDateOnly, formatDateTimeFull, formatTimeOnly } from "../../shared/utils/format";
+import { anonymizePatientName, maskPatientName } from "../../shared/utils/patient-name";
+import { StaffCommunicationDialog } from "../../shared/components/StaffCommunicationDialog";
 import {
   buildGoogleMapsSearchUrl,
   normalizeLocationKeyword,
@@ -20,18 +23,24 @@ function mapsLink(address: string, locationKeyword = sameAddressLocationKeyword)
 const patientServiceNeedOptions = ["中藥", "針灸"] as const;
 const routeTimeSlotOptions = ["上午", "下午"] as const;
 const weekdayLabels = ["星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"] as const;
+const trackingMapOrigin = {
+  address: "旗山醫院",
+  latitude: 22.88794,
+  longitude: 120.48341
+} as const;
+const trackingMapDestination = {
+  address: "旗山醫院",
+  latitude: 22.88794,
+  longitude: 120.48341
+} as const;
+const locationStaleThresholdMs = 5 * 60 * 1000;
 
 type RouteTimeSlot = (typeof routeTimeSlotOptions)[number];
-
-function maskPatientName(name: string) {
-  if (!name) {
-    return "";
-  }
-  if (name.length <= 2) {
-    return name;
-  }
-  return `${name[0]}${"○".repeat(Math.max(name.length - 2, 1))}${name[name.length - 1]}`;
-}
+type TrackingRouteOption = {
+  date: string;
+  timeSlot: RouteTimeSlot;
+  doctorCount: number;
+};
 
 function buildCsvTemplate() {
   return [
@@ -40,8 +49,26 @@ function buildCsvTemplate() {
   ].join("\n");
 }
 
+function stripUtf8Bom(content: string) {
+  return content.replace(/^\uFEFF/, "");
+}
+
+function downloadCsvFile(filename: string, content: string) {
+  const blob = new Blob(["\uFEFF", content], {
+    type: "text/csv;charset=utf-8;"
+  });
+  const downloadUrl = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = downloadUrl;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(downloadUrl);
+}
+
 function parseCsvRows(content: string) {
-  return content
+  return stripUtf8Bom(content)
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean)
@@ -63,12 +90,12 @@ function normalizePatientStatus(input: string): Patient["status"] {
 
 async function readUploadedFileText(file: File): Promise<string> {
   if (typeof file.text === "function") {
-    return file.text();
+    return stripUtf8Bom(await file.text());
   }
 
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result ?? ""));
+    reader.onload = () => resolve(stripUtf8Bom(String(reader.result ?? "")));
     reader.onerror = () => reject(reader.error);
     reader.readAsText(file);
   });
@@ -114,6 +141,13 @@ function buildServiceSlotLabel(routeDate: string, routeTimeSlot: RouteTimeSlot) 
     return routeTimeSlot;
   }
   return `${weekdayLabels[date.getDay()]}${routeTimeSlot}`;
+}
+
+function buildDateInputValue(date = new Date()) {
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function renumberRoute(route: VisitSchedule[]) {
@@ -225,13 +259,13 @@ export function AdminDashboardPage() {
         </Panel>
 
         <Panel
-          title="角色與任務儀表板"
+          title="通知與任務儀表板"
           action={
             <Link
-              to="/admin/staff"
+              to="/admin/reminders"
               className="rounded-full bg-brand-sand px-4 py-2 text-sm font-semibold text-brand-forest"
             >
-              前往角色設置
+              前往通知中心
             </Link>
           }
         >
@@ -297,225 +331,349 @@ export function AdminDashboardPage() {
           </div>
         </Panel>
       </div>
-
-      <Panel title="聯絡流程說明">
-        <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-600">
-          目前系統不再提供家屬聯絡、綁定、外部通訊或流程紀錄；行政首頁只保留排程、定位與角色管理。
-        </div>
-      </Panel>
     </div>
   );
 }
 
-export function AdminGuidePage() {
-  return (
-    <div className="space-y-6">
-      <Panel
-        title="教學指引"
-        action={
-          <Link
-            to="/admin/staff"
-            className="rounded-full bg-brand-sand px-4 py-2 text-sm font-semibold text-brand-forest"
-          >
-            前往角色設置
-          </Link>
+const trackingPalette = ["#0f766e", "#d97706", "#2563eb", "#be123c"] as const;
+
+type DoctorTrackingSummary = {
+  doctorId: string;
+  doctorName: string;
+  doctorPhone: string;
+  color: string;
+  latestLocation: ReturnType<typeof useAppContext>["db"]["doctor_location_logs"][number] | undefined;
+  locationLogs: ReturnType<typeof useAppContext>["db"]["doctor_location_logs"];
+  locationStatus: "live" | "stale" | "missing";
+  routeSchedules: VisitSchedule[];
+  activeSchedule: VisitSchedule | undefined;
+  activePatientName: string | null;
+  passedStops: VisitSchedule[];
+  upcomingStops: VisitSchedule[];
+  currentDistanceKilometers: number | null;
+  routeMapUrl: string | null;
+};
+
+function resolveLocationSyncStatus(
+  latestLocation: { recorded_at: string } | undefined
+): "live" | "stale" | "missing" {
+  if (!latestLocation) {
+    return "missing";
+  }
+
+  const recordedAt = new Date(latestLocation.recorded_at).getTime();
+  if (Number.isNaN(recordedAt)) {
+    return "stale";
+  }
+
+  return Date.now() - recordedAt > locationStaleThresholdMs ? "stale" : "live";
+}
+
+function getLocationStatusLabel(status: "live" | "stale" | "missing") {
+  if (status === "live") {
+    return "定位正常";
+  }
+  if (status === "stale") {
+    return "定位延遲";
+  }
+  return "尚未收到定位";
+}
+
+function getLocationStatusTone(status: "live" | "stale" | "missing") {
+  if (status === "live") {
+    return "bg-emerald-100 text-emerald-700";
+  }
+  if (status === "stale") {
+    return "bg-amber-100 text-amber-700";
+  }
+  return "bg-slate-100 text-slate-600";
+}
+
+function buildTrackingRouteMapInput(
+  schedules: VisitSchedule[],
+  label: string
+): RouteMapInput | null {
+  if (!schedules.length) {
+    return null;
+  }
+
+  return {
+    origin: trackingMapOrigin,
+    destination: trackingMapDestination,
+    waypoints: schedules.map((schedule) => ({
+      address: schedule.address_snapshot,
+      locationKeyword: schedule.location_keyword_snapshot,
+      latitude: schedule.home_latitude_snapshot,
+      longitude: schedule.home_longitude_snapshot
+    })),
+    travelMode: "driving",
+    label
+  };
+}
+
+function buildTrackingProjection(doctors: DoctorTrackingSummary[]) {
+  const points = doctors.flatMap((doctor) => [
+    ...doctor.routeSchedules
+      .map((schedule) => ({
+        latitude: schedule.home_latitude_snapshot,
+        longitude: schedule.home_longitude_snapshot
+      }))
+      .filter((point) => point.latitude !== null && point.longitude !== null),
+    doctor.latestLocation
+      ? {
+          latitude: doctor.latestLocation.latitude,
+          longitude: doctor.latestLocation.longitude
         }
-      >
-        <div className="space-y-4 text-sm">
-          <p className="text-slate-600">
-            這裡集中放登入、定位授權與角色維護的操作備忘，改成左側獨立標籤後，不再占用行政首頁主畫面空間。
-          </p>
+      : null
+  ]).filter((point): point is { latitude: number; longitude: number } => Boolean(point));
 
-          <div className="grid gap-3 sm:grid-cols-3">
-            <div className="rounded-2xl border border-slate-200 bg-white p-4">
-              <p className="text-xs text-slate-500">教學用途</p>
-              <p className="mt-2 font-semibold text-brand-ink">登入與授權流程備忘</p>
-              <p className="mt-1 text-xs text-slate-500">
-                需要查看登入、網頁通知與定位授權時，再從左側標籤打開這頁。
-              </p>
-            </div>
-            <div className="rounded-2xl border border-slate-200 bg-white p-4">
-              <p className="text-xs text-slate-500">角色帳號維護</p>
-              <p className="mt-2 font-semibold text-brand-ink">統一前往角色設置頁</p>
-              <p className="mt-1 text-xs text-slate-500">
-                醫師資料與服務時段集中在角色設置頁；行政端固定共用帳號。
-              </p>
-            </div>
-            <div className="rounded-2xl border border-slate-200 bg-white p-4">
-              <p className="text-xs text-slate-500">醫師追蹤入口</p>
-              <p className="mt-2 font-semibold text-brand-ink">已獨立成左側分頁</p>
-              <p className="mt-1 text-xs text-slate-500">
-                追蹤地圖、目前距離、已過 / 未到站點都集中到「醫師追蹤」。
-              </p>
-            </div>
-          </div>
+  if (!points.length) {
+    return null;
+  }
 
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 text-slate-600">
-            <p className="font-semibold text-brand-ink">目前作業方式</p>
-            <p className="mt-2">1. 每位行政與醫師登入時都需要輸入密碼，預設為 0000。</p>
-            <p className="mt-1">2. 醫師端只要用手機開啟網頁並允許定位，行政端就能看到最新位置。</p>
-            <p className="mt-1">3. 家屬聯絡、綁定、外部通訊與流程紀錄已移除，系統目前只保留個案、排程與定位。</p>
-            <p className="mt-1">4. 行政端統一使用共用帳號「行政人員」；角色設置頁只需要維護醫師資料。</p>
-            <p className="mt-3 text-xs text-slate-500">
-              提醒：這裡只保留院內定位、路線與通知流程；個案管理頁目前不再維護家屬聯絡欄位。
-            </p>
-          </div>
+  const latitudes = points.map((point) => point.latitude);
+  const longitudes = points.map((point) => point.longitude);
+  const minLatitude = Math.min(...latitudes);
+  const maxLatitude = Math.max(...latitudes);
+  const minLongitude = Math.min(...longitudes);
+  const maxLongitude = Math.max(...longitudes);
+  const latitudeSpan = Math.max(maxLatitude - minLatitude, 0.01);
+  const longitudeSpan = Math.max(maxLongitude - minLongitude, 0.01);
 
-          <div className="grid gap-4 md:grid-cols-2 text-sm text-slate-600">
-            <div className="rounded-2xl border border-slate-200 bg-white p-4">
-              <p className="font-semibold text-brand-ink">角色設定說明</p>
-              <p className="mt-2">1. 醫師與行政現在都改用站內通知與帳密登入，預設密碼為 0000。</p>
-              <p className="mt-1">2. 行政端固定為共用帳號「行政人員」，醫師資料與可服務時段都在角色設置頁集中維護。</p>
-              <p className="mt-1">3. 醫師資料刪除前會先檢查是否還有案件正在使用。</p>
-            </div>
-            <div className="rounded-2xl border border-slate-200 bg-white p-4">
-              <p className="font-semibold text-brand-ink">醫師端規則</p>
-              <p className="mt-2">1. 醫師資料不用填醫師證號、專長與服務區域。</p>
-              <p className="mt-1">2. 醫師會在網頁內收到出發、抵達、緊急與追蹤通知；行政端可同步查看距離、軌跡與站序。</p>
-              <p className="mt-1">3. 可服務時段改為先選星期，再切換上午或下午，個案管理頁會沿用這些設定自動排班。</p>
-              <p className="mt-1">4. 醫師聯絡資訊目前只維護姓名、電話與定位分享相關資料。</p>
-            </div>
-          </div>
-        </div>
-      </Panel>
-    </div>
-  );
+  return {
+    project(latitude: number, longitude: number) {
+      const x = ((longitude - minLongitude) / longitudeSpan) * 100;
+      const y = 100 - ((latitude - minLatitude) / latitudeSpan) * 100;
+      return { x, y };
+    }
+  };
 }
 
 export function AdminDoctorTrackingPage() {
-  const { repositories, db, services } = useAppContext();
-  const [selectedDoctorId, setSelectedDoctorId] = useState<string>(db.doctors[0]?.id ?? "");
-  const [routeDate, setRouteDate] = useState<string>(new Date().toISOString().slice(0, 10));
+  const { repositories, db, services, session } = useAppContext();
+  const [routeDate, setRouteDate] = useState<string>(buildDateInputValue());
   const [routeTimeSlot, setRouteTimeSlot] = useState<RouteTimeSlot>("上午");
-  const selectedDoctor = db.doctors.find((doctor) => doctor.id === selectedDoctorId) ?? db.doctors[0];
-  const suggestedRoute = useMemo(
-    () =>
-      repositories.visitRepository.getSuggestedRoute(selectedDoctorId, {
-        date: routeDate,
-        serviceTimeSlot: routeTimeSlot
-      }),
-    [repositories, routeDate, routeTimeSlot, selectedDoctorId, db.visit_schedules, db.doctor_location_logs]
-  );
-  const [routeDraft, setRouteDraft] = useState<VisitSchedule[]>([]);
-  const activeDoctorLocation = [...db.doctor_location_logs]
-    .filter((log) => log.doctor_id === selectedDoctorId)
-    .sort(
-      (left, right) =>
-        new Date(right.recorded_at).getTime() - new Date(left.recorded_at).getTime()
-    )[0];
-  const activeTrackedSchedule =
-    (activeDoctorLocation?.linked_visit_schedule_id
-      ? db.visit_schedules.find((schedule) => schedule.id === activeDoctorLocation.linked_visit_schedule_id)
-      : undefined) ??
-    routeDraft.find((schedule) =>
-      ["tracking", "proximity_pending", "arrived", "in_treatment", "issue_pending"].includes(
-        schedule.status
-      )
-    ) ??
-    routeDraft[0];
-  const activeTrackedPatient = activeTrackedSchedule
-    ? db.patients.find((patient) => patient.id === activeTrackedSchedule.patient_id)
-    : undefined;
-  const activeMapUrl =
-    (activeDoctorLocation
-      ? services.maps.buildPatientMapUrl({
-          address: "醫師目前位置",
-          latitude: activeDoctorLocation.latitude,
-          longitude: activeDoctorLocation.longitude
-        })
-      : undefined) ||
-    selectedDoctor?.google_location_share_url ||
-    (activeTrackedSchedule
-      ? services.maps.buildPatientMapUrl({
-          address: activeTrackedSchedule.address_snapshot,
-          locationKeyword: activeTrackedSchedule.location_keyword_snapshot,
-          latitude: activeTrackedSchedule.home_latitude_snapshot,
-          longitude: activeTrackedSchedule.home_longitude_snapshot
-        })
-      : "https://www.google.com/maps");
-  const activeEmbedMapUrl =
-    (activeDoctorLocation
-      ? services.maps.buildPatientEmbedUrl({
-          address: "醫師目前位置",
-          latitude: activeDoctorLocation.latitude,
-          longitude: activeDoctorLocation.longitude
-        })
-      : undefined) ||
-    (activeTrackedSchedule
-      ? services.maps.buildPatientEmbedUrl({
-          address: activeTrackedSchedule.address_snapshot,
-          locationKeyword: activeTrackedSchedule.location_keyword_snapshot,
-          latitude: activeTrackedSchedule.home_latitude_snapshot,
-          longitude: activeTrackedSchedule.home_longitude_snapshot
-        })
-      : "https://maps.google.com/maps?q=%E5%8F%B0%E5%8C%97%E5%B8%82&z=13&output=embed");
-  const routeServiceSlotLabel = useMemo(
-    () => buildServiceSlotLabel(routeDate, routeTimeSlot),
-    [routeDate, routeTimeSlot]
-  );
-  const doctorLocationLogs = useMemo(
-    () =>
-      repositories.visitRepository
-        .getDoctorLocationLogs(selectedDoctorId)
-        .slice()
-        .sort(
-          (left, right) =>
-            new Date(right.recorded_at).getTime() - new Date(left.recorded_at).getTime()
-        ),
-    [repositories, selectedDoctorId, db.doctor_location_logs]
-  );
-  const currentDistanceToTrackedPatient = activeDoctorLocation && activeTrackedSchedule
-    ? estimateDistanceKilometersBetween(
-        activeDoctorLocation.latitude,
-        activeDoctorLocation.longitude,
-        activeTrackedSchedule.home_latitude_snapshot,
-        activeTrackedSchedule.home_longitude_snapshot
-      )
-    : null;
-  const passedRouteStops = useMemo(
-    () =>
-      routeDraft.filter((schedule) =>
-        activeTrackedSchedule
-          ? (schedule.route_order ?? 0) < (activeTrackedSchedule.route_order ?? 0)
-          : ["completed", "cancelled"].includes(schedule.status)
-      ),
-    [activeTrackedSchedule, routeDraft]
-  );
-  const upcomingRouteStops = useMemo(
-    () =>
-      routeDraft.filter((schedule) =>
-        activeTrackedSchedule
-          ? (schedule.route_order ?? 0) > (activeTrackedSchedule.route_order ?? 0)
-          : !["completed", "cancelled"].includes(schedule.status)
-      ),
-    [activeTrackedSchedule, routeDraft]
-  );
+  const [selectedDoctorId, setSelectedDoctorId] = useState<string>("");
+  const [isCommunicationOpen, setIsCommunicationOpen] = useState(false);
+  const selectedAdmin = db.admin_users.find((admin) => admin.id === session.activeAdminId) ?? db.admin_users[0];
+  const trackingRouteOptions = useMemo<TrackingRouteOption[]>(() => {
+    const doctorIdsByRoute = new Map<string, Set<string>>();
+    repositories.visitRepository
+      .getSchedules()
+      .filter((schedule) => schedule.visit_type !== "回院病歷")
+      .forEach((schedule) => {
+        const routeKey = `${schedule.scheduled_start_at.slice(0, 10)}|${schedule.service_time_slot}`;
+        const doctorIds = doctorIdsByRoute.get(routeKey) ?? new Set<string>();
+        doctorIds.add(schedule.assigned_doctor_id);
+        doctorIdsByRoute.set(routeKey, doctorIds);
+      });
+
+    const todayRouteDate = buildDateInputValue();
+
+    return [...doctorIdsByRoute.entries()]
+      .map(([routeKey, doctorIds]) => {
+        const [date, timeSlot] = routeKey.split("|");
+        return {
+          date,
+          timeSlot: timeSlot as RouteTimeSlot,
+          doctorCount: doctorIds.size
+        };
+      })
+      .sort((left, right) => {
+        const leftIsToday = left.date === todayRouteDate ? 1 : 0;
+        const rightIsToday = right.date === todayRouteDate ? 1 : 0;
+        if (leftIsToday !== rightIsToday) {
+          return rightIsToday - leftIsToday;
+        }
+        if (left.doctorCount !== right.doctorCount) {
+          return right.doctorCount - left.doctorCount;
+        }
+        return (
+          left.date.localeCompare(right.date) ||
+          routeTimeSlotOptions.indexOf(left.timeSlot) - routeTimeSlotOptions.indexOf(right.timeSlot)
+        );
+      });
+  }, [repositories.visitRepository]);
+
+  const trackedDoctors = useMemo<DoctorTrackingSummary[]>(() => {
+    return db.doctors
+      .map<DoctorTrackingSummary | null>((doctor, index) => {
+        const routeSchedules = repositories.visitRepository
+          .getSchedules({ doctorId: doctor.id })
+          .filter(
+            (schedule) =>
+              schedule.scheduled_start_at.slice(0, 10) === routeDate &&
+              schedule.service_time_slot === routeTimeSlot &&
+              schedule.visit_type !== "回院病歷"
+          )
+          .sort(
+            (left, right) =>
+              (left.route_order ?? Number.MAX_SAFE_INTEGER) - (right.route_order ?? Number.MAX_SAFE_INTEGER) ||
+              new Date(left.scheduled_start_at).getTime() - new Date(right.scheduled_start_at).getTime()
+          );
+        if (!routeSchedules.length) {
+          return null;
+        }
+
+        const routeScheduleIds = new Set(routeSchedules.map((schedule) => schedule.id));
+        const locationLogs = repositories.visitRepository
+          .getDoctorLocationLogs(doctor.id)
+          .slice()
+          .sort(
+            (left, right) =>
+              new Date(right.recorded_at).getTime() - new Date(left.recorded_at).getTime()
+          )
+          .filter(
+            (log) =>
+              log.linked_visit_schedule_id !== null &&
+              routeScheduleIds.has(log.linked_visit_schedule_id)
+          );
+        const latestLocation = locationLogs[0];
+        const locationStatus = resolveLocationSyncStatus(latestLocation);
+        const activeSchedule =
+          (latestLocation?.linked_visit_schedule_id
+            ? routeSchedules.find((schedule) => schedule.id === latestLocation.linked_visit_schedule_id)
+            : undefined) ??
+          routeSchedules.find((schedule) =>
+            ["tracking", "on_the_way", "proximity_pending", "arrived", "in_treatment", "issue_pending"].includes(
+              schedule.status
+            )
+          ) ??
+          routeSchedules.find((schedule) => !["completed", "cancelled", "paused"].includes(schedule.status)) ??
+          routeSchedules[0];
+        const activePatient = activeSchedule
+          ? db.patients.find((patient) => patient.id === activeSchedule.patient_id)
+          : undefined;
+        const passedStops = routeSchedules.filter((schedule) =>
+          activeSchedule
+            ? (schedule.route_order ?? 0) < (activeSchedule.route_order ?? 0)
+            : ["completed", "cancelled"].includes(schedule.status)
+        );
+        const upcomingStops = routeSchedules.filter((schedule) =>
+          activeSchedule
+            ? (schedule.route_order ?? 0) > (activeSchedule.route_order ?? 0)
+            : !["completed", "cancelled"].includes(schedule.status)
+        );
+        const currentDistanceKilometers =
+          latestLocation && activeSchedule
+            ? estimateDistanceKilometersBetween(
+                latestLocation.latitude,
+                latestLocation.longitude,
+                activeSchedule.home_latitude_snapshot,
+                activeSchedule.home_longitude_snapshot
+              )
+            : null;
+        const routeMapInput = buildTrackingRouteMapInput(
+          routeSchedules,
+          `${doctor.name} ${routeDate} ${routeTimeSlot}`
+        );
+
+        return {
+          doctorId: doctor.id,
+          doctorName: doctor.name,
+          doctorPhone: doctor.phone,
+          color: trackingPalette[index % trackingPalette.length],
+          latestLocation,
+          locationLogs,
+          locationStatus,
+          routeSchedules,
+          activeSchedule,
+          activePatientName: activePatient?.name ?? null,
+          passedStops,
+          upcomingStops,
+          currentDistanceKilometers,
+          routeMapUrl: routeMapInput ? services.maps.buildRouteDirectionsUrl(routeMapInput) : null
+        } satisfies DoctorTrackingSummary;
+      })
+      .filter((doctor): doctor is DoctorTrackingSummary => doctor !== null);
+  }, [db.doctors, db.patients, repositories, routeDate, routeTimeSlot, services.maps]);
 
   useEffect(() => {
-    setRouteDraft(renumberRoute(suggestedRoute));
-  }, [suggestedRoute, routeDate, routeTimeSlot, selectedDoctorId]);
+    if (!trackingRouteOptions.length) {
+      return;
+    }
+    const hasMatchedRoute = trackingRouteOptions.some(
+      (option) => option.date === routeDate && option.timeSlot === routeTimeSlot
+    );
+    if (hasMatchedRoute) {
+      return;
+    }
+    setRouteDate(trackingRouteOptions[0].date);
+    setRouteTimeSlot(trackingRouteOptions[0].timeSlot);
+  }, [routeDate, routeTimeSlot, trackingRouteOptions]);
+
+  useEffect(() => {
+    if (!trackedDoctors.length) {
+      setSelectedDoctorId("");
+      return;
+    }
+    if (!trackedDoctors.some((doctor) => doctor.doctorId === selectedDoctorId)) {
+      setSelectedDoctorId(trackedDoctors[0].doctorId);
+    }
+  }, [selectedDoctorId, trackedDoctors]);
+
+  const selectedDoctor = trackedDoctors.find((doctor) => doctor.doctorId === selectedDoctorId) ?? trackedDoctors[0];
+  const projection = useMemo(() => buildTrackingProjection(trackedDoctors), [trackedDoctors]);
+  const selectedDoctorLogs = useMemo(
+    () =>
+      selectedDoctor
+        ? selectedDoctor.locationLogs
+        : [],
+    [selectedDoctor]
+  );
+  const selectedDoctorActivePatient = selectedDoctor?.activeSchedule
+    ? db.patients.find((patient) => patient.id === selectedDoctor.activeSchedule?.patient_id)
+    : undefined;
+  const staffConversationLogs = useMemo(
+    () =>
+      selectedDoctor
+        ? [...db.contact_logs]
+            .filter(
+              (log) =>
+                log.doctor_id === selectedDoctor.doctorId &&
+                log.admin_user_id === selectedAdmin?.id &&
+                ["phone", "web_notice"].includes(log.channel)
+            )
+            .sort(
+              (left, right) =>
+                new Date(right.contacted_at).getTime() - new Date(left.contacted_at).getTime()
+            )
+        : [],
+    [db.contact_logs, selectedAdmin?.id, selectedDoctor]
+  );
+
+  const createAdminDoctorContactLog = (input: {
+    channel: "phone" | "web_notice";
+    subject: string;
+    content: string;
+    outcome: string;
+  }) => {
+    if (!selectedDoctor || !selectedAdmin) {
+      return;
+    }
+    const now = new Date().toISOString();
+    repositories.contactRepository.createContactLog({
+      id: `staff-log-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      patient_id: selectedDoctorActivePatient?.id ?? null,
+      visit_schedule_id: selectedDoctor.activeSchedule?.id ?? null,
+      caregiver_id: null,
+      doctor_id: selectedDoctor.doctorId,
+      admin_user_id: selectedAdmin.id,
+      channel: input.channel,
+      subject: input.subject,
+      content: input.content,
+      outcome: input.outcome,
+      contacted_at: now,
+      created_at: now,
+      updated_at: now
+    });
+  };
 
   return (
     <div className="space-y-6">
-      <Panel title="Google Map 追蹤圖">
+      <Panel title="同時段醫師追蹤總覽">
         <div className="space-y-4">
-          <div className="grid gap-3 lg:grid-cols-[220px_180px_140px_1fr]">
-            <label className="block text-sm">
-              <span className="mb-1 block font-medium text-brand-ink">查看醫師</span>
-              <select
-                value={selectedDoctorId}
-                onChange={(event) => {
-                  setSelectedDoctorId(event.target.value);
-                }}
-                className="w-full rounded-2xl border border-slate-200 px-4 py-3"
-              >
-                {db.doctors.map((doctor) => (
-                  <option key={doctor.id} value={doctor.id}>
-                    {doctor.name}
-                  </option>
-                ))}
-              </select>
-            </label>
+          <div className="grid gap-3 lg:grid-cols-[180px_140px_1fr]">
             <label className="block text-sm">
               <span className="mb-1 block font-medium text-brand-ink">路線日期</span>
               <input
@@ -541,161 +699,364 @@ export function AdminDoctorTrackingPage() {
               </select>
             </label>
             <div className="rounded-2xl bg-slate-50 px-4 py-3 text-sm text-slate-600">
-              目前位置：
-              {activeDoctorLocation
-                ? ` ${activeDoctorLocation.latitude.toFixed(4)}, ${activeDoctorLocation.longitude.toFixed(4)}`
-                : " 尚未有定位紀錄"}
-              {" / "}
-              最後更新：
-              {activeDoctorLocation
-                ? ` ${formatDateTimeFull(activeDoctorLocation.recorded_at)}`
-                : " 尚未回傳"}
+              {trackedDoctors.length > 0
+                ? `${buildServiceSlotLabel(routeDate, routeTimeSlot)} 共 ${trackedDoctors.length} 位醫師有路線。`
+                : `${buildServiceSlotLabel(routeDate, routeTimeSlot)} 目前沒有可追蹤路線。`}
             </div>
           </div>
 
-          <iframe
-            title="Google Map 追蹤圖"
-            src={activeEmbedMapUrl}
-            loading="lazy"
-            referrerPolicy="no-referrer-when-downgrade"
-            className="h-[420px] w-full rounded-3xl border border-slate-200 bg-white"
-          />
-
-          <div className="flex flex-wrap gap-2">
-            <a
-              href={activeMapUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="rounded-full bg-brand-forest px-4 py-3 text-sm font-semibold text-white"
-            >
-              用 Google 地圖開啟行政追蹤圖
-            </a>
-          </div>
-
-          <div className="grid gap-3 xl:grid-cols-[1.15fr_0.85fr]">
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-600">
-              <p className="font-semibold text-brand-ink">目前追蹤中的醫師位置</p>
-              <p className="mt-2">
-                {activeDoctorLocation
-                  ? `醫師 ${selectedDoctor?.name ?? ""} 已登入手機網頁，系統正在持續接收定位。`
-                  : "目前尚未收到這位醫師的即時定位，登入後會立即要求手機授權位置。"}
-              </p>
-              <p className="mt-1">
-                {activeTrackedSchedule
-                  ? `目前對應案件：第 ${activeTrackedSchedule.route_order} 站 ${activeTrackedPatient?.name ?? activeTrackedSchedule.patient_id} / ${activeTrackedSchedule.status}`
-                  : `目前 ${routeServiceSlotLabel} 尚未有進行中的案件。`}
-              </p>
-              <div className="mt-4 grid gap-3 md:grid-cols-3">
-                <div className="rounded-2xl bg-slate-50 px-4 py-3">
-                  <p className="text-xs text-slate-500">目前距離</p>
-                  <p className="mt-2 font-semibold text-brand-ink">
-                    {currentDistanceToTrackedPatient !== null
-                      ? `${currentDistanceToTrackedPatient.toFixed(1)} 公里`
-                      : "等待定位中"}
-                  </p>
-                  <p className="mt-1 text-xs text-slate-500">
-                    顯示醫師到目前案件或下一站的大約直線距離。
-                  </p>
-                </div>
-                <div className="rounded-2xl bg-slate-50 px-4 py-3">
-                  <p className="text-xs text-slate-500">已經過的地點</p>
-                  <p className="mt-2 font-semibold text-brand-ink">{passedRouteStops.length} 站</p>
-                  <p className="mt-1 text-xs text-slate-500">
-                    依本站序與案件狀態，自動整理已完成或已通過的站點。
-                  </p>
-                </div>
-                <div className="rounded-2xl bg-slate-50 px-4 py-3">
-                  <p className="text-xs text-slate-500">尚未到的地點</p>
-                  <p className="mt-2 font-semibold text-brand-ink">{upcomingRouteStops.length} 站</p>
-                  <p className="mt-1 text-xs text-slate-500">
-                    行政端可同步看到後續待走路線與預定站序。
-                  </p>
-                </div>
+          <div className="rounded-3xl border border-slate-200 bg-white p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-brand-ink">站內多醫師追蹤總覽圖</p>
+                <p className="mt-1 text-xs text-slate-500">
+                  同一張圖上顯示多位醫師的最新位置、停留站點與簡化路線。
+                </p>
               </div>
-            </div>
-
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-600">
-              <p className="font-semibold text-brand-ink">最近移動軌跡</p>
-              <div className="mt-3 space-y-2">
-                {doctorLocationLogs.slice(0, 6).map((log, index) => (
-                  <div key={log.id} className="rounded-2xl bg-slate-50 px-4 py-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <p className="font-medium text-brand-ink">
-                        軌跡點 {doctorLocationLogs.length - index}
-                      </p>
-                      <p className="text-xs text-slate-500">{formatTimeOnly(log.recorded_at)}</p>
-                    </div>
-                    <p className="mt-1 text-xs text-slate-500">
-                      {log.latitude.toFixed(4)}, {log.longitude.toFixed(4)}
-                    </p>
-                  </div>
+              <div className="flex flex-wrap gap-2 text-xs">
+                {trackedDoctors.map((doctor) => (
+                  <button
+                    key={doctor.doctorId}
+                    type="button"
+                    onClick={() => setSelectedDoctorId(doctor.doctorId)}
+                    className={`rounded-full px-3 py-1.5 font-semibold ${
+                      selectedDoctor?.doctorId === doctor.doctorId
+                        ? "text-white"
+                        : "bg-slate-100 text-slate-700"
+                    }`}
+                    style={
+                      selectedDoctor?.doctorId === doctor.doctorId
+                        ? { backgroundColor: doctor.color }
+                        : undefined
+                    }
+                  >
+                    {doctor.doctorName}
+                  </button>
                 ))}
-                {doctorLocationLogs.length === 0 ? (
-                  <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
-                    醫師尚未登入或尚未允許定位，暫時沒有可顯示的移動軌跡。
-                  </div>
-                ) : null}
               </div>
             </div>
+
+            {projection ? (
+              <div
+                aria-label="多醫師追蹤總覽圖"
+                className="mt-4 h-[440px] overflow-hidden rounded-3xl border border-slate-200 bg-[radial-gradient(circle_at_top,#f8fafc,white_55%)]"
+              >
+                <svg viewBox="0 0 100 100" className="h-full w-full">
+                  <defs>
+                    <pattern id="tracking-grid" width="10" height="10" patternUnits="userSpaceOnUse">
+                      <path d="M 10 0 L 0 0 0 10" fill="none" stroke="#e2e8f0" strokeWidth="0.25" />
+                    </pattern>
+                  </defs>
+                  <rect x="0" y="0" width="100" height="100" fill="url(#tracking-grid)" />
+                  {trackedDoctors.map((doctor) => {
+                    const stopPoints = doctor.routeSchedules
+                      .filter(
+                        (schedule) =>
+                          schedule.home_latitude_snapshot !== null && schedule.home_longitude_snapshot !== null
+                      )
+                      .map((schedule) => ({
+                        schedule,
+                        ...projection.project(
+                          schedule.home_latitude_snapshot as number,
+                          schedule.home_longitude_snapshot as number
+                        )
+                      }));
+                    const routePolyline = stopPoints.map((point) => `${point.x},${point.y}`).join(" ");
+                    const currentPoint = doctor.latestLocation
+                      ? projection.project(doctor.latestLocation.latitude, doctor.latestLocation.longitude)
+                      : null;
+
+                    return (
+                      <g key={doctor.doctorId}>
+                        {routePolyline ? (
+                          <polyline
+                            points={routePolyline}
+                            fill="none"
+                            stroke={doctor.color}
+                            strokeWidth="0.9"
+                            strokeDasharray="1.5 1.1"
+                            opacity="0.8"
+                          />
+                        ) : null}
+                        {stopPoints.map((point) => (
+                          <g key={point.schedule.id}>
+                            <circle
+                              cx={point.x}
+                              cy={point.y}
+                              r={selectedDoctor?.doctorId === doctor.doctorId ? 1.4 : 1.1}
+                              fill={doctor.color}
+                              opacity={point.schedule.id === doctor.activeSchedule?.id ? 1 : 0.75}
+                            />
+                            {point.schedule.id === doctor.activeSchedule?.id ? (
+                              <circle
+                                cx={point.x}
+                                cy={point.y}
+                                r={2.2}
+                                fill="none"
+                                stroke={doctor.color}
+                                strokeWidth="0.45"
+                              />
+                            ) : null}
+                          </g>
+                        ))}
+                        {currentPoint ? (
+                          <>
+                            <circle cx={currentPoint.x} cy={currentPoint.y} r={2.4} fill={doctor.color} />
+                            <circle
+                              cx={currentPoint.x}
+                              cy={currentPoint.y}
+                              r={3.5}
+                              fill="none"
+                              stroke={doctor.color}
+                              strokeWidth="0.45"
+                              opacity="0.55"
+                            />
+                          </>
+                        ) : null}
+                      </g>
+                    );
+                  })}
+                </svg>
+              </div>
+            ) : (
+              <div className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
+                目前這個日期與時段沒有可繪製的多醫師位置資料。
+              </div>
+            )}
           </div>
 
-          <div className="grid gap-3 xl:grid-cols-2">
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm">
-              <div className="flex items-center justify-between gap-3">
-                <p className="font-semibold text-brand-ink">已經過的地點</p>
-                <span className="text-xs text-slate-500">{passedRouteStops.length} 筆</span>
-              </div>
-              <div className="mt-3 space-y-2">
-                {passedRouteStops.slice(0, 5).map((schedule) => {
-                  const patient = db.patients.find((item) => item.id === schedule.patient_id);
-                  return (
-                    <div key={schedule.id} className="rounded-2xl bg-slate-50 px-4 py-3">
-                      <p className="font-medium text-brand-ink">
-                        第 {schedule.route_order} 站 {patient?.name ?? schedule.patient_id}
-                      </p>
+          <div className="grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">
+            <div className="grid gap-4 md:grid-cols-2">
+              {trackedDoctors.map((doctor) => (
+                <div
+                  key={doctor.doctorId}
+                  className={`rounded-3xl border p-5 ${
+                    selectedDoctor?.doctorId === doctor.doctorId
+                      ? "border-brand-forest bg-emerald-50/40"
+                      : "border-slate-200 bg-white"
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="font-semibold text-brand-ink">{doctor.doctorName}</p>
                       <p className="mt-1 text-xs text-slate-500">
-                        {formatTimeOnly(schedule.scheduled_start_at)} / {schedule.area}
+                        {doctor.latestLocation
+                          ? `最後定位 ${formatDateTimeFull(doctor.latestLocation.recorded_at)}`
+                          : "尚未收到定位"}
                       </p>
                     </div>
-                  );
-                })}
-                {passedRouteStops.length === 0 ? (
-                  <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
-                    目前還沒有已經過的地點。
+                    <div className="flex items-center gap-2">
+                      <span
+                        className="inline-flex h-3.5 w-3.5 rounded-full"
+                        style={{ backgroundColor: doctor.color }}
+                      />
+                      <span
+                        className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${getLocationStatusTone(
+                          doctor.locationStatus
+                        )}`}
+                      >
+                        {getLocationStatusLabel(doctor.locationStatus)}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="mt-4 grid gap-3 sm:grid-cols-3 text-sm">
+                    <div className="rounded-2xl bg-slate-50 px-3 py-3">
+                      <p className="text-xs text-slate-500">目前案件</p>
+                      <p className="mt-2 font-semibold text-brand-ink">
+                        {doctor.activePatientName ?? "待命中"}
+                      </p>
+                    </div>
+                    <div className="rounded-2xl bg-slate-50 px-3 py-3">
+                      <p className="text-xs text-slate-500">已過站點</p>
+                      <p className="mt-2 font-semibold text-brand-ink">{doctor.passedStops.length}</p>
+                    </div>
+                    <div className="rounded-2xl bg-slate-50 px-3 py-3">
+                      <p className="text-xs text-slate-500">未到站點</p>
+                      <p className="mt-2 font-semibold text-brand-ink">{doctor.upcomingStops.length}</p>
+                    </div>
+                  </div>
+                  <p className="mt-3 text-sm text-slate-600">
+                    {doctor.currentDistanceKilometers !== null
+                      ? `距離目前案件約 ${doctor.currentDistanceKilometers.toFixed(1)} 公里`
+                      : "等待定位或案件座標"}
                   </p>
-                ) : null}
-              </div>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    {doctor.routeMapUrl ? (
+                      <a
+                        href={doctor.routeMapUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="rounded-full bg-brand-forest px-4 py-2 text-xs font-semibold text-white"
+                      >
+                        打開 {doctor.doctorName} 路線
+                      </a>
+                    ) : null}
+                    <button
+                      type="button"
+                      onClick={() => setSelectedDoctorId(doctor.doctorId)}
+                      className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-brand-ink"
+                    >
+                      查看細節
+                    </button>
+                  </div>
+                </div>
+              ))}
             </div>
 
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm">
-              <div className="flex items-center justify-between gap-3">
-                <p className="font-semibold text-brand-ink">還沒有去的地點</p>
-                <span className="text-xs text-slate-500">{upcomingRouteStops.length} 筆</span>
-              </div>
-              <div className="mt-3 space-y-2">
-                {upcomingRouteStops.slice(0, 5).map((schedule) => {
-                  const patient = db.patients.find((item) => item.id === schedule.patient_id);
-                  return (
-                    <div key={schedule.id} className="rounded-2xl bg-slate-50 px-4 py-3">
-                      <p className="font-medium text-brand-ink">
-                        第 {schedule.route_order} 站 {patient?.name ?? schedule.patient_id}
-                      </p>
-                      <p className="mt-1 text-xs text-slate-500">
-                        {formatTimeOnly(schedule.scheduled_start_at)} / {schedule.area}
+            {selectedDoctor ? (
+              <div className="space-y-4">
+                <div className="rounded-3xl border border-slate-200 bg-white p-5">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="font-semibold text-brand-ink">{selectedDoctor.doctorName} 細節</p>
+                      <p className="mt-1 text-sm text-slate-500">
+                        目前對應案件：
+                        {selectedDoctor.activeSchedule
+                          ? ` 第 ${selectedDoctor.activeSchedule.route_order} 站 ${selectedDoctor.activePatientName ?? selectedDoctor.activeSchedule.patient_id}`
+                          : " 尚無"}
                       </p>
                     </div>
-                  );
-                })}
-                {upcomingRouteStops.length === 0 ? (
-                  <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
-                    目前這個時段沒有待前往的後續地點。
-                  </p>
-                ) : null}
+                    <button
+                      type="button"
+                      onClick={() => setIsCommunicationOpen(true)}
+                      className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-brand-ink ring-1 ring-slate-200"
+                    >
+                      聯絡此醫師
+                    </button>
+                  </div>
+                  <div className="mt-4 grid gap-3 md:grid-cols-3">
+                    <div className="rounded-2xl bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                      <p className="text-xs text-slate-500">目前座標</p>
+                      <p className="mt-2 font-semibold text-brand-ink">
+                        {selectedDoctor.latestLocation
+                          ? services.maps.buildCoordinateLabel(
+                              selectedDoctor.latestLocation.latitude,
+                              selectedDoctor.latestLocation.longitude
+                            )
+                          : "尚未收到定位"}
+                      </p>
+                    </div>
+                    <div className="rounded-2xl bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                      <p className="text-xs text-slate-500">最新時間</p>
+                      <p className="mt-2 font-semibold text-brand-ink">
+                        {selectedDoctor.latestLocation
+                          ? formatDateTimeFull(selectedDoctor.latestLocation.recorded_at)
+                          : "尚未收到定位"}
+                      </p>
+                    </div>
+                    <div className="rounded-2xl bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                      <p className="text-xs text-slate-500">定位狀態</p>
+                      <p className="mt-2 font-semibold text-brand-ink">
+                        {getLocationStatusLabel(selectedDoctor.locationStatus)}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-3xl border border-slate-200 bg-white p-5">
+                  <p className="font-semibold text-brand-ink">最近定位軌跡</p>
+                  <div className="mt-3 space-y-2">
+                    {selectedDoctorLogs.slice(0, 6).map((log) => (
+                      <div key={log.id} className="rounded-2xl bg-slate-50 px-4 py-3 text-sm">
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="font-medium text-brand-ink">
+                            {log.latitude.toFixed(4)}, {log.longitude.toFixed(4)}
+                          </p>
+                          <p className="text-xs text-slate-500">{formatTimeOnly(log.recorded_at)}</p>
+                        </div>
+                      </div>
+                    ))}
+                    {selectedDoctorLogs.length === 0 ? (
+                      <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
+                        目前尚未收到這位醫師於此時段的定位軌跡。
+                      </p>
+                    ) : null}
+                  </div>
+                </div>
+
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="rounded-3xl border border-slate-200 bg-white p-5 text-sm">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="font-semibold text-brand-ink">已經過的地點</p>
+                      <span className="text-xs text-slate-500">{selectedDoctor.passedStops.length} 筆</span>
+                    </div>
+                    <div className="mt-3 space-y-2">
+                      {selectedDoctor.passedStops.length ? (
+                        selectedDoctor.passedStops.map((schedule) => {
+                          const patient = db.patients.find((item) => item.id === schedule.patient_id);
+                          return (
+                            <div key={schedule.id} className="rounded-2xl bg-slate-50 px-4 py-3">
+                              <p className="font-medium text-brand-ink">
+                                第 {schedule.route_order} 站 {patient?.name ?? schedule.patient_id}
+                              </p>
+                              <p className="mt-1 text-xs text-slate-500">
+                                {formatTimeOnly(schedule.scheduled_start_at)} / {schedule.area}
+                              </p>
+                            </div>
+                          );
+                        })
+                      ) : (
+                        <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
+                          目前還沒有已過站點。
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="rounded-3xl border border-slate-200 bg-white p-5 text-sm">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="font-semibold text-brand-ink">尚未到的地點</p>
+                      <span className="text-xs text-slate-500">{selectedDoctor.upcomingStops.length} 筆</span>
+                    </div>
+                    <div className="mt-3 space-y-2">
+                      {selectedDoctor.upcomingStops.length ? (
+                        selectedDoctor.upcomingStops.map((schedule) => {
+                          const patient = db.patients.find((item) => item.id === schedule.patient_id);
+                          return (
+                            <div key={schedule.id} className="rounded-2xl bg-slate-50 px-4 py-3">
+                              <p className="font-medium text-brand-ink">
+                                第 {schedule.route_order} 站 {patient?.name ?? schedule.patient_id}
+                              </p>
+                              <p className="mt-1 text-xs text-slate-500">
+                                {formatTimeOnly(schedule.scheduled_start_at)} / {schedule.area}
+                              </p>
+                            </div>
+                          );
+                        })
+                      ) : (
+                        <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
+                          目前這位醫師沒有待前往站點。
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
               </div>
-            </div>
+            ) : null}
           </div>
         </div>
       </Panel>
+
+      {isCommunicationOpen && selectedDoctor && selectedAdmin ? (
+        <StaffCommunicationDialog
+          title={`直接聯絡 ${selectedDoctor.doctorName}`}
+          counterpartLabel={selectedDoctor.doctorName}
+          counterpartPhone={selectedDoctor.doctorPhone}
+          currentUserLabel="行政人員"
+          contextLabel={
+            selectedDoctor.activeSchedule && selectedDoctorActivePatient
+              ? `第 ${selectedDoctor.activeSchedule.route_order} 站 ${selectedDoctorActivePatient.name}`
+              : `${selectedDoctor.doctorName} 院內協調`
+          }
+          doctorId={selectedDoctor.doctorId}
+          adminUserId={selectedAdmin.id}
+          patientId={selectedDoctorActivePatient?.id ?? null}
+          visitScheduleId={selectedDoctor.activeSchedule?.id ?? null}
+          logs={staffConversationLogs}
+          onClose={() => setIsCommunicationOpen(false)}
+          onCreateLog={createAdminDoctorContactLog}
+        />
+      ) : null}
     </div>
   );
 }
@@ -729,8 +1090,6 @@ export function AdminPatientsPage() {
   const selectedDoctor =
     db.doctors.find((doctor) => doctor.id === draft.preferred_doctor_id) ?? db.doctors[0];
   const availableServiceSlots = selectedDoctor?.available_service_slots ?? [];
-  const csvTemplateHref = `data:text/csv;charset=utf-8,${encodeURIComponent(buildCsvTemplate())}`;
-
   const syncDraft = (patient?: Patient) => {
     const next = buildPatientDraft(patient);
     if (!next.preferred_service_slot) {
@@ -895,8 +1254,10 @@ export function AdminPatientsPage() {
       return;
     }
 
+    const normalizedPatientName = anonymizePatientName(draft.name);
     const result = repositories.patientRepository.upsertPatient({
       ...draft,
+      name: normalizedPatientName,
       chart_number: draft.chart_number || `AUTO-${Date.now().toString().slice(-6)}`,
       address: draft.home_address || draft.address,
       home_address: draft.home_address || draft.address,
@@ -912,6 +1273,7 @@ export function AdminPatientsPage() {
     );
     setDraft((current) => ({
       ...current,
+      name: normalizedPatientName,
       chart_number: result.chartNumber,
       location_keyword: normalizeLocationKeyword(current.location_keyword),
       google_maps_link: mapsLink(
@@ -993,7 +1355,7 @@ export function AdminPatientsPage() {
       const result = repositories.patientRepository.upsertPatient({
         ...patientToImport,
         id: `pat-import-${Date.now()}-${index}`,
-        name,
+        name: anonymizePatientName(name),
         chart_number: "",
         service_needs: serviceNeedsRaw
           ? serviceNeedsRaw.split(/[|、,]/).map((item) => item.trim()).filter(Boolean)
@@ -1019,19 +1381,23 @@ export function AdminPatientsPage() {
     event.target.value = "";
   };
 
+  const handleDownloadCsvTemplate = () => {
+    downloadCsvFile("patient-import-template.csv", buildCsvTemplate());
+  };
+
   return (
     <div className="space-y-6">
       <Panel
         title="個案管理頁"
         action={
           <div className="flex flex-wrap gap-2">
-            <a
-              href={csvTemplateHref}
-              download="patient-import-template.csv"
+            <button
+              type="button"
+              onClick={handleDownloadCsvTemplate}
               className="rounded-full bg-brand-sand px-4 py-2 text-sm font-semibold text-brand-forest"
             >
               下載 CSV 範本
-            </a>
+            </button>
             <label className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-brand-ink ring-1 ring-slate-200">
               CSV 匯入
               <input

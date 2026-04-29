@@ -4,12 +4,18 @@ import { addMinutes } from "date-fns";
 import { useForm, useWatch } from "react-hook-form";
 import { useAppContext } from "../../app/use-app-context";
 import type { Reminder, VisitRecord, VisitSchedule } from "../../domain/models";
+import type { VisitDetail } from "../../domain/repository";
 import {
   buildPreviousMedicalHistorySelections,
   buildPreviousFourDiagnosisSelections,
+  buildFourDiagnosisSummary,
+  buildFourDiagnosisSummaryFromRecord,
+  buildReturnRecordCsv,
   buildReturnRecordDraft,
   calculateTreatmentDurationMinutes,
+  extractReminderNoteFromRecord,
   fourDiagnosisOptions,
+  isExceptionReturnRecord,
   joinMedicalHistory,
   medicalHistoryOptions,
   resolvePreviousMedicalHistory
@@ -60,6 +66,30 @@ type ReturnRecordTimeDefaults = {
   treatmentStartTime: string;
   treatmentEndTime: string;
   hint: string;
+};
+
+type CompletedHomeVisitContext = {
+  detail: VisitDetail;
+  record: VisitRecord;
+  completedAt: string;
+};
+
+type VisitTreatmentWindow = {
+  startTime: string | null;
+  endTime: string | null;
+  durationMinutes: number | null;
+};
+
+type ReturnRecordCsvDraftOverride = {
+  patientId: string;
+  returnRecordStartTime: string | null;
+  returnRecordEndTime: string | null;
+  chiefComplaint: string;
+  fourDiagnosisSummary: string;
+  medicalHistory: string;
+  isException: boolean;
+  reminderNote: string;
+  generatedRecordText: string;
 };
 
 const fourDiagnosisSections: Array<{
@@ -116,62 +146,89 @@ function buildFallbackTimeDefaults(): ReturnRecordTimeDefaults {
   return {
     treatmentStartTime: buildInitialStartTime(),
     treatmentEndTime: buildInitialEndTime(),
-    hint: "尚無可沿用的居家治療時間，先帶入目前時間。"
+    hint: "尚未找到剛完成的居家訪視，先帶入目前時間。"
   };
 }
 
+function resolveVisitTreatmentWindow(detail: VisitDetail, record: VisitRecord | undefined): VisitTreatmentWindow {
+  const startTime = record?.treatment_start_time ?? record?.arrival_time ?? null;
+  const durationMinutes =
+    record?.treatment_duration_minutes ?? detail.schedule.estimated_treatment_minutes ?? null;
+  const endTime =
+    record?.treatment_end_time ??
+    (startTime && durationMinutes !== null
+      ? addMinutes(new Date(startTime), durationMinutes).toISOString()
+      : null);
+
+  return {
+    startTime,
+    endTime,
+    durationMinutes
+  };
+}
+
+function resolveLatestCompletedHomeVisit(input: {
+  doctorId: string;
+  repositories: ReturnType<typeof useAppContext>["repositories"];
+  patientId?: string;
+}): CompletedHomeVisitContext | null {
+  const schedules = input.repositories.visitRepository
+    .getSchedules({ doctorId: input.doctorId, patientId: input.patientId })
+    .filter(
+      (schedule) =>
+        schedule.visit_type !== "回院病歷" &&
+        schedule.service_time_slot !== "回院病歷"
+    );
+
+  const completedVisits = schedules
+    .map((schedule) => {
+      const detail = input.repositories.visitRepository.getScheduleDetail(schedule.id);
+      const record = detail?.record;
+      const isCompletedVisit =
+        schedule.status === "completed" ||
+        schedule.status === "followup_pending" ||
+        Boolean(record?.departure_from_patient_home_time);
+      const completedAt =
+        record?.departure_from_patient_home_time ??
+        record?.treatment_end_time ??
+        record?.updated_at ??
+        null;
+      if (!detail || !record || !completedAt || !isCompletedVisit) {
+        return null;
+      }
+      return {
+        detail,
+        record,
+        completedAt
+      } satisfies CompletedHomeVisitContext;
+    })
+    .filter((item): item is CompletedHomeVisitContext => Boolean(item))
+    .sort((left, right) => new Date(right.completedAt).getTime() - new Date(left.completedAt).getTime());
+
+  return completedVisits[0] ?? null;
+}
+
 function resolveReturnRecordTimeDefaults(
-  patientId: string | undefined,
-  doctorId: string,
-  repositories: ReturnType<typeof useAppContext>["repositories"]
+  matchedVisit: CompletedHomeVisitContext | null
 ): ReturnRecordTimeDefaults {
-  if (!patientId) {
+  if (!matchedVisit) {
     return buildFallbackTimeDefaults();
   }
 
-  const schedules = repositories.visitRepository
-    .getSchedules({ patientId, doctorId })
-    .filter(
-      (schedule) =>
-        schedule.visit_type !== "回院病歷" && schedule.service_time_slot !== "回院病歷"
-    );
-
-  const latestHomeVisit = schedules
-    .map((schedule) => ({
-      schedule,
-      record: repositories.visitRepository.getVisitRecordByScheduleId(schedule.id)
-    }))
-    .filter(
-      (item) =>
-        Boolean(item.record?.treatment_start_time) && Boolean(item.record?.treatment_end_time)
-    )
-    .sort((left, right) => {
-      const leftTime =
-        left.record?.departure_from_patient_home_time ??
-        left.record?.treatment_end_time ??
-        left.record?.updated_at ??
-        left.schedule.updated_at;
-      const rightTime =
-        right.record?.departure_from_patient_home_time ??
-        right.record?.treatment_end_time ??
-        right.record?.updated_at ??
-        right.schedule.updated_at;
-      return new Date(rightTime).getTime() - new Date(leftTime).getTime();
-    })[0];
-
-  if (
-    !latestHomeVisit?.record?.treatment_start_time ||
-    !latestHomeVisit.record.treatment_end_time
-  ) {
+  const treatmentWindow = resolveVisitTreatmentWindow(
+    matchedVisit.detail,
+    matchedVisit.record
+  );
+  if (!treatmentWindow.startTime || !treatmentWindow.endTime) {
     return buildFallbackTimeDefaults();
   }
 
   return {
-    treatmentStartTime: toDateTimeLocalValue(latestHomeVisit.record.treatment_start_time),
-    treatmentEndTime: toDateTimeLocalValue(latestHomeVisit.record.treatment_end_time),
-    hint: `已自動帶入最近一筆居家治療時間：${formatDateTimeFull(
-      latestHomeVisit.record.treatment_start_time
-    )} 至 ${formatDateTimeFull(latestHomeVisit.record.treatment_end_time)}`
+    treatmentStartTime: toDateTimeLocalValue(treatmentWindow.startTime),
+    treatmentEndTime: toDateTimeLocalValue(treatmentWindow.endTime),
+    hint: `已對應剛完成的居家訪視：${matchedVisit.detail.patient.name} / ${formatDateTimeFull(
+      treatmentWindow.startTime
+    )} 至 ${formatDateTimeFull(treatmentWindow.endTime)}`
   };
 }
 
@@ -186,7 +243,8 @@ function buildScheduleFromRecord(
   latitude: number | null,
   longitude: number | null,
   estimatedMinutes: number,
-  note: string
+  note: string,
+  linkedScheduleId?: string
 ): VisitSchedule {
   const now = new Date().toISOString();
   const uniqueKey = Date.now();
@@ -208,7 +266,7 @@ function buildScheduleFromRecord(
     area,
     service_time_slot: "回院病歷",
     route_order: 1,
-    route_group_id: `return-${patientId}-${startAt.slice(0, 10)}`,
+    route_group_id: linkedScheduleId ? `return-${linkedScheduleId}` : `return-${patientId}-${startAt.slice(0, 10)}`,
     tracking_mode: "hybrid",
     tracking_started_at: null,
     tracking_stopped_at: endAt,
@@ -272,9 +330,23 @@ function buildReturnRecordReminders(
   }));
 }
 
+function isReturnRecordSchedule(schedule: VisitSchedule) {
+  return (
+    schedule.visit_type === "回院病歷" ||
+    schedule.service_time_slot === "回院病歷"
+  );
+}
+
 export function DoctorReturnRecordPage() {
   const { repositories, session } = useAppContext();
   const [searchParams, setSearchParams] = useSearchParams();
+  const activeDoctor = useMemo(
+    () =>
+      repositories.patientRepository
+        .getDoctors()
+        .find((doctor) => doctor.id === session.activeDoctorId),
+    [repositories, session.activeDoctorId]
+  );
 
   const patients = useMemo(() => {
     const schedules = repositories.visitRepository.getSchedules({
@@ -289,15 +361,28 @@ export function DoctorReturnRecordPage() {
           schedulePatientIds.has(patient.id)
       );
   }, [repositories, session.activeDoctorId]);
+  const latestCompletedHomeVisit = useMemo(
+    () =>
+      resolveLatestCompletedHomeVisit({
+        doctorId: session.activeDoctorId,
+        repositories
+      }),
+    [repositories, session.activeDoctorId]
+  );
 
   const defaultPatientId =
     patients.find((patient) => patient.id === searchParams.get("patientId"))?.id ??
+    latestCompletedHomeVisit?.detail.patient.id ??
     patients[0]?.id ??
     "";
   const initialTimeDefaults = resolveReturnRecordTimeDefaults(
-    defaultPatientId,
-    session.activeDoctorId,
-    repositories
+    defaultPatientId
+      ? resolveLatestCompletedHomeVisit({
+          doctorId: session.activeDoctorId,
+          repositories,
+          patientId: defaultPatientId
+        })
+      : null
   );
 
   const { control, getValues, handleSubmit, register, reset, setValue } =
@@ -336,10 +421,25 @@ export function DoctorReturnRecordPage() {
   const returnRecordTimeDefaults = useMemo(
     () =>
       resolveReturnRecordTimeDefaults(
-        selectedPatientId,
-        session.activeDoctorId,
-        repositories
+        selectedPatientId
+          ? resolveLatestCompletedHomeVisit({
+              doctorId: session.activeDoctorId,
+              repositories,
+              patientId: selectedPatientId
+            })
+          : null
       ),
+    [repositories, selectedPatientId, session.activeDoctorId]
+  );
+  const matchedCompletedVisit = useMemo(
+    () =>
+      selectedPatientId
+        ? resolveLatestCompletedHomeVisit({
+            doctorId: session.activeDoctorId,
+            repositories,
+            patientId: selectedPatientId
+          })
+        : null,
     [repositories, selectedPatientId, session.activeDoctorId]
   );
   const previousRecord = useMemo(() => selectedProfile?.visitRecords[0], [selectedProfile]);
@@ -450,6 +550,202 @@ export function DoctorReturnRecordPage() {
     previousAutoDraftRef.current = autoDraft;
   }, [autoDraft, getValues, setValue]);
 
+  const currentDraftCsvOverride = useMemo(() => {
+    const draftValues = watchedValues ?? getValues();
+    if (!selectedPatientId) {
+      return null;
+    }
+
+    const medicalHistory = joinMedicalHistory(
+      draftValues.medical_history_tags ?? [],
+      draftValues.medical_history_other ?? ""
+    );
+
+    return {
+      patientId: selectedPatientId,
+      returnRecordStartTime:
+        fromDateTimeLocalValue(draftValues.treatment_start_time ?? "") ?? null,
+      returnRecordEndTime:
+        fromDateTimeLocalValue(draftValues.treatment_end_time ?? "") ?? null,
+      chiefComplaint: resolvedChiefComplaint,
+      fourDiagnosisSummary: buildFourDiagnosisSummary({
+        inspection_tags: draftValues.inspection_tags ?? [],
+        inspection_other: draftValues.inspection_other ?? "",
+        listening_tags: draftValues.listening_tags ?? [],
+        listening_other: draftValues.listening_other ?? "",
+        inquiry_tags: draftValues.inquiry_tags ?? [],
+        inquiry_other: draftValues.inquiry_other ?? "",
+        palpation_tags: draftValues.palpation_tags ?? [],
+        palpation_other: draftValues.palpation_other ?? ""
+      }),
+      medicalHistory,
+      isException: draftValues.mark_as_exception ?? false,
+      reminderNote: draftValues.add_to_reminders ? draftValues.reminder_note?.trim() ?? "" : "",
+      generatedRecordText: draftValues.generated_record_text ?? ""
+    } satisfies ReturnRecordCsvDraftOverride;
+  }, [getValues, resolvedChiefComplaint, selectedPatientId, watchedValues]);
+
+  const exportRows = useMemo(() => {
+    if (!matchedCompletedVisit || !activeDoctor) {
+      return [];
+    }
+
+    const sourceSchedule = matchedCompletedVisit.detail.schedule;
+    const routeDate = sourceSchedule.scheduled_start_at.slice(0, 10);
+    const routePlan = repositories.visitRepository
+      .getSavedRoutePlans({
+        doctorId: session.activeDoctorId,
+        routeDate,
+        serviceTimeSlot:
+          sourceSchedule.service_time_slot === "上午" ||
+          sourceSchedule.service_time_slot === "下午"
+            ? sourceSchedule.service_time_slot
+            : undefined
+      })
+      .find(
+        (plan) =>
+          plan.route_group_id === sourceSchedule.route_group_id ||
+          plan.route_items.some((item) => item.schedule_id === sourceSchedule.id)
+      );
+    const homeVisitSchedules = repositories.visitRepository
+      .getSchedules({ doctorId: session.activeDoctorId })
+      .filter((schedule) => !isReturnRecordSchedule(schedule))
+      .filter((schedule) => {
+        if (sourceSchedule.route_group_id) {
+          return schedule.route_group_id === sourceSchedule.route_group_id;
+        }
+        return (
+          schedule.scheduled_start_at.slice(0, 10) === routeDate &&
+          schedule.service_time_slot === sourceSchedule.service_time_slot
+        );
+      })
+      .sort(
+        (left, right) =>
+          (left.route_order ?? Number.MAX_SAFE_INTEGER) -
+            (right.route_order ?? Number.MAX_SAFE_INTEGER) ||
+          new Date(left.scheduled_start_at).getTime() -
+            new Date(right.scheduled_start_at).getTime()
+      );
+
+    return homeVisitSchedules
+      .map((schedule) => {
+        const detail = repositories.visitRepository.getScheduleDetail(schedule.id);
+        if (!detail) {
+          return null;
+        }
+        const homeVisitTreatmentWindow = resolveVisitTreatmentWindow(detail, detail.record);
+
+        const linkedReturnSchedule = repositories.visitRepository
+          .getSchedules({
+            doctorId: session.activeDoctorId,
+            patientId: detail.patient.id
+          })
+          .filter((item) => isReturnRecordSchedule(item))
+          .filter((item) => item.route_group_id === `return-${schedule.id}`)
+          .sort(
+            (left, right) =>
+              new Date(right.scheduled_start_at).getTime() -
+              new Date(left.scheduled_start_at).getTime()
+          )[0];
+        const linkedReturnRecord = linkedReturnSchedule
+          ? repositories.visitRepository.getVisitRecordByScheduleId(linkedReturnSchedule.id)
+          : undefined;
+        const referenceRecord = linkedReturnRecord ?? detail.record;
+        const currentDraftOverride =
+          currentDraftCsvOverride &&
+          schedule.id === matchedCompletedVisit.detail.schedule.id &&
+          currentDraftCsvOverride.patientId === detail.patient.id
+            ? currentDraftCsvOverride
+            : null;
+
+        return {
+          routeDate: routePlan?.route_date ?? routeDate,
+          routeName:
+            routePlan?.route_name ??
+            `${formatDateOnly(routeDate)} ${sourceSchedule.service_time_slot}出巡`,
+          doctorName: activeDoctor.name,
+          serviceTimeSlot: sourceSchedule.service_time_slot,
+          routeOrder: schedule.route_order ?? null,
+          patientName: detail.patient.name,
+          chartNumber: detail.patient.chart_number,
+          scheduledStartAt:
+            homeVisitTreatmentWindow.startTime ?? schedule.scheduled_start_at,
+          scheduledEndAt:
+            homeVisitTreatmentWindow.endTime ?? schedule.scheduled_end_at,
+          departureFromPatientHomeTime:
+            detail.record?.departure_from_patient_home_time ?? null,
+          returnRecordStartTime:
+            currentDraftOverride?.returnRecordStartTime ??
+            linkedReturnRecord?.treatment_start_time ??
+            null,
+          returnRecordEndTime:
+            currentDraftOverride?.returnRecordEndTime ??
+            linkedReturnRecord?.treatment_end_time ??
+            null,
+          chiefComplaint:
+            currentDraftOverride?.chiefComplaint ??
+            referenceRecord?.chief_complaint ??
+            "",
+          fourDiagnosisSummary:
+            currentDraftOverride?.fourDiagnosisSummary ??
+            buildFourDiagnosisSummaryFromRecord(referenceRecord),
+          medicalHistory:
+            currentDraftOverride?.medicalHistory ??
+            resolvePreviousMedicalHistory(referenceRecord, ""),
+          isException:
+            currentDraftOverride?.isException ??
+            isExceptionReturnRecord(referenceRecord),
+          reminderNote:
+            currentDraftOverride?.reminderNote ??
+            extractReminderNoteFromRecord(referenceRecord),
+          generatedRecordText:
+            currentDraftOverride?.generatedRecordText ??
+            referenceRecord?.generated_record_text ??
+            "",
+          linkedHomeVisitScheduleId: schedule.id,
+          returnRecordScheduleId: linkedReturnSchedule?.id ?? ""
+        };
+      })
+      .filter((row): row is NonNullable<typeof row> => Boolean(row));
+  }, [
+    activeDoctor,
+    currentDraftCsvOverride,
+    matchedCompletedVisit,
+    repositories,
+    session.activeDoctorId
+  ]);
+  const exportFileName = useMemo(() => {
+    if (!exportRows.length) {
+      return "";
+    }
+
+    const routeDateToken = exportRows[0].routeDate.replace(/-/g, "");
+    const routeNameToken = exportRows[0].routeName
+      .replace(/[\\/:*?"<>|]/g, "-")
+      .replace(/\s+/g, "");
+    return `此次出巡病歷_${routeDateToken}_${routeNameToken}.csv`;
+  }, [exportRows]);
+
+  const handleExportCsv = () => {
+    if (!exportRows.length) {
+      window.alert("尚未找到此次出巡可匯出的病歷資料。");
+      return;
+    }
+
+    const csvText = buildReturnRecordCsv(exportRows);
+    const blob = new Blob(["\uFEFF", csvText], {
+      type: "text/csv;charset=utf-8;"
+    });
+    const downloadUrl = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = downloadUrl;
+    link.download = exportFileName || "此次出巡病歷.csv";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(downloadUrl);
+  };
+
   const onSubmit = (values: ReturnRecordFormValues) => {
     if (!selectedProfile) {
       window.alert("請先選擇個案。");
@@ -499,13 +795,16 @@ export function DoctorReturnRecordPage() {
       session.activeDoctorId,
       treatmentStartTime,
       treatmentEndTime,
-      selectedProfile.recentSchedules[0]?.area ?? "回院病歷",
-      selectedProfile.patient.address,
-      selectedProfile.patient.google_maps_link,
-      selectedProfile.patient.home_latitude,
-      selectedProfile.patient.home_longitude,
+      matchedCompletedVisit?.detail.schedule.area ?? selectedProfile.recentSchedules[0]?.area ?? "回院病歷",
+      matchedCompletedVisit?.detail.schedule.address_snapshot ?? selectedProfile.patient.address,
+      matchedCompletedVisit?.detail.schedule.google_maps_link ?? selectedProfile.patient.google_maps_link,
+      matchedCompletedVisit?.detail.schedule.home_latitude_snapshot ?? selectedProfile.patient.home_latitude,
+      matchedCompletedVisit?.detail.schedule.home_longitude_snapshot ?? selectedProfile.patient.home_longitude,
       estimatedMinutes,
-      noteTitle
+      matchedCompletedVisit
+        ? `${noteTitle}｜對應 ${formatDateTimeFull(matchedCompletedVisit.detail.schedule.scheduled_start_at)} 居家訪視`
+        : noteTitle,
+      matchedCompletedVisit?.detail.schedule.id
     );
     const now = new Date().toISOString();
     const nextRecord: VisitRecord = {
@@ -622,6 +921,12 @@ export function DoctorReturnRecordPage() {
                 <p>生日：{formatDateOnly(selectedProfile.patient.date_of_birth)}</p>
                 <p>重要病史：{selectedProfile.patient.important_medical_history}</p>
                 <p>上次追蹤摘要：{selectedProfile.patient.last_visit_summary}</p>
+              </div>
+            ) : null}
+            {matchedCompletedVisit ? (
+              <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+                已對應剛完成案件：{formatDateTimeFull(matchedCompletedVisit.detail.schedule.scheduled_start_at)} ／
+                {matchedCompletedVisit.detail.patient.name}
               </div>
             ) : null}
           </div>
@@ -788,12 +1093,22 @@ export function DoctorReturnRecordPage() {
             </p>
           </div>
 
-          <button
-            type="submit"
-            className="w-full rounded-full bg-brand-coral px-5 py-3 text-sm font-semibold text-white lg:w-auto"
-          >
-            建立回院病歷
-          </button>
+          <div className="flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={handleExportCsv}
+              disabled={!exportRows.length}
+              className="w-full rounded-full border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-brand-ink disabled:cursor-not-allowed disabled:opacity-50 lg:w-auto"
+            >
+              匯出此次出巡 CSV
+            </button>
+            <button
+              type="submit"
+              className="w-full rounded-full bg-brand-coral px-5 py-3 text-sm font-semibold text-white lg:w-auto"
+            >
+              建立回院病歷
+            </button>
+          </div>
         </form>
       </Panel>
     </div>

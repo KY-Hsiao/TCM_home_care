@@ -63,23 +63,31 @@ export function RoleSelectPage() {
   };
 
   return (
-    <div className="mx-auto flex min-h-screen max-w-6xl items-center px-4 py-12">
-      <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
-        <div className="rounded-[2rem] bg-brand-ink p-10 text-white shadow-card">
-          <p className="text-sm tracking-[0.3em] text-brand-sand/70">MVP STARTER</p>
-          <h1 className="mt-4 text-4xl font-bold leading-tight">
-            中醫居家醫療輔助系統
+    <div className="mx-auto flex min-h-screen max-w-6xl items-center px-4 py-10 lg:px-6">
+      <div className="grid w-full gap-6 lg:grid-cols-[1.05fr_0.95fr]">
+        <div className="overflow-hidden rounded-[2rem] bg-[linear-gradient(140deg,#0f172a_0%,#1e293b_58%,#14532d_100%)] p-10 text-white shadow-card">
+          <p className="text-sm tracking-[0.28em] text-brand-sand/70">TCM HOME CARE</p>
+          <h1 className="mt-4 text-4xl font-bold leading-tight lg:text-5xl">
+            中醫居家醫療
+            <br />
+            輔助系統
           </h1>
-          <p className="mt-4 max-w-xl text-base text-brand-sand/80">
-            第一版先把排程、訪視、聯絡紀錄、定位與行政協作流程用假資料跑通，後續再接 SQLite、正式 API 與手機定位。
+          <p className="mt-5 max-w-xl text-base leading-7 text-brand-sand/80">
+            直接依角色登入，進入醫師端導航與回院病歷，或行政端通知中心、追蹤地圖與排程管理。
           </p>
-          <div className="mt-8 flex flex-wrap gap-3 text-sm">
-            <Link className="rounded-full bg-brand-coral px-5 py-3 font-semibold text-white" to="/demo-overview">
-              看系統總覽
-            </Link>
-            <Link className="rounded-full bg-white/10 px-5 py-3 font-semibold text-white" to="/maps/overview">
-              看地圖預留
-            </Link>
+          <div className="mt-8 grid gap-3 sm:grid-cols-3">
+            <div className="rounded-2xl border border-white/15 bg-white/10 px-4 py-4">
+              <p className="text-xs text-brand-sand/70">醫師端</p>
+              <p className="mt-2 font-semibold">導航與病歷</p>
+            </div>
+            <div className="rounded-2xl border border-white/15 bg-white/10 px-4 py-4">
+              <p className="text-xs text-brand-sand/70">行政端</p>
+              <p className="mt-2 font-semibold">通知與追蹤</p>
+            </div>
+            <div className="rounded-2xl border border-white/15 bg-white/10 px-4 py-4">
+              <p className="text-xs text-brand-sand/70">登入方式</p>
+              <p className="mt-2 font-semibold">帳密直達角色</p>
+            </div>
           </div>
         </div>
         <div className="grid gap-4">

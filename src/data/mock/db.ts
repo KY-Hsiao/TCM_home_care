@@ -10,6 +10,19 @@ function seedAndPersistDb(): AppDb {
   return seeded;
 }
 
+function parseDbSnapshot(raw: string | null): AppDb | null {
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    return appDbSchema.parse(JSON.parse(raw));
+  } catch (error) {
+    console.error("解析本機同步資料失敗。", error);
+    return null;
+  }
+}
+
 export function loadDb(): AppDb {
   if (typeof window === "undefined") {
     return createSeedDb();
@@ -42,4 +55,22 @@ export function resetDb(): AppDb {
   const seeded = createSeedDb();
   persistDb(seeded);
   return seeded;
+}
+
+export function subscribeDbStorage(listener: (db: AppDb) => void): () => void {
+  if (typeof window === "undefined") {
+    return () => undefined;
+  }
+
+  const handleStorage = (event: StorageEvent) => {
+    if (event.key !== MOCK_DB_STORAGE_KEY) {
+      return;
+    }
+
+    const nextDb = parseDbSnapshot(event.newValue);
+    listener(nextDb ?? createSeedDb());
+  };
+
+  window.addEventListener("storage", handleStorage);
+  return () => window.removeEventListener("storage", handleStorage);
 }

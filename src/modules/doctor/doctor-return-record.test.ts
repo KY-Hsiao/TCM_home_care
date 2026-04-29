@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildReturnRecordCsv,
   buildPreviousFourDiagnosisSelections,
   buildReturnRecordDraft,
   calculateTreatmentDurationMinutes,
@@ -173,5 +174,40 @@ describe("doctor return record helpers", () => {
 
   it("會正確計算開始與結束治療分鐘數", () => {
     expect(calculateTreatmentDurationMinutes("2026-04-21T09:00", "2026-04-21T09:45")).toBe(45);
+  });
+
+  it("會輸出適合 Excel 開啟的回院病歷 CSV", () => {
+    const csv = buildReturnRecordCsv([
+      {
+        routeDate: "2026-05-10",
+        routeName: "2026/05/10 上午出巡",
+        doctorName: "蕭坤元醫師",
+        serviceTimeSlot: "上午",
+        routeOrder: 1,
+        patientName: "王麗珠",
+        chartNumber: "TCM-001",
+        scheduledStartAt: "2026-05-10T01:10:00.000Z",
+        scheduledEndAt: "2026-05-10T01:50:00.000Z",
+        departureFromPatientHomeTime: "2026-05-10T01:55:00.000Z",
+        returnRecordStartTime: "2026-05-10T02:20:00.000Z",
+        returnRecordEndTime: "2026-05-10T02:50:00.000Z",
+        chiefComplaint: "腰痠,夜尿多",
+        fourDiagnosisSummary: "四診：望 少神；聞 語音低弱",
+        medicalHistory: "糖尿病、其他：夜醒",
+        isException: true,
+        reminderNote: "請追蹤夜間翻身狀況",
+        generatedRecordText:
+          "1150510 10201050\n四診：望 少神；聞 語音低弱\n主訴：腰痠,夜尿多",
+        linkedHomeVisitScheduleId: "vs-home-1",
+        returnRecordScheduleId: "vs-return-1"
+      }
+    ]);
+
+    expect(csv).toContain(
+      "出巡日期,路線名稱,醫師,服務時段,站序,個案姓名,病歷號,居家訪視開始,居家訪視結束,離開個案時間,回院病歷開始,回院病歷結束,主訴,四診摘要,病史,異常個案,提醒內容,病歷全文,居家訪視排程ID,回院病歷排程ID"
+    );
+    expect(csv).toContain("2026/05/10,2026/05/10 上午出巡,蕭坤元醫師,上午,1,王麗珠,TCM-001");
+    expect(csv).toContain("\"腰痠,夜尿多\"");
+    expect(csv).toContain("\"1150510 10201050\n四診：望 少神；聞 語音低弱\n主訴：腰痠,夜尿多\"");
   });
 });

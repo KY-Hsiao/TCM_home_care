@@ -1,17 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Navigate, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { Link, Navigate, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { navigationByRole } from "../../shared/constants/navigation";
 import { useAppContext } from "../use-app-context";
 import { formatDateTimeFull } from "../../shared/utils/format";
 import { isVisitFinished, isVisitUnlocked } from "../../modules/doctor/doctor-page-helpers";
-
-type NotificationCenterItem = {
-  id: string;
-  title: string;
-  detail: string;
-  timestamp: string;
-  tone: "pending" | "info";
-};
+import { StaffCommunicationDialog } from "../../shared/components/StaffCommunicationDialog";
 
 type DoctorLocationSyncState = {
   status: "idle" | "requesting" | "sharing" | "denied" | "unsupported" | "error";
@@ -29,34 +22,72 @@ function resolveDoctorLocationBannerTone(status: DoctorLocationSyncState["status
   return "border-rose-200 bg-rose-50 text-rose-800";
 }
 
-function sortByLatest<T extends { updated_at?: string; sent_at?: string | null; scheduled_send_at?: string; due_at?: string }>(
-  items: T[]
-) {
-  return [...items].sort((left, right) => {
-    const leftTime = new Date(
-      left.updated_at ?? left.sent_at ?? left.scheduled_send_at ?? left.due_at ?? 0
-    ).getTime();
-    const rightTime = new Date(
-      right.updated_at ?? right.sent_at ?? right.scheduled_send_at ?? right.due_at ?? 0
-    ).getTime();
-    return rightTime - leftTime;
-  });
+function resolveDoctorLocationLinkedScheduleId(input: {
+  doctorId: string;
+  routePlanId: string | null;
+  repositories: ReturnType<typeof useAppContext>["repositories"];
+}) {
+  const orderedSchedules = input.repositories.visitRepository.getDoctorRouteSchedules(
+    input.doctorId,
+    input.routePlanId
+  );
+  const routeEntries = orderedSchedules.map((schedule) => ({
+    schedule,
+    record: input.repositories.visitRepository.getVisitRecordByScheduleId(schedule.id)
+  }));
+  const activeEntry =
+    routeEntries.find((entry) => {
+      const unlocked = isVisitUnlocked(orderedSchedules, entry.schedule.id, entry.record);
+      return (
+        unlocked &&
+        Boolean(entry.record?.departure_time) &&
+        !entry.record?.arrival_time &&
+        !isVisitFinished(entry.schedule.status)
+      );
+    }) ??
+    routeEntries.find((entry) => {
+      const unlocked = isVisitUnlocked(orderedSchedules, entry.schedule.id, entry.record);
+      return (
+        unlocked &&
+        Boolean(entry.record?.arrival_time) &&
+        !entry.record?.departure_from_patient_home_time &&
+        !isVisitFinished(entry.schedule.status)
+      );
+    }) ??
+    routeEntries.find((entry) => {
+      const unlocked = isVisitUnlocked(orderedSchedules, entry.schedule.id, entry.record);
+      return (
+        unlocked &&
+        !entry.record?.departure_time &&
+        !entry.record?.arrival_time &&
+        !isVisitFinished(entry.schedule.status)
+      );
+    }) ??
+    routeEntries.find((entry) =>
+      ["on_the_way", "tracking", "proximity_pending", "arrived", "in_treatment", "issue_pending"].includes(
+        entry.schedule.status
+      )
+    ) ??
+    null;
+
+  return activeEntry?.schedule.id ?? null;
 }
 
 export function AppShell() {
   const navigate = useNavigate();
   const location = useLocation();
   const {
+    db,
     repositories,
     services,
     session,
     logout,
     changePassword,
     isAuthenticatedForRole,
-    setRole,
-    resetMockData
+    setRole
   } = useAppContext();
   const doctors = repositories.patientRepository.getDoctors();
+  const admins = repositories.patientRepository.getAdmins();
   const shellRole = location.pathname.startsWith("/admin")
     ? "admin"
     : location.pathname.startsWith("/doctor")
@@ -65,6 +96,8 @@ export function AppShell() {
   const navItems = shellRole ? navigationByRole[shellRole] : [];
   const isAuthenticated = shellRole ? isAuthenticatedForRole(shellRole) : true;
   const currentDoctor = doctors.find((doctor) => doctor.id === session.activeDoctorId);
+  const currentAdmin =
+    admins.find((admin) => admin.id === session.activeAdminId) ?? admins[0];
   const currentUserId = shellRole === "doctor" ? session.activeDoctorId : session.activeAdminId;
   const currentUserName =
     shellRole === "doctor"
@@ -128,9 +161,9 @@ export function AppShell() {
         ]
       : [];
   const isDoctorShell = shellRole === "doctor";
-  const [isNotificationOpen, setIsNotificationOpen] = useState(false);
   const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
   const [isDoctorQuickSummaryOpen, setIsDoctorQuickSummaryOpen] = useState(false);
+  const [isStaffCommunicationOpen, setIsStaffCommunicationOpen] = useState(false);
   const [passwordForm, setPasswordForm] = useState({
     currentPassword: "",
     nextPassword: "",
@@ -187,15 +220,11 @@ export function AppShell() {
           return;
         }
         lastLocationWriteAtRef.current = now;
-
-        const activeSchedule =
-          repositoriesRef.current.visitRepository.getSchedules({
-            doctorId: session.activeDoctorId,
-            statuses: ["on_the_way", "tracking", "proximity_pending", "arrived", "in_treatment"]
-          })[0] ??
-          repositoriesRef.current.visitRepository.getSchedules({
-            doctorId: session.activeDoctorId
-          })[0];
+        const linkedScheduleId = resolveDoctorLocationLinkedScheduleId({
+          doctorId: session.activeDoctorId,
+          routePlanId: session.activeRoutePlanId,
+          repositories: repositoriesRef.current
+        });
 
         repositoriesRef.current.visitRepository.appendDoctorLocationLog({
           id: `live-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -205,7 +234,7 @@ export function AppShell() {
           longitude: position.coords.longitude,
           accuracy: position.coords.accuracy,
           source: position.coords.accuracy <= 50 ? "gps" : "network",
-          linked_visit_schedule_id: activeSchedule?.id ?? null
+          linked_visit_schedule_id: linkedScheduleId
         });
       },
       (error) => {
@@ -233,72 +262,75 @@ export function AppShell() {
     return () => {
       navigator.geolocation.clearWatch(watchId);
     };
-  }, [session.activeDoctorId, session.authenticatedDoctorId, shellRole]);
+  }, [session.activeDoctorId, session.activeRoutePlanId, session.authenticatedDoctorId, shellRole]);
 
-  const notificationItems = useMemo<NotificationCenterItem[]>(() => {
-    if (!shellRole) {
+  const doctorAdminConversationLogs = useMemo(() => {
+    if (!session.activeDoctorId || !currentAdmin?.id) {
       return [];
     }
+    return [...db.contact_logs]
+      .filter(
+        (log) =>
+          log.doctor_id === session.activeDoctorId &&
+          log.admin_user_id === currentAdmin.id &&
+          ["phone", "web_notice"].includes(log.channel)
+      )
+      .sort(
+        (left, right) =>
+          new Date(right.contacted_at).getTime() - new Date(left.contacted_at).getTime()
+      );
+  }, [currentAdmin?.id, db.contact_logs, session.activeDoctorId]);
 
-    if (shellRole === "doctor") {
-      const taskItems = sortByLatest(
-        repositories.notificationRepository
-          .getTasksByRecipientRole("doctor")
-          .filter((task) => {
-            const detail = task.visit_schedule_id
-              ? repositories.visitRepository.getScheduleDetail(task.visit_schedule_id)
-              : undefined;
-            return detail?.doctor.id === session.activeDoctorId;
-          })
-      ).slice(0, 4);
+  const doctorCommunicationContextLabel =
+    activeDoctorScheduleDetail
+      ? `第 ${activeDoctorScheduleDetail.schedule.route_order} 站 ${activeDoctorScheduleDetail.patient.name}`
+      : activeDoctorRoutePlan
+        ? `${activeDoctorRoutePlan.route_name} / 返院或待命`
+        : "院內行政協調";
 
-      const reminderItems = sortByLatest(
-        repositories.visitRepository.getReminders("doctor", session.activeDoctorId)
-      ).slice(0, 4);
-
-      return [
-        ...taskItems.map((task) => ({
-          id: `task:${task.id}`,
-          title: task.recipient_name,
-          detail: task.preview_payload.subject ?? task.preview_payload.body ?? "站內通知",
-          timestamp: task.sent_at ?? task.scheduled_send_at,
-          tone: task.status === "pending" ? ("pending" as const) : ("info" as const)
-        })),
-        ...reminderItems.map((reminder) => ({
-          id: `reminder:${reminder.id}`,
-          title: reminder.title,
-          detail: reminder.detail,
-          timestamp: reminder.due_at,
-          tone: reminder.status === "pending" ? ("pending" as const) : ("info" as const)
-        }))
-      ]
-        .sort((left, right) => new Date(right.timestamp).getTime() - new Date(left.timestamp).getTime())
-        .slice(0, 6);
+  const createDoctorAdminContactLog = (input: {
+    channel: "phone" | "web_notice";
+    subject: string;
+    content: string;
+    outcome: string;
+  }) => {
+    if (!currentDoctor || !currentAdmin) {
+      return;
     }
+    const now = new Date().toISOString();
+    repositories.contactRepository.createContactLog({
+      id: `staff-log-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      patient_id: activeDoctorScheduleDetail?.patient.id ?? null,
+      visit_schedule_id: activeDoctorScheduleDetail?.schedule.id ?? null,
+      caregiver_id: null,
+      doctor_id: currentDoctor.id,
+      admin_user_id: currentAdmin.id,
+      channel: input.channel,
+      subject: input.subject,
+      content: input.content,
+      outcome: input.outcome,
+      contacted_at: now,
+      created_at: now,
+      updated_at: now
+    });
+  };
 
-    const reminderItems = sortByLatest(
-      repositories.visitRepository.getReminders("admin", session.activeAdminId)
-    ).slice(0, 4);
-
-    return [
-      ...reminderItems.map((reminder) => ({
-        id: `reminder:${reminder.id}`,
-        title: reminder.title,
-        detail: reminder.detail,
-        timestamp: reminder.due_at,
-        tone: reminder.status === "pending" ? ("pending" as const) : ("info" as const)
-      }))
-    ]
-      .sort((left, right) => new Date(right.timestamp).getTime() - new Date(left.timestamp).getTime())
-      .slice(0, 6);
-  }, [repositories, session.activeAdminId, session.activeDoctorId, shellRole]);
+  const notificationCenterPath =
+    shellRole === "doctor" ? "/doctor/reminders" : shellRole === "admin" ? "/admin/reminders" : null;
+  const unreadNotificationCount = useMemo(() => {
+    if (!shellRole || !currentUserId) {
+      return 0;
+    }
+    return repositories.notificationRepository
+      .getNotificationCenterItems(shellRole, currentUserId)
+      .filter((item) => item.is_unread && item.role === shellRole).length;
+  }, [currentUserId, repositories, shellRole]);
 
   const handleLogout = () => {
     if (!shellRole) {
       return;
     }
     logout(shellRole);
-    setIsNotificationOpen(false);
     setIsPasswordModalOpen(false);
     navigate("/");
   };
@@ -379,7 +411,14 @@ export function AppShell() {
                   }`
                 }
               >
-                <div className="font-semibold">{item.label}</div>
+                <div className="flex items-center justify-between gap-2 font-semibold">
+                  <span>{item.label}</span>
+                  {item.to === notificationCenterPath && unreadNotificationCount > 0 ? (
+                    <span className="rounded-full bg-brand-coral px-2 py-0.5 text-[11px] font-semibold text-white">
+                      {unreadNotificationCount}
+                    </span>
+                  ) : null}
+                </div>
                 <div
                   className={`${isDoctorShell ? "mt-1 hidden text-[11px] lg:block" : "mt-1 text-xs"} ${
                     location.pathname === item.to ? "text-slate-500" : "text-brand-sand/70"
@@ -406,13 +445,12 @@ export function AppShell() {
                   目前登入醫師：{currentUserName ?? "未登入"}
                 </div>
                 <div className="mt-2.5 grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setIsNotificationOpen(true)}
-                    className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-brand-ink lg:py-2.5"
+                  <Link
+                    to="/doctor/reminders"
+                    className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-center text-sm font-semibold text-brand-ink lg:py-2.5"
                   >
-                    站內通知 {notificationItems.length > 0 ? `(${notificationItems.length})` : ""}
-                  </button>
+                    通知中心 {unreadNotificationCount > 0 ? `(${unreadNotificationCount})` : ""}
+                  </Link>
                   <button
                     type="button"
                     onClick={() => {
@@ -425,10 +463,10 @@ export function AppShell() {
                   </button>
                   <button
                     type="button"
-                    onClick={resetMockData}
-                    className="col-span-2 rounded-2xl bg-brand-coral px-4 py-2 text-sm font-semibold text-white lg:py-2.5"
+                    onClick={() => setIsStaffCommunicationOpen(true)}
+                    className="col-span-2 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-brand-ink lg:py-2.5"
                   >
-                    重置假資料
+                    聯絡行政人員
                   </button>
                 </div>
                 {doctorNavigationSummaryItems.length > 0 ? (
@@ -472,13 +510,12 @@ export function AppShell() {
                   </p>
                 </div>
                 <div className="grid gap-2 md:grid-cols-[160px_160px_auto_auto]">
-                  <button
-                    type="button"
-                    onClick={() => setIsNotificationOpen(true)}
-                    className="rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-brand-ink"
+                  <Link
+                    to="/admin/reminders"
+                    className="rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-center text-sm font-semibold text-brand-ink"
                   >
-                    站內通知 {notificationItems.length > 0 ? `(${notificationItems.length})` : ""}
-                  </button>
+                    通知中心 {unreadNotificationCount > 0 ? `(${unreadNotificationCount})` : ""}
+                  </Link>
                   {shellRole ? (
                     <button
                       type="button"
@@ -491,13 +528,6 @@ export function AppShell() {
                       修改密碼
                     </button>
                   ) : null}
-                  <button
-                    type="button"
-                    onClick={resetMockData}
-                    className="rounded-2xl bg-brand-coral px-4 py-2.5 text-sm font-semibold text-white"
-                  >
-                    重置假資料
-                  </button>
                   {shellRole ? (
                     <button
                       type="button"
@@ -542,48 +572,21 @@ export function AppShell() {
         </div>
       ) : null}
 
-      {isNotificationOpen ? (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/35 p-4">
-          <div className="w-full max-w-3xl rounded-[32px] bg-white p-6 shadow-2xl">
-            <div className="flex items-center justify-between gap-4">
-              <div>
-                <p className="text-sm font-medium text-brand-coral">Web 即時通知</p>
-                <h2 className="mt-1 text-2xl font-semibold text-brand-ink">站內通知中心</h2>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsNotificationOpen(false)}
-                className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-600 ring-1 ring-slate-200"
-              >
-                關閉
-              </button>
-            </div>
-            <div className="mt-6 space-y-3">
-              {notificationItems.length ? (
-                notificationItems.map((item) => (
-                  <div
-                    key={item.id}
-                    className={`rounded-2xl border px-4 py-3 text-sm ${
-                      item.tone === "pending"
-                        ? "border-amber-200 bg-amber-50"
-                        : "border-slate-200 bg-slate-50"
-                    }`}
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <p className="font-semibold text-brand-ink">{item.title}</p>
-                      <p className="text-xs text-slate-500">{formatDateTimeFull(item.timestamp)}</p>
-                    </div>
-                    <p className="mt-2 text-slate-600">{item.detail}</p>
-                  </div>
-                ))
-              ) : (
-                <p className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
-                  目前沒有新的站內通知。
-                </p>
-              )}
-            </div>
-          </div>
-        </div>
+      {shellRole === "doctor" && isStaffCommunicationOpen && currentDoctor && currentAdmin ? (
+        <StaffCommunicationDialog
+          title="直接聯絡行政人員"
+          counterpartLabel="行政人員"
+          counterpartPhone={currentAdmin.phone}
+          currentUserLabel={currentDoctor.name}
+          contextLabel={doctorCommunicationContextLabel}
+          doctorId={currentDoctor.id}
+          adminUserId={currentAdmin.id}
+          patientId={activeDoctorScheduleDetail?.patient.id ?? null}
+          visitScheduleId={activeDoctorScheduleDetail?.schedule.id ?? null}
+          logs={doctorAdminConversationLogs}
+          onClose={() => setIsStaffCommunicationOpen(false)}
+          onCreateLog={createDoctorAdminContactLog}
+        />
       ) : null}
 
       {isPasswordModalOpen ? (

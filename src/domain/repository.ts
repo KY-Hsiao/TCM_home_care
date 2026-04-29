@@ -6,6 +6,7 @@ import type {
   Doctor,
   DoctorLocationLog,
   LeaveRequest,
+  NotificationCenterItem,
   NotificationTask,
   NotificationTemplate,
   Patient,
@@ -270,6 +271,16 @@ export interface NotificationRepository {
   batchUpdateStatuses(taskIds: string[], status: NotificationStatus): void;
   upsertTemplate(template: NotificationTemplate): void;
   createTask(task: NotificationTask): void;
+  getNotificationCenterItems(role: UserRole, ownerId?: string): NotificationCenterItem[];
+  createNotificationCenterItem(item: NotificationCenterItem): void;
+  replyNotificationCenterItem(
+    itemId: string,
+    replyText: string,
+    role: UserRole,
+    userId?: string
+  ): void;
+  markNotificationCenterItemRead(itemId: string): void;
+  updateNotificationCenterItemStatus(itemId: string, status: string): void;
 }
 
 export interface StaffingRepository {
@@ -284,6 +295,7 @@ export interface StaffingRepository {
     handoffNote: string;
     status?: LeaveRequest["status"];
   }): void;
+  updateLeaveRequestStatus(leaveRequestId: string, status: LeaveRequest["status"]): void;
   getImpactedSchedules(doctorId: string, startDate: string, endDate: string): VisitSchedule[];
 }
 

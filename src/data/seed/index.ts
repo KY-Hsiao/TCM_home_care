@@ -2,7 +2,11 @@ import { adminUsersSeed } from "./admins";
 import { caregiverChatBindingsSeed, caregiversSeed } from "./caregivers";
 import { doctorsSeed } from "./doctors";
 import { contactLogsSeed } from "./logs";
-import { notificationTasksSeed, notificationTemplatesSeed } from "./notifications";
+import {
+  notificationCenterItemsSeed,
+  notificationTasksSeed,
+  notificationTemplatesSeed
+} from "./notifications";
 import { patientsSeed } from "./patients";
 import { savedRoutePlansSeed } from "./route-plans";
 import {
@@ -31,6 +35,7 @@ export function createSeedDb(): AppDb {
     leave_requests: leaveRequestsSeed,
     reschedule_actions: rescheduleActionsSeed,
     reminders: remindersSeed,
+    notification_center_items: notificationCenterItemsSeed,
     doctor_location_logs: doctorLocationLogsSeed
   });
 }

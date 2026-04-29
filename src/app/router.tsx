@@ -3,7 +3,6 @@ import { AppShell } from "./layouts/AppShell";
 import { RoleSelectPage } from "../pages/role-select/RoleSelectPage";
 import {
   AdminDashboardPage,
-  AdminGuidePage,
   AdminDoctorTrackingPage,
   AdminPatientDetailPage,
   AdminPatientsPage,
@@ -38,7 +37,6 @@ export const router = createBrowserRouter([
       { path: "/doctor/patients/:id", element: <DoctorPatientPage /> },
       { path: "/doctor/reminders", element: <DoctorRemindersPage /> },
       { path: "/admin/dashboard", element: <AdminDashboardPage /> },
-      { path: "/admin/guide", element: <AdminGuidePage /> },
       { path: "/admin/doctor-tracking", element: <AdminDoctorTrackingPage /> },
       { path: "/admin/patients", element: <AdminPatientsPage /> },
       { path: "/admin/patients/:id", element: <AdminPatientDetailPage /> },

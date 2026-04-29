@@ -3,7 +3,7 @@ import type { ReactElement } from "react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AppProviders } from "../providers";
-import { AdminDashboardPage, AdminDoctorTrackingPage, AdminGuidePage } from "../../pages/admin/AdminPages";
+import { AdminDashboardPage, AdminDoctorTrackingPage, AdminRemindersPage } from "../../pages/admin/AdminPages";
 import { DoctorLocationPage } from "../../pages/doctor/DoctorPages";
 import { RoleSelectPage } from "../../pages/role-select/RoleSelectPage";
 import { AppShell } from "./AppShell";
@@ -71,7 +71,7 @@ describe("AppShell", () => {
     expect(screen.queryByRole("button", { name: "查看醫師位置" })).not.toBeInTheDocument();
   });
 
-  it("行政頁左側導覽會顯示教學指引標籤", () => {
+  it("行政頁左側導覽會顯示通知中心標籤，且不再顯示教學指引", () => {
     window.localStorage.setItem(
       SESSION_STORAGE_KEY,
       JSON.stringify({
@@ -83,13 +83,14 @@ describe("AppShell", () => {
       })
     );
 
-    renderShell("/admin/guide", <AdminGuidePage />);
+    renderShell("/admin/reminders", <AdminRemindersPage />);
 
-    expect(screen.getByRole("link", { name: /教學指引/ })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "教學指引" })).toBeInTheDocument();
+    expect(within(screen.getByRole("navigation")).getByRole("link", { name: /通知中心/ })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /教學指引/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "通知中心" })).toBeInTheDocument();
   });
 
-  it("行政頁左側導覽順序會將教學指引放在最後，且不再顯示流程紀錄", () => {
+  it("行政頁左側導覽順序會改成通知中心，且不再顯示教學指引", () => {
     window.localStorage.setItem(
       SESSION_STORAGE_KEY,
       JSON.stringify({
@@ -109,16 +110,15 @@ describe("AppShell", () => {
 
     expect(navLabels).toEqual([
       "行政總覽",
-      "提醒中心",
+      "通知中心",
       "醫師追蹤",
       "個案管理",
       "排程管理",
-      "角色設置",
-      "教學指引"
+      "角色設置"
     ]);
   });
 
-  it("醫師端導航頁不再顯示聯絡行政浮動卡", () => {
+  it("醫師端導航頁不再顯示舊的聯絡行政浮動卡，但可改用院內對話視窗", () => {
     window.localStorage.setItem(
       SESSION_STORAGE_KEY,
       JSON.stringify({
@@ -135,9 +135,10 @@ describe("AppShell", () => {
     expect(screen.queryByText("聯絡行政 / 緊急求救")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "聯絡行政端" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "緊急求救" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "聯絡行政人員" })).toBeInTheDocument();
   });
 
-  it("醫師頁會將快捷摘要放在重置假資料下方，並以視窗顯示定位與案件摘要", () => {
+  it("醫師端可從院內對話視窗送出給行政的站內訊息", () => {
     window.localStorage.setItem(
       SESSION_STORAGE_KEY,
       JSON.stringify({
@@ -151,11 +152,32 @@ describe("AppShell", () => {
 
     renderShell("/doctor/navigation", <DoctorLocationPage />);
 
-    const resetButton = screen.getByRole("button", { name: "重置假資料" });
+    fireEvent.click(screen.getByRole("button", { name: "聯絡行政人員" }));
+    fireEvent.change(screen.getByLabelText("訊息內容"), {
+      target: { value: "已抵達前一站，預計 10 分鐘後回院整理病歷。" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "送出站內訊息" }));
+
+    expect(screen.getByRole("status")).toHaveTextContent("站內訊息已送出");
+  });
+
+  it("醫師頁會保留快捷摘要，並以視窗顯示定位與案件摘要", () => {
+    window.localStorage.setItem(
+      SESSION_STORAGE_KEY,
+      JSON.stringify({
+        role: "doctor",
+        activeDoctorId: "doc-001",
+        activeAdminId: "admin-001",
+        authenticatedDoctorId: "doc-001",
+        authenticatedAdminId: null
+      })
+    );
+
+    renderShell("/doctor/navigation", <DoctorLocationPage />);
+
     const quickSummaryButton = screen.getByRole("button", { name: "快捷摘要" });
     const locationSharingCard = screen.getByText("醫師手機定位共享");
 
-    expect(resetButton.compareDocumentPosition(quickSummaryButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(
       quickSummaryButton.compareDocumentPosition(locationSharingCard) & Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy();
@@ -245,5 +267,24 @@ describe("AppShell", () => {
 
     expect(fetchMock).not.toHaveBeenCalled();
     expect(screen.queryByRole("button", { name: "聯絡目前醫師" })).not.toBeInTheDocument();
+  });
+
+  it("Shell 不再顯示重置假資料按鈕，並以通知中心入口取代站內通知抽屜", () => {
+    window.localStorage.setItem(
+      SESSION_STORAGE_KEY,
+      JSON.stringify({
+        role: "admin",
+        activeDoctorId: "doc-001",
+        activeAdminId: "admin-001",
+        authenticatedDoctorId: null,
+        authenticatedAdminId: "admin-001"
+      })
+    );
+
+    renderShell("/admin/dashboard", <AdminDashboardPage />);
+
+    expect(screen.queryByRole("button", { name: "重置假資料" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /站內通知/ })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("link", { name: /通知中心/ }).length).toBeGreaterThan(0);
   });
 });

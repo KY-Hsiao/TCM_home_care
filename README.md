@@ -1,6 +1,6 @@
 # 中醫居家醫療輔助系統 MVP
 
-這個專案已轉為 `React + TypeScript + Vite + Tailwind CSS` 的 Web MVP，目標是先用假資料跑通中醫居家醫療的日常執行流程。
+這個專案已轉為 `React + TypeScript + Vite + Tailwind CSS` 的 Web MVP，提供中醫居家醫療的排程、追蹤、聯絡與回院病歷流程介面。
 
 目前已包含：
 

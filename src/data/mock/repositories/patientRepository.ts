@@ -17,6 +17,7 @@ import {
   buildGoogleMapsSearchUrl,
   normalizeLocationKeyword
 } from "../../../shared/utils/location-keyword";
+import { anonymizePatientName, maskPatientName } from "../../../shared/utils/patient-name";
 
 const ACTIVE_VISIT_STATUSES = [
   "on_the_way",
@@ -441,6 +442,7 @@ export function createPatientRepository(
           "";
         const normalizedPatient = {
           ...patient,
+          name: anonymizePatientName(patient.name),
           chart_number: normalizedChartNumber,
           service_needs: patient.service_needs ?? [],
           preferred_service_slot: normalizedSlot,
@@ -584,7 +586,7 @@ export function createPatientRepository(
           closed: true,
           removedRoutePlans,
           removedSchedules,
-          message: `已結案 ${patient.name}，並移除原排定時段與相關路線。`
+          message: `已結案 ${maskPatientName(patient.name)}，並移除原排定時段與相關路線。`
         };
 
         return {

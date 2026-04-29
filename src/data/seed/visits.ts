@@ -189,6 +189,8 @@ const scheduleBlueprints = [
   ["vs-005", "pat-005", "doc-001", "cg-006", 0, 11, 0, "arrived", "動作遲緩評估", "留意跌倒風險"],
   ["vs-006", "pat-006", "doc-001", "cg-008", 0, 14, 0, "in_treatment", "呼吸照護追蹤", "家屬希望同步衛教"],
   ["vs-007", "pat-007", "doc-001", "cg-009", 0, 9, 0, "completed", "便祕與食慾追蹤", "已完成"],
+  ["vs-025", "pat-013", "doc-002", "cg-016", 0, 8, 45, "tracking", "關節活動追蹤", "需同步上午進度"],
+  ["vs-026", "pat-014", "doc-002", "cg-017", 0, 10, 15, "scheduled", "慢性腰背痛追蹤", "同時段第二位醫師"],
   ["vs-008", "pat-008", "doc-001", "cg-011", 1, 10, 30, "rescheduled", "肩頸僵硬追蹤", "病家要求改期"],
   ["vs-009", "pat-009", "doc-001", "cg-012", 1, 15, 0, "cancelled", "胃食道逆流追蹤", "個案臨時外出"],
   ["vs-010", "pat-010", "doc-001", "cg-013", 1, 8, 30, "scheduled", "虛弱調理", "固定上午"],
@@ -393,48 +395,7 @@ export const visitRecordsSeed: VisitRecord[] = recordBlueprints.map(
   }
 );
 
-export const leaveRequestsSeed: LeaveRequest[] = [
-  {
-    id: "leave-001",
-    doctor_id: "doc-001",
-    start_date: "2026-04-24",
-    end_date: "2026-04-24",
-    reason: "上午院內教育訓練",
-    status: "approved",
-    handoff_note: "上午時段由行政先不安排新增訪視。",
-    ...stamp(-2)
-  },
-  {
-    id: "leave-002",
-    doctor_id: "doc-001",
-    start_date: "2026-04-25",
-    end_date: "2026-04-26",
-    reason: "家庭事務",
-    status: "pending",
-    handoff_note: "既有個案需先檢查是否改派。",
-    ...stamp(-1)
-  },
-  {
-    id: "leave-003",
-    doctor_id: "doc-001",
-    start_date: "2026-04-27",
-    end_date: "2026-04-27",
-    reason: "上午門診支援",
-    status: "approved",
-    handoff_note: "下午可恢復安排。",
-    ...stamp(0)
-  },
-  {
-    id: "leave-004",
-    doctor_id: "doc-001",
-    start_date: "2026-04-29",
-    end_date: "2026-04-29",
-    reason: "個人休假",
-    status: "pending",
-    handoff_note: "需檢查 pat-009、pat-002 是否提前通知。",
-    ...stamp(1)
-  }
-];
+export const leaveRequestsSeed: LeaveRequest[] = [];
 
 export const rescheduleActionsSeed: RescheduleAction[] = [
   {
@@ -529,20 +490,7 @@ export const rescheduleActionsSeed: RescheduleAction[] = [
   }
 ];
 
-export const remindersSeed: Reminder[] = [
-  { id: "rem-001", role: "doctor", title: "出發前確認路線", detail: "今日第一站為王麗珠，請先查看 Google Maps。", due_at: at(0, 8, 0), related_visit_schedule_id: "vs-002", status: "pending", ...stamp(0) },
-  { id: "rem-002", role: "doctor", title: "訪後回覆家屬", detail: "李美蘭家屬希望收到睡眠摘要。", due_at: at(0, 11, 0), related_visit_schedule_id: "vs-003", status: "pending", ...stamp(0) },
-  { id: "rem-003", role: "doctor", title: "補寫衛教內容", detail: "黃建民家屬想了解呼吸照護建議。", due_at: at(0, 16, 30), related_visit_schedule_id: "vs-006", status: "pending", ...stamp(0) },
-  { id: "rem-004", role: "doctor", title: "電話通知改期", detail: "鄭國華目前暫停，需確認新時段。", due_at: at(1, 9, 30), related_visit_schedule_id: "vs-008", status: "pending", ...stamp(1) },
-  { id: "rem-005", role: "doctor", title: "整理病家問題", detail: "郭秋月家屬已整理近三日起身狀況。", due_at: at(2, 15, 20), related_visit_schedule_id: "vs-014", status: "pending", ...stamp(2) },
-  { id: "rem-006", role: "doctor", title: "確認月訪重點", detail: "何阿惜月訪需準備失智照護摘要。", due_at: at(5, 11, 0), related_visit_schedule_id: "vs-020", status: "pending", ...stamp(5) },
-  { id: "rem-007", role: "admin", title: "檢查請假衝突", detail: "張雅雯 4/25-4/26 請假待核准。", due_at: at(0, 9, 15), related_visit_schedule_id: null, status: "pending", ...stamp(0) },
-  { id: "rem-008", role: "admin", title: "通知病家改期", detail: "pat-009 本週訪視需重新排。", due_at: at(1, 10, 0), related_visit_schedule_id: "vs-009", status: "pending", ...stamp(1) },
-  { id: "rem-009", role: "admin", title: "追蹤 Google Chat 綁定", detail: "王麗珠與郭秋月已綁定，可測試通知模板。", due_at: at(0, 14, 30), related_visit_schedule_id: null, status: "done", ...stamp(0) },
-  { id: "rem-010", role: "admin", title: "確認地圖連結", detail: "板橋區新個案地址需再核對樓層資訊。", due_at: at(2, 9, 0), related_visit_schedule_id: "vs-013", status: "pending", ...stamp(2) },
-  { id: "rem-011", role: "admin", title: "建立出院後關懷", detail: "彭世傑出院後請補一筆通知任務。", due_at: at(4, 16, 0), related_visit_schedule_id: "vs-021", status: "pending", ...stamp(4) },
-  { id: "rem-012", role: "doctor", title: "回顧上次療程", detail: "周文德上次疼痛分數有下降，訪前先查看紀錄。", due_at: at(2, 13, 50), related_visit_schedule_id: "vs-013", status: "pending", ...stamp(2) }
-];
+export const remindersSeed: Reminder[] = [];
 
 const locationBlueprints: Array<
   [string, string, number, number, number, number, string | null]
@@ -576,7 +524,11 @@ const locationBlueprints: Array<
   ["loc-027", "doc-001", 60, 25.0883, 121.5314, 12, "vs-008"],
   ["loc-028", "doc-001", 70, 25.0877, 121.5325, 12, null],
   ["loc-029", "doc-001", 80, 25.0870, 121.5333, 11, null],
-  ["loc-030", "doc-001", 90, 25.0864, 121.5342, 11, null]
+  ["loc-030", "doc-001", 90, 25.0864, 121.5342, 11, null],
+  ["loc-031", "doc-002", 0, 25.0582, 121.5410, 13, "vs-025"],
+  ["loc-032", "doc-002", 10, 25.0574, 121.5419, 12, "vs-025"],
+  ["loc-033", "doc-002", 20, 25.0568, 121.5431, 12, "vs-026"],
+  ["loc-034", "doc-002", 30, 25.0561, 121.5442, 11, "vs-026"]
 ];
 
 export const doctorLocationLogsSeed: DoctorLocationLog[] = locationBlueprints.map(

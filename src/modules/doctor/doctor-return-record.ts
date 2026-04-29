@@ -1,6 +1,10 @@
 import { differenceInMinutes, format } from "date-fns";
 import type { VisitRecord } from "../../domain/models";
-import { formatRocCompactDate } from "../../shared/utils/format";
+import {
+  formatDateOnly,
+  formatDateTimeFull,
+  formatRocCompactDate
+} from "../../shared/utils/format";
 
 export const fourDiagnosisOptions = {
   inspection: [
@@ -107,6 +111,29 @@ export type ReturnRecordDraftInput = FourDiagnosisSelections & {
   treatmentEndTime: string;
 };
 
+export type ReturnRecordCsvRow = {
+  routeDate: string;
+  routeName: string;
+  doctorName: string;
+  serviceTimeSlot: string;
+  routeOrder: number | null;
+  patientName: string;
+  chartNumber: string;
+  scheduledStartAt: string;
+  scheduledEndAt: string;
+  departureFromPatientHomeTime: string | null;
+  returnRecordStartTime: string | null;
+  returnRecordEndTime: string | null;
+  chiefComplaint: string;
+  fourDiagnosisSummary: string;
+  medicalHistory: string;
+  isException: boolean;
+  reminderNote: string;
+  generatedRecordText: string;
+  linkedHomeVisitScheduleId: string;
+  returnRecordScheduleId: string;
+};
+
 function normalizeTagsWithOther(
   tags: string[],
   otherValue: string,
@@ -166,6 +193,92 @@ export function buildReturnRecordDraft(input: ReturnRecordDraftInput) {
     input.reminderNote?.trim() ? `提醒：${input.reminderNote.trim()}` : ""
   ]
     .filter(Boolean)
+    .join("\n");
+}
+
+function escapeCsvCell(value: string | number | boolean | null | undefined) {
+  const stringValue = String(value ?? "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  if (/[",\n]/.test(stringValue)) {
+    return `"${stringValue.replace(/"/g, '""')}"`;
+  }
+  return stringValue;
+}
+
+export function buildFourDiagnosisSummaryFromRecord(record: VisitRecord | undefined) {
+  if (!record) {
+    return "";
+  }
+
+  return buildFourDiagnosisSummary({
+    inspection_tags: record.inspection_tags ?? [],
+    inspection_other: record.inspection_other ?? "",
+    listening_tags: record.listening_tags ?? [],
+    listening_other: record.listening_other ?? "",
+    inquiry_tags: record.inquiry_tags ?? [],
+    inquiry_other: record.inquiry_other ?? "",
+    palpation_tags: record.palpation_tags ?? [],
+    palpation_other: record.palpation_other ?? ""
+  });
+}
+
+export function extractReminderNoteFromRecord(record: VisitRecord | undefined) {
+  const matchedNote = record?.generated_record_text.match(/提醒：(.+)/)?.[1];
+  return matchedNote?.trim() ?? "";
+}
+
+export function isExceptionReturnRecord(record: VisitRecord | undefined) {
+  return record?.treatment_provided.includes("異常個案") ?? false;
+}
+
+export function buildReturnRecordCsv(rows: ReturnRecordCsvRow[]) {
+  const header = [
+    "出巡日期",
+    "路線名稱",
+    "醫師",
+    "服務時段",
+    "站序",
+    "個案姓名",
+    "病歷號",
+    "居家訪視開始",
+    "居家訪視結束",
+    "離開個案時間",
+    "回院病歷開始",
+    "回院病歷結束",
+    "主訴",
+    "四診摘要",
+    "病史",
+    "異常個案",
+    "提醒內容",
+    "病歷全文",
+    "居家訪視排程ID",
+    "回院病歷排程ID"
+  ];
+
+  const csvRows = rows.map((row) => [
+    formatDateOnly(row.routeDate),
+    row.routeName,
+    row.doctorName,
+    row.serviceTimeSlot,
+    row.routeOrder ?? "",
+    row.patientName,
+    row.chartNumber,
+    formatDateTimeFull(row.scheduledStartAt),
+    formatDateTimeFull(row.scheduledEndAt),
+    formatDateTimeFull(row.departureFromPatientHomeTime),
+    formatDateTimeFull(row.returnRecordStartTime),
+    formatDateTimeFull(row.returnRecordEndTime),
+    row.chiefComplaint,
+    row.fourDiagnosisSummary,
+    row.medicalHistory,
+    row.isException ? "是" : "否",
+    row.reminderNote,
+    row.generatedRecordText,
+    row.linkedHomeVisitScheduleId,
+    row.returnRecordScheduleId
+  ]);
+
+  return [header, ...csvRows]
+    .map((columns) => columns.map((value) => escapeCsvCell(value)).join(","))
     .join("\n");
 }
 
