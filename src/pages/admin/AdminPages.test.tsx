@@ -1550,4 +1550,51 @@ describe("AdminPages", () => {
     expect(screen.queryByText("請假與異動處理")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "建立請假申請" })).not.toBeInTheDocument();
   });
+
+  it("AdminStaffPage 會顯示更新到 GitHub / Vercel 的按鈕與部署密碼欄位", () => {
+    renderWithProviders(<AdminStaffPage />);
+
+    expect(screen.getByRole("button", { name: "更新到 GitHub / Vercel" })).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("請輸入部署密碼")).toBeInTheDocument();
+  });
+
+  it("AdminStaffPage 可顯示線上更新成功與失敗訊息", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        json: async () => ({ error: "部署密碼不正確。" })
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          message: "已觸發 GitHub workflow：deploy-vercel.yml（main），後續將由 workflow 接續觸發 Vercel。"
+        })
+      });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderWithProviders(<AdminStaffPage />);
+
+    fireEvent.change(screen.getByPlaceholderText("請輸入部署密碼"), {
+      target: { value: "wrong-secret" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "更新到 GitHub / Vercel" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("部署密碼不正確。")).toBeInTheDocument();
+    });
+
+    fireEvent.change(screen.getByPlaceholderText("請輸入部署密碼"), {
+      target: { value: "correct-secret" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "更新到 GitHub / Vercel" }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("已觸發 GitHub workflow：deploy-vercel.yml（main），後續將由 workflow 接續觸發 Vercel。")
+      ).toBeInTheDocument();
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
 });

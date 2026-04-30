@@ -115,6 +115,31 @@ $env:VITE_TEAM_COMM_SYNC_MODE = "http"
    - `push` 到 `main` 時，自動觸發 `.github/workflows/deploy-vercel.yml`
    - 在 GitHub Actions 頁面手動按 `Deploy to Vercel`
 
+4. 若要啟用行政端頁面裡的 `更新到 GitHub / Vercel` 按鈕，請再設定：
+
+   - `DEPLOY_SYNC_SHARED_SECRET`
+
+   並視需求補齊以下其中一組：
+
+   - GitHub workflow 觸發：
+     - `GITHUB_DEPLOY_TOKEN`
+     - `GITHUB_DEPLOY_OWNER`
+     - `GITHUB_DEPLOY_REPO`
+     - `GITHUB_DEPLOY_WORKFLOW_ID`（可省略，預設 `deploy-vercel.yml`）
+     - `GITHUB_DEPLOY_BRANCH`（可省略，預設 `main`）
+   - 或 Vercel direct deploy：
+     - `VERCEL_DEPLOY_HOOK_URL`
+
+### 行政端頁面內的線上更新按鈕
+
+行政端 `角色設置` 頁現在已新增 `更新到 GitHub / Vercel` 區塊。  
+這顆按鈕會由 serverless API 代為觸發部署流程，因此不會把部署 secret 暴露在前端。
+
+要注意：
+
+- 它只能重新部署 **已經在 GitHub 遠端上的版本**
+- 不能把你本機尚未 `git push` 的程式碼直接送上線
+
 ### 本機一鍵推送 GitHub 並同步觸發 Vercel
 
 若你希望在本機直接完成「推 GitHub + 觸發 Vercel」，可先設定環境變數：

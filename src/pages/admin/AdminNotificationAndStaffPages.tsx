@@ -178,6 +178,9 @@ export function AdminStaffPage() {
   const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [activeServiceDay, setActiveServiceDay] = useState<ServiceDay>(serviceDayOptions[0]);
   const [recentAction, setRecentAction] = useState<string | null>(null);
+  const [deploySecret, setDeploySecret] = useState("");
+  const [deployStatus, setDeployStatus] = useState<string | null>(null);
+  const [isDeploying, setIsDeploying] = useState(false);
   const staffList = useMemo<StaffListItem[]>(
     () =>
       [
@@ -376,6 +379,43 @@ export function AdminStaffPage() {
     setRecentAction(`已移除 ${draft.name || "該角色"}。`);
   };
 
+  const triggerWebDeployment = async () => {
+    if (!deploySecret.trim()) {
+      setDeployStatus("請先輸入部署密碼。");
+      return;
+    }
+
+    setIsDeploying(true);
+    setDeployStatus("正在觸發 GitHub / Vercel 線上更新...");
+    try {
+      const response = await fetch("/api/deployment/sync", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          secret: deploySecret.trim()
+        })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setDeployStatus(
+          typeof payload.error === "string" ? payload.error : "線上更新失敗，請稍後再試。"
+        );
+        return;
+      }
+
+      setDeployStatus(
+        typeof payload.message === "string" ? payload.message : "已送出線上更新請求。"
+      );
+      setDeploySecret("");
+    } catch (error) {
+      setDeployStatus(error instanceof Error ? error.message : "線上更新失敗，請稍後再試。");
+    } finally {
+      setIsDeploying(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       {recentAction ? (
@@ -386,6 +426,45 @@ export function AdminStaffPage() {
           最近操作：{recentAction}
         </div>
       ) : null}
+
+      <Panel title="線上更新">
+        <div className="space-y-3 rounded-2xl border border-slate-200 bg-white p-4">
+          <div className="space-y-1">
+            <p className="text-sm font-semibold text-brand-ink">更新到 GitHub / Vercel</p>
+            <p className="text-sm text-slate-600">
+              這顆按鈕會從目前線上系統觸發 GitHub workflow 或 Vercel deploy hook。
+              它只能重新部署已經在 GitHub 遠端上的版本，不會把本機尚未 push 的程式碼直接送上線。
+            </p>
+          </div>
+          <div className="grid gap-3 md:grid-cols-[1fr_auto]">
+            <label className="space-y-1 text-sm text-slate-600">
+              <span className="font-medium text-brand-ink">部署密碼</span>
+              <input
+                type="password"
+                value={deploySecret}
+                onChange={(event) => setDeploySecret(event.target.value)}
+                className="w-full rounded-full border border-slate-200 px-4 py-2 text-sm outline-none transition focus:border-brand-forest"
+                placeholder="請輸入部署密碼"
+              />
+            </label>
+            <div className="flex items-end">
+              <button
+                type="button"
+                onClick={() => void triggerWebDeployment()}
+                disabled={isDeploying}
+                className="rounded-full bg-brand-forest px-5 py-2 text-sm font-semibold text-white transition hover:bg-brand-forest/90 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isDeploying ? "更新中..." : "更新到 GitHub / Vercel"}
+              </button>
+            </div>
+          </div>
+          {deployStatus ? (
+            <p className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+              {deployStatus}
+            </p>
+          ) : null}
+        </div>
+      </Panel>
 
       <div className="grid gap-6">
         <Panel
