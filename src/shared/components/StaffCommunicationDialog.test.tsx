@@ -8,7 +8,7 @@ describe("StaffCommunicationPanel", () => {
 
     const { rerender } = render(
       <StaffCommunicationPanel
-        title="團隊通訊｜行政人員"
+        title="行政人員"
         counterpartLabel="行政人員"
         counterpartPhone="0912-000-000"
         currentUserLabel="蕭坤元醫師"
@@ -28,7 +28,7 @@ describe("StaffCommunicationPanel", () => {
 
     rerender(
       <StaffCommunicationPanel
-        title="團隊通訊｜行政人員"
+        title="行政人員"
         counterpartLabel="行政人員"
         counterpartPhone="0912-000-000"
         currentUserLabel="蕭坤元醫師"

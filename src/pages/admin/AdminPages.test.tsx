@@ -776,7 +776,6 @@ describe("AdminPages", () => {
     renderWithProviders(<AdminTeamCommunicationPage />);
 
     expect(screen.getByRole("heading", { name: "團隊通訊" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /同步/ })).toBeInTheDocument();
     expect(screen.queryByText("全部已讀")).not.toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("訊息內容"), {
       target: { value: "請先確認今日下午第三站的回院病歷摘要。" }
@@ -813,7 +812,7 @@ describe("AdminPages", () => {
 
     fireEvent.doubleClick(screen.getByRole("button", { name: /林若謙醫師/ }));
 
-    expect(screen.getByRole("heading", { name: "團隊通訊｜林若謙醫師" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "林若謙醫師" })).toBeInTheDocument();
     expect(screen.getByLabelText("訊息內容")).toBeInTheDocument();
   });
 

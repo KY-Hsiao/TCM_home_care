@@ -661,7 +661,7 @@ export function AppShell() {
 
       {shellRole === "doctor" && isStaffCommunicationOpen && currentDoctor && currentAdmin ? (
         <StaffCommunicationDialog
-          title="團隊通訊｜行政人員"
+          title="行政人員"
           counterpartLabel="行政人員"
           counterpartPhone={currentAdmin.phone}
           currentUserLabel={currentDoctor.name}

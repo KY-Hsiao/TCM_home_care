@@ -108,7 +108,7 @@ export function DoctorTeamCommunicationPage() {
       <Panel title="團隊通訊" className="p-3 lg:p-4">
         <div className="h-[min(72dvh,820px)] min-h-[420px]">
           <StaffCommunicationPanel
-            title="團隊通訊｜行政人員"
+            title="行政人員"
             counterpartLabel="行政人員"
             counterpartPhone={currentAdmin.phone}
             currentUserLabel={currentDoctor.name}

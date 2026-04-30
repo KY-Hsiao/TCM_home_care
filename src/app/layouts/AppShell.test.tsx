@@ -244,7 +244,7 @@ describe("AppShell", () => {
 
     expect(within(screen.getByRole("navigation")).getByRole("link", { name: /團隊通訊/ })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "團隊通訊" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "團隊通訊｜蕭坤元醫師" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "蕭坤元醫師" })).toBeInTheDocument();
     expect(screen.getByLabelText("訊息內容")).toBeInTheDocument();
   });
 
@@ -264,7 +264,7 @@ describe("AppShell", () => {
 
     expect(within(screen.getByRole("navigation")).getByRole("link", { name: /團隊通訊/ })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "團隊通訊" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "團隊通訊｜行政人員" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "行政人員" })).toBeInTheDocument();
     expect(screen.getByLabelText("訊息內容")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "開啟團隊通訊" })).not.toBeInTheDocument();
     expect(screen.queryByText("對話對象")).not.toBeInTheDocument();

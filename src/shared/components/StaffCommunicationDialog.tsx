@@ -330,19 +330,9 @@ export function StaffCommunicationPanel({
       <div className="shrink-0 border-b border-slate-200 bg-white/95 px-4 py-3 backdrop-blur sm:px-5 sm:py-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
           <div className="min-w-0">
-            <p className="text-sm font-medium text-brand-coral">團隊通訊</p>
-            <h2 className="mt-1 break-words text-lg font-semibold text-brand-ink sm:text-2xl">{title}</h2>
+            <h2 className="break-words text-lg font-semibold text-brand-ink sm:text-2xl">{title}</h2>
           </div>
           <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
-            {onRefresh ? (
-              <button
-                type="button"
-                onClick={onRefresh}
-                className="w-full rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-brand-ink sm:w-auto"
-              >
-                {isRefreshing ? "同步中..." : "立即同步"}
-              </button>
-            ) : null}
             {onClose ? (
               <button
                 type="button"

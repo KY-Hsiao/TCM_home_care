@@ -49,6 +49,7 @@ export function useTeamCommunicationConversation(input: {
   );
   const repositoryRef = useRef(repository);
   repositoryRef.current = repository;
+  const refreshRequestIdRef = useRef(0);
   const [messages, setMessages] = useState<TeamCommunicationMessage[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [isLoading, setIsLoading] = useState(enabled);
@@ -77,20 +78,29 @@ export function useTeamCommunicationConversation(input: {
     if (!enabled) {
       return;
     }
+    const requestId = ++refreshRequestIdRef.current;
     if (!options?.silent) {
       setIsRefreshing(true);
     }
     try {
       const nextMessages = await repositoryRef.current.listConversation(conversationQuery);
+      if (requestId !== refreshRequestIdRef.current) {
+        return;
+      }
       setMessages(nextMessages);
       setUnreadCount(resolveUnreadMessages(nextMessages).length);
       setLastSyncedAt(new Date().toISOString());
       setSyncError(null);
     } catch (error) {
+      if (requestId !== refreshRequestIdRef.current) {
+        return;
+      }
       setSyncError(error instanceof Error ? error.message : "團隊通訊同步失敗。");
     } finally {
-      setIsLoading(false);
-      setIsRefreshing(false);
+      if (requestId === refreshRequestIdRef.current) {
+        setIsLoading(false);
+        setIsRefreshing(false);
+      }
     }
   };
 
@@ -182,12 +192,14 @@ export function useTeamCommunicationUnreadCount(input: {
   );
   const repositoryRef = useRef(repository);
   repositoryRef.current = repository;
+  const refreshRequestIdRef = useRef(0);
   const [count, setCount] = useState(0);
 
   const refresh = async () => {
     if (!enabled) {
       return;
     }
+    const requestId = ++refreshRequestIdRef.current;
     try {
       const nextCount = await repositoryRef.current.getUnreadCount({
         role: input.role,
@@ -195,6 +207,9 @@ export function useTeamCommunicationUnreadCount(input: {
         doctorId: input.doctorId,
         adminUserId: input.adminUserId
       });
+      if (requestId !== refreshRequestIdRef.current) {
+        return;
+      }
       setCount(nextCount);
     } catch {
       // 保留舊值，避免未讀燈在短暫網路失敗時閃爍歸零。

@@ -145,7 +145,7 @@ export function AdminTeamCommunicationPage() {
 
           <div className="h-[min(72dvh,820px)] min-h-[420px]">
             <StaffCommunicationPanel
-              title={`團隊通訊｜${selectedDoctor.name}`}
+              title={selectedDoctor.name}
               counterpartLabel={selectedDoctor.name}
               counterpartPhone={selectedDoctor.phone}
               currentUserLabel="行政人員"

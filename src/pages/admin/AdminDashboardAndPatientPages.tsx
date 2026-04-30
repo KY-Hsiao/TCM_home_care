@@ -927,6 +927,23 @@ export function AdminDoctorTrackingPage() {
   }, []);
 
   useEffect(() => {
+    const mapElement = mapContainerRef.current;
+    if (!mapElement) {
+      return;
+    }
+
+    const handleWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+    };
+
+    mapElement.addEventListener("wheel", handleWheel, { passive: false });
+    return () => {
+      mapElement.removeEventListener("wheel", handleWheel);
+    };
+  }, [selectedDoctor?.doctorId]);
+
+  useEffect(() => {
     if (!selectedDoctor) {
       setTrackingMapView(null);
       autoCenteredDoctorKeyRef.current = "";
@@ -1129,10 +1146,6 @@ export function AdminDoctorTrackingPage() {
                     dragStateRef.current = null;
                     event.currentTarget.releasePointerCapture(event.pointerId);
                   }
-                }}
-                onWheel={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
                 }}
                 className={`relative mt-2.5 h-[340px] overflow-hidden rounded-[1.35rem] border border-slate-200 bg-slate-100 touch-none lg:h-[380px] ${
                   allowTrackingMapInteraction ? "cursor-grab active:cursor-grabbing" : "cursor-default"
