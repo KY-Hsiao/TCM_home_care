@@ -6,6 +6,10 @@ import { formatDateTimeFull } from "../../shared/utils/format";
 import { isVisitFinished, isVisitUnlocked } from "../../modules/doctor/doctor-page-helpers";
 import { StaffCommunicationDialog } from "../../shared/components/StaffCommunicationDialog";
 import { maskPatientName } from "../../shared/utils/patient-name";
+import {
+  useTeamCommunicationConversation,
+  useTeamCommunicationUnreadCount
+} from "../../services/team-communication/use-team-communication";
 
 type DoctorLocationSyncState = {
   status: "idle" | "requesting" | "sharing" | "denied" | "unsupported" | "error";
@@ -265,23 +269,6 @@ export function AppShell() {
     };
   }, [session.activeDoctorId, session.activeRoutePlanId, session.authenticatedDoctorId, shellRole]);
 
-  const doctorAdminConversationLogs = useMemo(() => {
-    if (!session.activeDoctorId || !currentAdmin?.id) {
-      return [];
-    }
-    return [...db.contact_logs]
-      .filter(
-        (log) =>
-          log.doctor_id === session.activeDoctorId &&
-          log.admin_user_id === currentAdmin.id &&
-          ["phone", "web_notice"].includes(log.channel)
-      )
-      .sort(
-        (left, right) =>
-          new Date(right.contacted_at).getTime() - new Date(left.contacted_at).getTime()
-      );
-  }, [currentAdmin?.id, db.contact_logs, session.activeDoctorId]);
-
   const doctorCommunicationContextLabel =
     activeDoctorScheduleDetail
       ? `第 ${activeDoctorScheduleDetail.schedule.route_order} 站 ${maskPatientName(activeDoctorScheduleDetail.patient.name)}`
@@ -289,7 +276,7 @@ export function AppShell() {
         ? `${activeDoctorRoutePlan.route_name} / 返院或待命`
         : "院內行政協調";
 
-  const createDoctorAdminContactLog = (input: {
+  const createDoctorAdminContactLog = async (input: {
     channel: "phone" | "web_notice";
     subject: string;
     content: string;
@@ -299,45 +286,38 @@ export function AppShell() {
       return;
     }
     const now = new Date().toISOString();
-    repositories.contactRepository.createContactLog({
+    await shellConversation.createMessage({
       id: `staff-log-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      patient_id: activeDoctorScheduleDetail?.patient.id ?? null,
-      visit_schedule_id: activeDoctorScheduleDetail?.schedule.id ?? null,
-      caregiver_id: null,
-      doctor_id: currentDoctor.id,
-      admin_user_id: currentAdmin.id,
+      doctorId: currentDoctor.id,
+      adminUserId: currentAdmin.id,
+      senderRole: "doctor",
+      senderUserId: currentDoctor.id,
+      receiverRole: "admin",
+      receiverUserId: currentAdmin.id,
+      patientId: activeDoctorScheduleDetail?.patient.id ?? null,
+      visitScheduleId: activeDoctorScheduleDetail?.schedule.id ?? null,
       channel: input.channel,
       subject: input.subject,
       content: input.content,
       outcome: input.outcome,
-      contacted_at: now,
-      created_at: now,
-      updated_at: now
+      messageType:
+        input.subject.startsWith("語音通話邀請｜")
+          ? "voice_invite"
+          : input.subject.startsWith("語音通話已接聽｜")
+            ? "voice_accept"
+            : input.subject.startsWith("語音通話已結束｜")
+              ? "voice_end"
+              : "text",
+      callStatus:
+        input.subject.startsWith("語音通話邀請｜")
+          ? "ringing"
+          : input.subject.startsWith("語音通話已接聽｜")
+            ? "connected"
+            : input.subject.startsWith("語音通話已結束｜")
+              ? "ended"
+              : null,
+      contactedAt: now
     });
-    if (input.channel === "web_notice" || input.channel === "phone") {
-      repositories.notificationRepository.createNotificationCenterItem({
-        id: `nc-staff-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        role: "admin",
-        owner_user_id: currentAdmin.id,
-        source_type: input.channel === "phone" ? "system_notification" : "manual_notice",
-        title: input.subject,
-        content:
-          input.channel === "phone"
-            ? `${input.content}\n請打開團隊通訊頁面立即回應。`
-            : input.content,
-        linked_patient_id: activeDoctorScheduleDetail?.patient.id ?? null,
-        linked_visit_schedule_id: activeDoctorScheduleDetail?.schedule.id ?? null,
-        linked_doctor_id: currentDoctor.id,
-        linked_leave_request_id: null,
-        status: "pending",
-        is_unread: true,
-        reply_text: null,
-        reply_updated_at: null,
-        reply_updated_by_role: null,
-        created_at: now,
-        updated_at: now
-      });
-    }
   };
 
   const notificationCenterPath =
@@ -352,46 +332,25 @@ export function AppShell() {
   }, [currentUserId, repositories, shellRole]);
   const notificationSummaryLabel =
     unreadNotificationCount > 0 ? `通知中心（未讀 ${unreadNotificationCount}）` : "通知中心";
-  const doctorTeamCommunicationUnreadCount = useMemo(() => {
-    if (!shellRole || !currentUserId) {
-      return 0;
-    }
-    return repositories.notificationRepository
-      .getNotificationCenterItems(shellRole, currentUserId)
-      .filter(
-        (item) =>
-          item.is_unread &&
-          item.role === shellRole &&
-          (shellRole === "admin" || item.owner_user_id === currentUserId) &&
-          (shellRole === "doctor" ? item.linked_doctor_id === currentUserId : true) &&
-          ["manual_notice", "system_notification"].includes(item.source_type) &&
-          (item.title.startsWith("院內對話｜") ||
-            item.title.startsWith("語音通話邀請｜") ||
-            item.content.includes("團隊通訊"))
-      ).length;
-  }, [currentUserId, repositories, shellRole]);
-
-  const markShellConversationRead = () => {
-    if (!shellRole || !currentUserId) {
-      return;
-    }
-    repositories.notificationRepository
-      .getNotificationCenterItems(shellRole, currentUserId)
-      .filter(
-        (item) =>
-          item.is_unread &&
-          item.role === shellRole &&
-          (shellRole === "admin" || item.owner_user_id === currentUserId) &&
-          (shellRole === "doctor" ? item.linked_doctor_id === currentUserId : true) &&
-          ["manual_notice", "system_notification"].includes(item.source_type) &&
-          (item.title.startsWith("院內對話｜") ||
-            item.title.startsWith("語音通話邀請｜") ||
-            item.content.includes("團隊通訊"))
-      )
-      .forEach((item) => {
-        repositories.notificationRepository.markNotificationCenterItemRead(item.id);
-      });
-  };
+  const teamCommunicationUnread = useTeamCommunicationUnreadCount({
+    db,
+    repositories,
+    role: shellRole === "admin" ? "admin" : "doctor",
+    userId: currentUserId ?? "",
+    enabled: Boolean(shellRole && currentUserId),
+    doctorId: shellRole === "doctor" ? currentUserId ?? undefined : undefined,
+    adminUserId: shellRole === "admin" ? currentUserId ?? undefined : currentAdmin?.id
+  });
+  const doctorTeamCommunicationUnreadCount = teamCommunicationUnread.count;
+  const shellConversation = useTeamCommunicationConversation({
+    db,
+    repositories,
+    doctorId: currentDoctor?.id ?? "",
+    adminUserId: currentAdmin?.id ?? "",
+    viewerRole: "doctor",
+    viewerUserId: currentDoctor?.id ?? "",
+    enabled: Boolean(shellRole === "doctor" && currentDoctor && currentAdmin)
+  });
 
   const handleLogout = () => {
     if (!shellRole) {
@@ -710,13 +669,20 @@ export function AppShell() {
           doctorId={currentDoctor.id}
           adminUserId={currentAdmin.id}
           patientId={activeDoctorScheduleDetail?.patient.id ?? null}
-            visitScheduleId={activeDoctorScheduleDetail?.schedule.id ?? null}
-            logs={doctorAdminConversationLogs}
-            unreadConversationCount={doctorTeamCommunicationUnreadCount}
-            onConversationViewed={markShellConversationRead}
-            onClose={() => setIsStaffCommunicationOpen(false)}
-            onCreateLog={createDoctorAdminContactLog}
-          />
+          visitScheduleId={activeDoctorScheduleDetail?.schedule.id ?? null}
+          logs={shellConversation.messages}
+          unreadConversationCount={shellConversation.unreadCount}
+          syncError={shellConversation.syncError}
+          lastSyncedAt={shellConversation.lastSyncedAt}
+          isRefreshing={shellConversation.isRefreshing}
+          onRefresh={() => void shellConversation.refresh()}
+          onConversationViewed={() => {
+            void shellConversation.markConversationRead();
+            void teamCommunicationUnread.refresh();
+          }}
+          onClose={() => setIsStaffCommunicationOpen(false)}
+          onCreateLog={createDoctorAdminContactLog}
+        />
       ) : null}
 
       {isPasswordModalOpen ? (

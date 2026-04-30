@@ -702,7 +702,7 @@ describe("AdminPages", () => {
     expect(screen.getByText(/最後定位/)).toBeInTheDocument();
   });
 
-  it("AdminTeamCommunicationPage 可從獨立頁面直接送出給醫師的院內文字訊息", () => {
+  it("AdminTeamCommunicationPage 可從獨立頁面直接送出給醫師的院內文字訊息", async () => {
     window.localStorage.setItem(
       SESSION_STORAGE_KEY,
       JSON.stringify({
@@ -717,14 +717,16 @@ describe("AdminPages", () => {
     renderWithProviders(<AdminTeamCommunicationPage />);
 
     expect(screen.getByRole("heading", { name: "團隊通訊" })).toBeInTheDocument();
-    expect(screen.getByLabelText("團隊通訊已讀綠燈")).toBeInTheDocument();
-    expect(screen.getByText("全部已讀")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /同步/ })).toBeInTheDocument();
+    expect(screen.queryByText("全部已讀")).not.toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("訊息內容"), {
       target: { value: "請先確認今日下午第三站的回院病歷摘要。" }
     });
     fireEvent.click(screen.getByRole("button", { name: "送出站內訊息" }));
 
-    expect(screen.getByRole("status")).toHaveTextContent("站內訊息已送出");
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent("站內訊息已送出")
+    );
     const storedDb = JSON.parse(window.localStorage.getItem(MOCK_DB_STORAGE_KEY) ?? "{}");
     expect(
       (storedDb.notification_center_items ?? []).some(
@@ -756,7 +758,7 @@ describe("AdminPages", () => {
     expect(screen.getByLabelText("訊息內容")).toBeInTheDocument();
   });
 
-  it("AdminTeamCommunicationPage 發起語音通話時會同步通知醫師回應", () => {
+  it("AdminTeamCommunicationPage 發起語音通話時會同步通知醫師回應", async () => {
     window.localStorage.setItem(
       SESSION_STORAGE_KEY,
       JSON.stringify({
@@ -773,7 +775,9 @@ describe("AdminPages", () => {
     fireEvent.click(screen.getByRole("button", { name: "語音通話" }));
     fireEvent.click(screen.getByRole("button", { name: "開始語音通話" }));
 
-    expect(screen.getByRole("status")).toHaveTextContent("已送出語音通話邀請");
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent("已送出語音通話邀請")
+    );
     expect(screen.getByText("等待對方接聽")).toBeInTheDocument();
     const storedDb = JSON.parse(window.localStorage.getItem(MOCK_DB_STORAGE_KEY) ?? "{}");
     expect(
@@ -788,7 +792,7 @@ describe("AdminPages", () => {
     ).toBe(true);
   });
 
-  it("DoctorTeamCommunicationPage 會顯示語音通話邀請並可直接接受", () => {
+  it("DoctorTeamCommunicationPage 會顯示語音通話邀請並可直接接受", async () => {
     window.localStorage.setItem(
       SESSION_STORAGE_KEY,
       JSON.stringify({
@@ -818,10 +822,14 @@ describe("AdminPages", () => {
 
     renderWithProviders(<DoctorTeamCommunicationPage />);
 
-    expect(screen.getByText("有語音通話邀請")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText("有語音通話邀請")).toBeInTheDocument();
+    });
     fireEvent.click(screen.getAllByRole("button", { name: "接受語音邀請" })[0]);
 
-    expect(screen.getByRole("status")).toHaveTextContent("已接受語音通話邀請");
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent("已接受語音通話邀請")
+    );
     const storedDb = JSON.parse(window.localStorage.getItem(MOCK_DB_STORAGE_KEY) ?? "{}");
     expect(
       (storedDb.contact_logs ?? []).some(

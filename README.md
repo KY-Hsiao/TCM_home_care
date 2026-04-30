@@ -12,6 +12,7 @@
 - 完整 seed data
 - 通知模板 / 通知任務模組
 - 地圖與定位模組預留
+- `Vercel Frontend + api/ Serverless Functions + Neon` 的團隊通訊正式同步架構
 
 ## 技術棧
 
@@ -72,6 +73,80 @@
    npm run build
    ```
 
+## Vercel 正式部署
+
+目前專案採用適合 Vercel 的結構：
+
+- 前端：`React + Vite`
+- Serverless API：根目錄 `api/`
+- 正式共享資料庫：`Neon（可透過 Vercel Marketplace 整合）`
+
+### 團隊通訊正式同步
+
+團隊通訊在部署環境下，會自動從本機 `localStorage` 模式切到 `HTTP API` 模式：
+
+- 正式 API：`/api/team-communications`
+- 未讀數 API：`/api/team-communications/unread-count`
+- 已讀 API：`/api/team-communications/:id/read`
+
+目前這條正式共享資料流已先套用在 `團隊通訊`。  
+排程、個案、定位、病歷等其他模組，若尚未另外改接正式 API，仍會維持既有 mock / `localStorage` 行為。
+
+若要在本機強制模擬正式同步模式，可設定：
+
+```powershell
+$env:VITE_TEAM_COMM_SYNC_MODE = "http"
+```
+
+### Vercel 需要的設定
+
+1. 在 Vercel 專案中加入 `Neon`
+   並確認環境內有 `DATABASE_URL` 或 `POSTGRES_URL` 可供 serverless API 使用。
+
+2. 確認 Vercel 專案已連到這個 GitHub repository。
+
+3. 在 GitHub repository secrets 新增：
+
+   - `VERCEL_DEPLOY_HOOK_URL`
+
+   這個值請使用 Vercel 專案的 Deploy Hook URL。  
+   加入後，本 repo 會提供兩種同步部署方式：
+
+   - `push` 到 `main` 時，自動觸發 `.github/workflows/deploy-vercel.yml`
+   - 在 GitHub Actions 頁面手動按 `Deploy to Vercel`
+
+### 本機一鍵推送 GitHub 並同步觸發 Vercel
+
+若你希望在本機直接完成「推 GitHub + 觸發 Vercel」，可先設定環境變數：
+
+```powershell
+$env:VERCEL_DEPLOY_HOOK_URL = "你的 deploy hook URL"
+```
+
+然後執行：
+
+```powershell
+npm run publish:web
+```
+
+這個腳本會：
+
+- 將目前 branch `git push` 到 GitHub
+- 成功後立刻呼叫 Vercel deploy hook
+
+預設只允許在 `main` 觸發這個流程，避免把非正式 branch 誤送到線上。  
+若你確定要從其他 branch 觸發，可加上：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\publish_github_and_vercel.ps1 -AllowNonProductionBranch
+```
+
+若只想推 GitHub、不想觸發 Vercel，也可執行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\publish_github_and_vercel.ps1 -SkipVercel
+```
+
 ## 路徑注意事項
 
 若專案放在雲端同步資料夾或含特殊路徑限制的磁碟下，根目錄直接執行 `npm install` 可能會因 `node_modules` 大量寫檔而失敗。現在預設建議先跑 `.codex\scripts\setup.ps1`，它會把共用依賴固定準備在 `C:\codex-deps\tcm-home-care`，並讓 `launch_app.ps1` 把驗證副本同步到 `C:\codex-deps\tcm-home-care-verify` 後再啟動。
@@ -108,6 +183,7 @@
 - `src/domain`：資料模型、enum、rules、repository contract
 - `src/data/seed`：完整假資料
 - `src/data/mock`：local mock repository 與瀏覽器儲存
+- `api`：Vercel Serverless Functions
 
 ## Legacy Python 骨架
 

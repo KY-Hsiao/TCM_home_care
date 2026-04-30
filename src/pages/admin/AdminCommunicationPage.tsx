@@ -3,6 +3,7 @@ import { useAppContext } from "../../app/use-app-context";
 import { StaffCommunicationPanel } from "../../shared/components/StaffCommunicationDialog";
 import { maskPatientName } from "../../shared/utils/patient-name";
 import { Panel } from "../../shared/ui/Panel";
+import { useTeamCommunicationConversation } from "../../services/team-communication/use-team-communication";
 
 const ACTIVE_VISIT_STATUSES = [
   "waiting_departure",
@@ -50,49 +51,8 @@ export function AdminTeamCommunicationPage() {
   const activePatient = activeSchedule
     ? repositories.patientRepository.getPatientById(activeSchedule.patient_id)
     : undefined;
-  const conversationLogs = useMemo(
-    () =>
-      selectedDoctor && selectedAdmin
-        ? [...db.contact_logs]
-            .filter(
-              (log) =>
-                log.doctor_id === selectedDoctor.id &&
-                log.admin_user_id === selectedAdmin.id &&
-                ["phone", "web_notice"].includes(log.channel)
-            )
-            .sort(
-              (left, right) =>
-                new Date(right.contacted_at).getTime() - new Date(left.contacted_at).getTime()
-            )
-        : [],
-    [db.contact_logs, selectedAdmin, selectedDoctor]
-  );
-  const unreadTeamCommunicationItems = useMemo(
-    () =>
-      selectedDoctor && selectedAdmin
-        ? repositories.notificationRepository
-            .getNotificationCenterItems("admin", selectedAdmin.id)
-            .filter(
-              (item) =>
-                item.is_unread &&
-                item.role === "admin" &&
-                item.owner_user_id === selectedAdmin.id &&
-                item.linked_doctor_id === selectedDoctor.id &&
-                ["manual_notice", "system_notification"].includes(item.source_type) &&
-                (item.title.startsWith("院內對話｜") ||
-                  item.title.startsWith("語音通話邀請｜") ||
-                  item.content.includes("團隊通訊"))
-            )
-        : [],
-    [repositories, selectedAdmin, selectedDoctor]
-  );
-  const markAdminConversationRead = () => {
-    unreadTeamCommunicationItems.forEach((item) => {
-      repositories.notificationRepository.markNotificationCenterItemRead(item.id);
-    });
-  };
 
-  const createAdminDoctorContactLog = (input: {
+  const createAdminDoctorContactLog = async (input: {
     channel: "phone" | "web_notice";
     subject: string;
     content: string;
@@ -102,46 +62,49 @@ export function AdminTeamCommunicationPage() {
       return;
     }
     const now = new Date().toISOString();
-    repositories.contactRepository.createContactLog({
+    await conversation.createMessage({
       id: `staff-log-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      patient_id: activePatient?.id ?? null,
-      visit_schedule_id: activeSchedule?.id ?? null,
-      caregiver_id: null,
-      doctor_id: selectedDoctor.id,
-      admin_user_id: selectedAdmin.id,
+      doctorId: selectedDoctor.id,
+      adminUserId: selectedAdmin.id,
+      senderRole: "admin",
+      senderUserId: selectedAdmin.id,
+      receiverRole: "doctor",
+      receiverUserId: selectedDoctor.id,
+      patientId: activePatient?.id ?? null,
+      visitScheduleId: activeSchedule?.id ?? null,
       channel: input.channel,
       subject: input.subject,
       content: input.content,
       outcome: input.outcome,
-      contacted_at: now,
-      created_at: now,
-      updated_at: now
+      messageType:
+        input.subject.startsWith("語音通話邀請｜")
+          ? "voice_invite"
+          : input.subject.startsWith("語音通話已接聽｜")
+            ? "voice_accept"
+            : input.subject.startsWith("語音通話已結束｜")
+              ? "voice_end"
+              : "text",
+      callStatus:
+        input.subject.startsWith("語音通話邀請｜")
+          ? "ringing"
+          : input.subject.startsWith("語音通話已接聽｜")
+            ? "connected"
+            : input.subject.startsWith("語音通話已結束｜")
+              ? "ended"
+              : null,
+      contactedAt: now
     });
-    if (input.channel === "web_notice" || input.channel === "phone") {
-      repositories.notificationRepository.createNotificationCenterItem({
-        id: `nc-staff-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        role: "doctor",
-        owner_user_id: selectedDoctor.id,
-        source_type: input.channel === "phone" ? "system_notification" : "manual_notice",
-        title: input.subject,
-        content:
-          input.channel === "phone"
-            ? `${input.content}\n請打開團隊通訊頁面立即回應。`
-            : input.content,
-        linked_patient_id: activePatient?.id ?? null,
-        linked_visit_schedule_id: activeSchedule?.id ?? null,
-        linked_doctor_id: selectedDoctor.id,
-        linked_leave_request_id: null,
-        status: "pending",
-        is_unread: true,
-        reply_text: null,
-        reply_updated_at: null,
-        reply_updated_by_role: null,
-        created_at: now,
-        updated_at: now
-      });
-    }
   };
+
+  const conversation = useTeamCommunicationConversation({
+    db,
+    repositories,
+    doctorId: selectedDoctor?.id ?? "",
+    adminUserId: selectedAdmin?.id ?? "",
+    viewerRole: "admin",
+    viewerUserId: selectedAdmin?.id ?? "",
+    enabled: Boolean(selectedDoctor && selectedAdmin)
+  });
 
   if (!selectedDoctor || !selectedAdmin) {
     return <Panel title="團隊通訊">目前找不到可使用的行政或醫師資料。</Panel>;
@@ -195,9 +158,13 @@ export function AdminTeamCommunicationPage() {
               adminUserId={selectedAdmin.id}
               patientId={activePatient?.id ?? null}
               visitScheduleId={activeSchedule?.id ?? null}
-              logs={conversationLogs}
-              unreadConversationCount={unreadTeamCommunicationItems.length}
-              onConversationViewed={markAdminConversationRead}
+              logs={conversation.messages}
+              unreadConversationCount={conversation.unreadCount}
+              syncError={conversation.syncError}
+              lastSyncedAt={conversation.lastSyncedAt}
+              isRefreshing={conversation.isRefreshing}
+              onRefresh={() => void conversation.refresh()}
+              onConversationViewed={() => void conversation.markConversationRead()}
               onCreateLog={createAdminDoctorContactLog}
             />
           </div>

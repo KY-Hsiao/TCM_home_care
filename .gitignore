@@ -7,5 +7,6 @@ artifacts/
 node_modules/
 dist/
 coverage/
+.vercel/
 .DS_Store
 *.tsbuildinfo

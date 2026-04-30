@@ -9,10 +9,12 @@
     "preview": "vite preview",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "publish:web": "powershell -ExecutionPolicy Bypass -File .\\tools\\publish_github_and_vercel.ps1"
   },
   "dependencies": {
     "@hookform/resolvers": "^4.1.3",
+    "@neondatabase/serverless": "^0.10.4",
     "@tanstack/react-table": "^8.20.6",
     "date-fns": "^4.1.0",
     "react": "^19.1.0",

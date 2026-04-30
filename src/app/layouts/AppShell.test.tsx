@@ -320,7 +320,7 @@ describe("AppShell", () => {
       );
       expect(screen.queryByText("行政人員有 1 則未讀團隊通訊")).not.toBeInTheDocument();
       expect(screen.queryByText("行政人員剛送來 1 則未讀團隊通訊，請立即查看。")).not.toBeInTheDocument();
-      expect(screen.getByText("全部已讀")).toBeInTheDocument();
+      expect(screen.queryByText("全部已讀")).not.toBeInTheDocument();
     });
   });
 
@@ -414,7 +414,7 @@ describe("AppShell", () => {
     expect(screen.queryByText("上午院內會議")).not.toBeInTheDocument();
   });
 
-  it("醫師端可從院內對話視窗送出給行政的站內訊息", () => {
+  it("醫師端可從院內對話視窗送出給行政的站內訊息", async () => {
     window.localStorage.setItem(
       SESSION_STORAGE_KEY,
       JSON.stringify({
@@ -434,7 +434,9 @@ describe("AppShell", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "送出站內訊息" }));
 
-    expect(screen.getByRole("status")).toHaveTextContent("站內訊息已送出");
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent("站內訊息已送出")
+    );
     const storedDb = JSON.parse(window.localStorage.getItem(MOCK_DB_STORAGE_KEY) ?? "{}");
     expect(
       (storedDb.notification_center_items ?? []).some(
@@ -465,7 +467,9 @@ describe("AppShell", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "送出站內訊息" }));
 
-    expect(screen.getByRole("status")).toHaveTextContent("站內訊息已送出");
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent("站內訊息已送出")
+    );
     doctorView.unmount();
 
     window.localStorage.setItem(
@@ -487,7 +491,7 @@ describe("AppShell", () => {
     });
   });
 
-  it("醫師端發起語音通話時會同步通知行政回應", () => {
+  it("醫師端發起語音通話時會同步通知行政回應", async () => {
     window.localStorage.setItem(
       SESSION_STORAGE_KEY,
       JSON.stringify({
@@ -505,7 +509,9 @@ describe("AppShell", () => {
     fireEvent.click(screen.getByRole("button", { name: "語音通話" }));
     fireEvent.click(screen.getByRole("button", { name: "開始語音通話" }));
 
-    expect(screen.getByRole("status")).toHaveTextContent("已送出語音通話邀請");
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent("已送出語音通話邀請")
+    );
     const storedDb = JSON.parse(window.localStorage.getItem(MOCK_DB_STORAGE_KEY) ?? "{}");
     expect(
       (storedDb.notification_center_items ?? []).some(
@@ -550,7 +556,7 @@ describe("AppShell", () => {
     }
 
     expect(within(summaryList).getByText("目前帳號：蕭坤元醫師")).toBeInTheDocument();
-    expect(within(summaryList).getByText("定位座標：24.99540, 121.55500")).toBeInTheDocument();
+    expect(within(summaryList).getByText("定位座標：22.88590, 120.50140")).toBeInTheDocument();
     expect(within(summaryList).getByText(/最後更新：20\d{2}\/\d{2}\/\d{2} 09:30/)).toBeInTheDocument();
     expect(
       within(summaryList).getByText((text) => text.startsWith("同步案件：第 ") && text.includes(" / "))

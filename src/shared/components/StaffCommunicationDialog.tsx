@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ContactLog } from "../../domain/models";
 import { channelLabel, formatDateTimeFull, statusTone } from "../utils/format";
+import type { TeamCommunicationMessage } from "../../services/team-communication/types";
 
 type StaffCommunicationDialogProps = {
   title: string;
@@ -12,15 +12,19 @@ type StaffCommunicationDialogProps = {
   adminUserId: string;
   patientId: string | null;
   visitScheduleId: string | null;
-  logs: ContactLog[];
+  logs: TeamCommunicationMessage[];
   unreadConversationCount?: number;
+  syncError?: string | null;
+  lastSyncedAt?: string | null;
+  isRefreshing?: boolean;
+  onRefresh?: () => void;
   onConversationViewed?: () => void;
   onCreateLog: (input: {
     channel: "phone" | "web_notice";
     subject: string;
     content: string;
     outcome: string;
-  }) => void;
+  }) => Promise<void> | void;
   onClose: () => void;
 };
 
@@ -34,15 +38,19 @@ type StaffCommunicationPanelProps = {
   adminUserId: string;
   patientId: string | null;
   visitScheduleId: string | null;
-  logs: ContactLog[];
+  logs: TeamCommunicationMessage[];
   unreadConversationCount?: number;
+  syncError?: string | null;
+  lastSyncedAt?: string | null;
+  isRefreshing?: boolean;
+  onRefresh?: () => void;
   onConversationViewed?: () => void;
   onCreateLog: (input: {
     channel: "phone" | "web_notice";
     subject: string;
     content: string;
     outcome: string;
-  }) => void;
+  }) => Promise<void> | void;
   onClose?: () => void;
 };
 
@@ -56,7 +64,12 @@ function formatCallDuration(totalSeconds: number) {
   return `${minutes}:${seconds}`;
 }
 
-function resolveLogDirection(log: ContactLog, currentUserLabel: string) {
+function resolveLogDirection(log: TeamCommunicationMessage, currentUserLabel: string) {
+  if (log.sender_role) {
+    return log.outcome.startsWith(`${currentUserLabel} `) || log.sender_role === "admin" && currentUserLabel === "行政人員"
+      ? "outgoing"
+      : "incoming";
+  }
   return log.outcome.startsWith(`${currentUserLabel} `) ? "outgoing" : "incoming";
 }
 
@@ -68,9 +81,9 @@ type CallSessionStatus = "idle" | "outgoing_ringing" | "incoming_ringing" | "con
 
 type CallSession = {
   status: CallSessionStatus;
-  inviteLog: ContactLog | null;
-  acceptedLog: ContactLog | null;
-  endedLog: ContactLog | null;
+  inviteLog: TeamCommunicationMessage | null;
+  acceptedLog: TeamCommunicationMessage | null;
+  endedLog: TeamCommunicationMessage | null;
 };
 
 function resolveCallEventType(subject: string) {
@@ -86,7 +99,7 @@ function resolveCallEventType(subject: string) {
   return null;
 }
 
-function resolveCallSession(logs: ContactLog[], currentUserLabel: string): CallSession {
+function resolveCallSession(logs: TeamCommunicationMessage[], currentUserLabel: string): CallSession {
   const orderedCallLogs = [...logs]
     .filter((log) => log.channel === "phone" && resolveCallEventType(log.subject))
     .sort(
@@ -148,6 +161,10 @@ export function StaffCommunicationPanel({
   visitScheduleId,
   logs,
   unreadConversationCount = 0,
+  syncError,
+  lastSyncedAt,
+  isRefreshing = false,
+  onRefresh,
   onConversationViewed,
   onClose,
   onCreateLog
@@ -213,24 +230,28 @@ export function StaffCommunicationPanel({
     }
   }, [onConversationViewed, unreadConversationCount]);
 
-  const handleSendMessage = () => {
+  const handleSendMessage = async () => {
     const trimmedMessage = draftMessage.trim();
     if (!trimmedMessage) {
       setFeedback("請先輸入要傳給對方的內容。");
       return;
     }
 
-    onCreateLog({
-      channel: "web_notice",
-      subject: `院內對話｜${contextLabel}`,
-      content: trimmedMessage,
-      outcome: `${currentUserLabel} 已送出站內訊息，等待 ${counterpartLabel} 查看。`
-    });
-    setDraftMessage("");
-    setFeedback("站內訊息已送出，已同步寫入聯絡紀錄。");
+    try {
+      await onCreateLog({
+        channel: "web_notice",
+        subject: `院內對話｜${contextLabel}`,
+        content: trimmedMessage,
+        outcome: `${currentUserLabel} 已送出站內訊息，等待 ${counterpartLabel} 查看。`
+      });
+      setDraftMessage("");
+      setFeedback("站內訊息已送出，已同步寫入聯絡紀錄。");
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : "站內訊息送出失敗，請稍後再試。");
+    }
   };
 
-  const handleStartCall = () => {
+  const handleStartCall = async () => {
     if (callSession.status === "outgoing_ringing" || callSession.status === "incoming_ringing") {
       setFeedback("目前已有一筆語音通話邀請尚未處理。");
       return;
@@ -239,45 +260,57 @@ export function StaffCommunicationPanel({
       setFeedback("目前已在通話中，請先結束目前通話。");
       return;
     }
-    onCreateLog({
-      channel: "phone",
-      subject: `${voiceCallInvitePrefix}${contextLabel}`,
-      content: `${currentUserLabel} 在團隊通訊中發起與 ${counterpartLabel} 的語音通話。請前往團隊通訊頁面立即回應。`,
-      outcome: counterpartPhone
-        ? `${currentUserLabel} 已發起語音通話邀請，對象電話：${counterpartPhone}`
-        : `已在團隊通訊內啟動語音通話流程，等待 ${counterpartLabel} 接聽。`
-    });
-    setActiveTab("call");
-    setNowTick(Date.now());
-    setFeedback(`已送出語音通話邀請，等待 ${counterpartLabel} 接聽。`);
+    try {
+      await onCreateLog({
+        channel: "phone",
+        subject: `${voiceCallInvitePrefix}${contextLabel}`,
+        content: `${currentUserLabel} 在團隊通訊中發起與 ${counterpartLabel} 的語音通話。請前往團隊通訊頁面立即回應。`,
+        outcome: counterpartPhone
+          ? `${currentUserLabel} 已發起語音通話邀請，對象電話：${counterpartPhone}`
+          : `已在團隊通訊內啟動語音通話流程，等待 ${counterpartLabel} 接聽。`
+      });
+      setActiveTab("call");
+      setNowTick(Date.now());
+      setFeedback(`已送出語音通話邀請，等待 ${counterpartLabel} 接聽。`);
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : "語音通話邀請送出失敗，請稍後再試。");
+    }
   };
 
-  const handleAcceptCall = () => {
+  const handleAcceptCall = async () => {
     if (callSession.status !== "incoming_ringing") {
       return;
     }
-    onCreateLog({
-      channel: "phone",
-      subject: `${voiceCallAcceptedPrefix}${contextLabel}`,
-      content: `${currentUserLabel} 已接受 ${counterpartLabel} 發起的語音通話邀請，開始建立通話連線。`,
-      outcome: `${currentUserLabel} 已接聽語音通話，正在與 ${counterpartLabel} 通話。`
-    });
-    setActiveTab("call");
-    setNowTick(Date.now());
-    setFeedback("已接受語音通話邀請，正在建立通話連線。");
+    try {
+      await onCreateLog({
+        channel: "phone",
+        subject: `${voiceCallAcceptedPrefix}${contextLabel}`,
+        content: `${currentUserLabel} 已接受 ${counterpartLabel} 發起的語音通話邀請，開始建立通話連線。`,
+        outcome: `${currentUserLabel} 已接聽語音通話，正在與 ${counterpartLabel} 通話。`
+      });
+      setActiveTab("call");
+      setNowTick(Date.now());
+      setFeedback("已接受語音通話邀請，正在建立通話連線。");
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : "接受語音邀請失敗，請稍後再試。");
+    }
   };
 
-  const handleEndCall = () => {
+  const handleEndCall = async () => {
     if (callSession.status !== "connected" && callSession.status !== "outgoing_ringing" && callSession.status !== "incoming_ringing") {
       return;
     }
-    onCreateLog({
-      channel: "phone",
-      subject: `${voiceCallEndedPrefix}${contextLabel}`,
-      content: `${currentUserLabel} 已結束與 ${counterpartLabel} 的語音通話。`,
-      outcome: `${currentUserLabel} 已結束本次語音通話。`
-    });
-    setFeedback(`語音通話已結束，本次通話 ${formatCallDuration(callDurationSeconds)}。`);
+    try {
+      await onCreateLog({
+        channel: "phone",
+        subject: `${voiceCallEndedPrefix}${contextLabel}`,
+        content: `${currentUserLabel} 已結束與 ${counterpartLabel} 的語音通話。`,
+        outcome: `${currentUserLabel} 已結束本次語音通話。`
+      });
+      setFeedback(`語音通話已結束，本次通話 ${formatCallDuration(callDurationSeconds)}。`);
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : "結束語音通話失敗，請稍後再試。");
+    }
   };
 
   return (
@@ -292,44 +325,26 @@ export function StaffCommunicationPanel({
               {counterpartPhone ? `｜${counterpartPhone}` : ""}
             </p>
           </div>
-          {onClose ? (
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-600 ring-1 ring-slate-200"
-            >
-              關閉
-            </button>
-          ) : null}
-        </div>
-
-        <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-slate-600 sm:mt-4 sm:text-xs">
-          <span className="rounded-full bg-slate-100 px-3 py-1.5">發話者：{currentUserLabel}</span>
-          <span className="rounded-full bg-slate-100 px-3 py-1.5">案件：{contextLabel}</span>
-          <span className="rounded-full bg-slate-100 px-3 py-1.5">個案：{patientId ?? "未指定"}</span>
-          <span className="rounded-full bg-slate-100 px-3 py-1.5">排程：{visitScheduleId ?? "未指定"}</span>
-        </div>
-
-        <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm sm:mt-4 sm:py-3">
-          <div className="flex items-center gap-3">
-            <span
-              aria-label={unreadConversationCount > 0 ? "團隊通訊未讀紅燈" : "團隊通訊已讀綠燈"}
-              className={`inline-flex h-3.5 w-3.5 rounded-full ${
-                unreadConversationCount > 0 ? "bg-rose-500 shadow-[0_0_0_4px_rgba(244,63,94,0.15)]" : "bg-emerald-500 shadow-[0_0_0_4px_rgba(16,185,129,0.15)]"
-              }`}
-            />
-            <div>
-              <p className="font-semibold text-brand-ink">未讀訊息燈</p>
-              <p className="text-[11px] text-slate-500 sm:text-xs">依目前團隊通訊的未讀訊息狀態顯示。</p>
-            </div>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {onRefresh ? (
+              <button
+                type="button"
+                onClick={onRefresh}
+                className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-brand-ink"
+              >
+                {isRefreshing ? "同步中..." : "立即同步"}
+              </button>
+            ) : null}
+            {onClose ? (
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-600 ring-1 ring-slate-200"
+              >
+                關閉
+              </button>
+            ) : null}
           </div>
-          <span
-            className={`rounded-full px-3 py-1 text-xs font-semibold ${
-              unreadConversationCount > 0 ? "bg-rose-100 text-rose-700" : "bg-emerald-100 text-emerald-700"
-            }`}
-          >
-            {unreadConversationCount > 0 ? `未讀 ${unreadConversationCount} 則` : "全部已讀"}
-          </span>
         </div>
 
         <div className="mt-3 flex flex-wrap gap-2 sm:mt-4">
@@ -359,6 +374,16 @@ export function StaffCommunicationPanel({
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto bg-[linear-gradient(180deg,#eef6ef_0%,#f8faf8_100%)] px-4 py-3 sm:px-5 sm:py-4">
+        {syncError ? (
+          <div className="mb-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+            {syncError}
+          </div>
+        ) : null}
+        {lastSyncedAt ? (
+          <div className="mb-4 text-right text-xs text-slate-500">
+            最後同步：{formatDateTimeFull(lastSyncedAt)}
+          </div>
+        ) : null}
         {callSession.status === "incoming_ringing" ? (
           <div className="sticky top-0 z-10 mb-4 rounded-3xl border-2 border-rose-300 bg-rose-50 px-4 py-4 text-sm text-rose-800 shadow-sm">
             <div className="flex flex-wrap items-center justify-between gap-3">
