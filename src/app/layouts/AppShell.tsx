@@ -352,8 +352,11 @@ export function AppShell() {
     viewerUserId: currentDoctor?.id ?? "",
     enabled: Boolean(shellRole === "doctor" && currentDoctor && currentAdmin)
   });
-  const doctorTeamCommunicationUnreadCount =
-    shellRole === "doctor" && isTeamCommunicationRoute ? shellConversation.unreadCount : teamCommunicationUnread.count;
+  const doctorTeamCommunicationUnreadCount = isTeamCommunicationRoute
+    ? 0
+    : shellRole === "doctor"
+      ? shellConversation.unreadCount
+      : teamCommunicationUnread.count;
 
   useEffect(() => {
     if (!isTeamCommunicationRoute || !shellRole || !currentUserId) {
