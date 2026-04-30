@@ -436,11 +436,26 @@ describe("DoctorReturnRecordPage", () => {
     const firstBaseSchedule = seeded.visit_schedules.find((schedule) => schedule.patient_id === "pat-001");
     const secondBaseSchedule = seeded.visit_schedules.find((schedule) => schedule.patient_id === "pat-004");
     const thirdBaseSchedule = seeded.visit_schedules.find((schedule) => schedule.patient_id === "pat-002");
-    if (!firstBaseSchedule || !secondBaseSchedule || !thirdBaseSchedule) {
-      throw new Error("找不到測試用個案排程");
+    const baseRoutePlan = seeded.saved_route_plans[0];
+    if (!firstBaseSchedule || !secondBaseSchedule || !thirdBaseSchedule || !baseRoutePlan) {
+      throw new Error("找不到測試用個案排程或路線");
     }
 
     seeded.visit_schedules.unshift(
+      {
+        ...thirdBaseSchedule,
+        id: "vs-route-ghost-1",
+        assigned_doctor_id: "doc-001",
+        patient_id: "pat-003",
+        route_group_id: "route-deleted-ghost",
+        route_order: 1,
+        scheduled_start_at: "2026-05-08T02:00:00.000Z",
+        scheduled_end_at: "2026-05-08T02:40:00.000Z",
+        status: "completed",
+        visit_type: "居家訪視",
+        service_time_slot: "上午",
+        updated_at: "2026-05-08T02:45:00.000Z"
+      },
       {
         ...thirdBaseSchedule,
         id: "vs-route-b-1",
@@ -482,6 +497,71 @@ describe("DoctorReturnRecordPage", () => {
         visit_type: "居家訪視",
         service_time_slot: "上午",
         updated_at: "2026-05-10T03:45:00.000Z"
+      }
+    );
+    seeded.saved_route_plans.unshift(
+      {
+        ...baseRoutePlan,
+        id: "saved-route-am-latest",
+        doctor_id: "doc-001",
+        route_group_id: "route-am-latest",
+        route_name: "2026/05/10 上午出巡",
+        route_date: "2026-05-10",
+        route_weekday: "星期六",
+        service_time_slot: "上午",
+        schedule_ids: ["vs-route-a-1", "vs-route-a-2"],
+        route_items: [
+          {
+            patient_id: "pat-001",
+            schedule_id: "vs-route-a-1",
+            checked: true,
+            route_order: 1,
+            status: "completed",
+            patient_name: "王麗珠",
+            address: "高雄市旗山區延平一路 128 號"
+          },
+          {
+            patient_id: "pat-004",
+            schedule_id: "vs-route-a-2",
+            checked: true,
+            route_order: 2,
+            status: "completed",
+            patient_name: "周文德",
+            address: "高雄市美濃區中正路一段 210 號"
+          }
+        ],
+        execution_status: "archived",
+        executed_at: "2026-05-10T03:45:00.000Z",
+        saved_at: "2026-05-10T03:45:00.000Z",
+        created_at: "2026-05-10T01:30:00.000Z",
+        updated_at: "2026-05-10T03:45:00.000Z"
+      },
+      {
+        ...baseRoutePlan,
+        id: "saved-route-pm-older",
+        doctor_id: "doc-001",
+        route_group_id: "route-pm-older",
+        route_name: "2026/05/09 下午出巡",
+        route_date: "2026-05-09",
+        route_weekday: "星期五",
+        service_time_slot: "下午",
+        schedule_ids: ["vs-route-b-1"],
+        route_items: [
+          {
+            patient_id: "pat-002",
+            schedule_id: "vs-route-b-1",
+            checked: true,
+            route_order: 1,
+            status: "completed",
+            patient_name: "陳正雄",
+            address: "高雄市旗山區中華路 76 號"
+          }
+        ],
+        execution_status: "archived",
+        executed_at: "2026-05-09T06:45:00.000Z",
+        saved_at: "2026-05-09T06:45:00.000Z",
+        created_at: "2026-05-09T05:30:00.000Z",
+        updated_at: "2026-05-09T06:45:00.000Z"
       }
     );
     seeded.visit_records.unshift(
@@ -611,11 +691,18 @@ describe("DoctorReturnRecordPage", () => {
     renderWithProviders(<DoctorReturnRecordPage />, "/doctor/return-records");
 
     const routeSelect = screen.getByLabelText("選擇路線");
+    const routeOptionLabels = within(routeSelect)
+      .getAllByRole("option")
+      .map((option) => option.textContent);
     const patientSelect = screen.getByLabelText("選擇個案");
     const initialPatientOptions = within(patientSelect)
       .getAllByRole("option")
       .map((option) => option.textContent);
 
+    expect(routeOptionLabels).toEqual(
+      expect.arrayContaining(["2026/05/10 上午出巡｜2 位個案", "2026/05/09 下午出巡｜1 位個案"])
+    );
+    expect(routeOptionLabels).not.toEqual(expect.arrayContaining([expect.stringContaining("2026/05/08")]));
     expect(initialPatientOptions).toEqual(
       expect.arrayContaining(["A0001｜王○珠", "A0004｜周○德"])
     );

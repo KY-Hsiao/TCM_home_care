@@ -149,7 +149,7 @@ export function DoctorRecordPage() {
             />
           </label>
 
-          <div className="grid gap-4 md:grid-cols-2">
+          <div className="grid gap-4 lg:grid-cols-2">
             <label className="block text-sm">
               <span className="mb-1 block font-medium text-brand-ink">主訴</span>
               <textarea {...register("chief_complaint")} rows={3} className="w-full rounded-2xl border border-slate-200 px-4 py-3" />
@@ -160,7 +160,7 @@ export function DoctorRecordPage() {
             </label>
           </div>
 
-          <div className="grid gap-4 md:grid-cols-2">
+          <div className="grid gap-4 lg:grid-cols-2">
             <label className="block text-sm">
               <span className="mb-1 block font-medium text-brand-ink">食慾</span>
               <textarea {...register("appetite_status")} rows={3} className="w-full rounded-2xl border border-slate-200 px-4 py-3" />
@@ -171,7 +171,7 @@ export function DoctorRecordPage() {
             </label>
           </div>
 
-          <div className="grid gap-4 md:grid-cols-2">
+          <div className="grid gap-4 lg:grid-cols-2">
             <label className="block text-sm">
               <span className="mb-1 block font-medium text-brand-ink">疼痛</span>
               <textarea {...register("pain_status")} rows={3} className="w-full rounded-2xl border border-slate-200 px-4 py-3" />
@@ -192,7 +192,7 @@ export function DoctorRecordPage() {
             <textarea {...register("treatment_provided")} rows={4} className="w-full rounded-2xl border border-slate-200 px-4 py-3" />
           </label>
 
-          <div className="grid gap-4 md:grid-cols-[1fr_220px]">
+          <div className="grid gap-4 lg:grid-cols-[1fr_220px]">
             <label className="block text-sm">
               <span className="mb-1 block font-medium text-brand-ink">下次追蹤事項</span>
               <textarea {...register("follow_up_note")} rows={3} className="w-full rounded-2xl border border-slate-200 px-4 py-3" />

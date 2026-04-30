@@ -98,7 +98,7 @@ type RouteOption = {
   key: string;
   routeName: string;
   routeDate: string;
-  serviceTimeSlot: string;
+  serviceTimeSlot: "上午" | "下午";
   routeGroupId: string | null;
   schedules: VisitSchedule[];
 };
@@ -431,43 +431,58 @@ export function DoctorReturnRecordPage() {
     [repositories, searchParams, session.activeDoctorId]
   );
   const routeOptions = useMemo(() => {
-    const routePlanByGroupId = new Map(
-      repositories.visitRepository
-        .getSavedRoutePlans({ doctorId: session.activeDoctorId })
-        .filter((routePlan) => Boolean(routePlan.route_group_id))
-        .map((routePlan) => [routePlan.route_group_id as string, routePlan])
+    const savedRoutePlans = repositories.visitRepository
+      .getSavedRoutePlans({ doctorId: session.activeDoctorId })
+      .filter((routePlan) => Boolean(routePlan.route_group_id));
+    const homeVisitScheduleById = new Map(
+      homeVisitSchedules.map((schedule) => [schedule.id, schedule] as const)
     );
-    const routeGroups = new Map<string, VisitSchedule[]>();
+    const homeVisitSchedulesByRouteGroupId = homeVisitSchedules.reduce<Map<string, VisitSchedule[]>>(
+      (result, schedule) => {
+        const routeGroupId = schedule.route_group_id;
+        const existingSchedules = result.get(routeGroupId) ?? [];
+        result.set(routeGroupId, [...existingSchedules, schedule]);
+        return result;
+      },
+      new Map<string, VisitSchedule[]>()
+    );
 
-    homeVisitSchedules.forEach((schedule) => {
-      const routeKey = buildRouteOptionKey(schedule);
-      const existingSchedules = routeGroups.get(routeKey) ?? [];
-      routeGroups.set(routeKey, [...existingSchedules, schedule]);
-    });
+    const routeOptionDrafts: Array<RouteOption | null> = savedRoutePlans.map((routePlan) => {
+        const schedulesFromRouteItems = routePlan.route_items
+          .map((item) => (item.schedule_id ? homeVisitScheduleById.get(item.schedule_id) : null))
+          .filter((schedule): schedule is VisitSchedule => Boolean(schedule));
+        const fallbackSchedules = homeVisitSchedulesByRouteGroupId.get(routePlan.route_group_id) ?? [];
+        const orderedSchedules = (schedulesFromRouteItems.length > 0
+          ? schedulesFromRouteItems
+          : [...fallbackSchedules].sort((left, right) => {
+              const leftOrder = left.route_order ?? Number.MAX_SAFE_INTEGER;
+              const rightOrder = right.route_order ?? Number.MAX_SAFE_INTEGER;
+              if (leftOrder !== rightOrder) {
+                return leftOrder - rightOrder;
+              }
+              return new Date(left.scheduled_start_at).getTime() - new Date(right.scheduled_start_at).getTime();
+            })
+        ).filter(
+          (schedule, index, collection) =>
+            collection.findIndex((item) => item.id === schedule.id) === index
+        );
 
-    return [...routeGroups.entries()]
-      .map(([key, schedules]) => {
-        const orderedSchedules = [...schedules].sort((left, right) => {
-          const leftOrder = left.route_order ?? Number.MAX_SAFE_INTEGER;
-          const rightOrder = right.route_order ?? Number.MAX_SAFE_INTEGER;
-          if (leftOrder !== rightOrder) {
-            return leftOrder - rightOrder;
-          }
-          return new Date(left.scheduled_start_at).getTime() - new Date(right.scheduled_start_at).getTime();
-        });
-        const referenceSchedule = orderedSchedules[0];
-        const routePlan = referenceSchedule.route_group_id
-          ? routePlanByGroupId.get(referenceSchedule.route_group_id)
-          : undefined;
+        if (!orderedSchedules.length) {
+          return null;
+        }
+
         return {
-          key,
-          routeName: buildRouteOptionName(referenceSchedule, routePlan?.route_name),
-          routeDate: routePlan?.route_date ?? referenceSchedule.scheduled_start_at.slice(0, 10),
-          serviceTimeSlot: routePlan?.service_time_slot ?? referenceSchedule.service_time_slot,
-          routeGroupId: referenceSchedule.route_group_id ?? null,
+          key: `route-group:${routePlan.route_group_id}`,
+          routeName: routePlan.route_name,
+          routeDate: routePlan.route_date,
+          serviceTimeSlot: routePlan.service_time_slot,
+          routeGroupId: routePlan.route_group_id,
           schedules: orderedSchedules
         } satisfies RouteOption;
-      })
+      });
+
+    return routeOptionDrafts
+      .filter((option): option is RouteOption => option !== null)
       .sort((left, right) => {
         const leftLatest = Math.max(
           ...left.schedules.map((schedule) => new Date(schedule.updated_at).getTime())
@@ -1044,7 +1059,7 @@ export function DoctorReturnRecordPage() {
       <Panel title="醫師回院產生病歷">
         <form className="space-y-4 lg:space-y-5" onSubmit={handleSubmit(onSubmit)}>
           <div className="rounded-[1.5rem] border border-slate-200 bg-slate-50 p-4 lg:rounded-3xl lg:p-5">
-            <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] md:items-end">
+            <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] lg:items-end">
               <label className="block text-sm">
                 <span className="mb-1 block font-medium text-brand-ink">選擇路線</span>
                 <select
@@ -1083,13 +1098,13 @@ export function DoctorReturnRecordPage() {
             </div>
 
             {selectedProfile ? (
-              <div className="mt-4 grid gap-3 text-sm text-slate-600 md:grid-cols-2">
+              <div className="mt-4 grid gap-3 text-sm text-slate-600 lg:grid-cols-2">
                 <p>路線：{selectedRoute?.routeName ?? "未指定"}</p>
                 <p>本路線個案數：{routePatients.length}</p>
                 <p>個案：{maskPatientName(selectedProfile.patient.name)}</p>
                 <p>生日：{formatDateOnly(selectedProfile.patient.date_of_birth)}</p>
-                <p>重要病史：{selectedProfile.patient.important_medical_history}</p>
-                <p>上次追蹤摘要：{selectedProfile.patient.last_visit_summary}</p>
+                <p className="break-words">重要病史：{selectedProfile.patient.important_medical_history}</p>
+                <p className="break-words">上次追蹤摘要：{selectedProfile.patient.last_visit_summary}</p>
               </div>
             ) : null}
             {previousRecord ? (
@@ -1105,7 +1120,7 @@ export function DoctorReturnRecordPage() {
             ) : null}
           </div>
 
-          <div className="grid gap-3 md:grid-cols-2 lg:gap-4">
+          <div className="grid gap-3 lg:grid-cols-2 lg:gap-4">
             <label className="block text-sm">
               <span className="mb-1 block font-medium text-brand-ink">開始治療時間</span>
               <input
@@ -1183,7 +1198,7 @@ export function DoctorReturnRecordPage() {
             ) : null}
           </div>
 
-          <div className="grid gap-3 md:grid-cols-2 lg:gap-4">
+          <div className="grid gap-3 lg:grid-cols-2 lg:gap-4">
             {fourDiagnosisSections.map((section) => (
               <fieldset key={section.field} className="rounded-[1.5rem] border border-slate-200 p-4 lg:rounded-3xl">
                 <legend className="px-2 text-sm font-semibold text-brand-ink">

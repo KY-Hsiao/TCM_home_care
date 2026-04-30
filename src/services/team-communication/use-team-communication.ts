@@ -55,6 +55,23 @@ export function useTeamCommunicationConversation(input: {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
+  const conversationQuery = useMemo(
+    () => ({
+      doctorId: input.doctorId,
+      adminUserId: input.adminUserId,
+      viewerRole: input.viewerRole,
+      viewerUserId: input.viewerUserId
+    }),
+    [input.adminUserId, input.doctorId, input.viewerRole, input.viewerUserId]
+  );
+
+  const resolveUnreadMessages = (sourceMessages: TeamCommunicationMessage[]) =>
+    sourceMessages.filter(
+      (message) =>
+        !message.is_read &&
+        message.receiver_role === input.viewerRole &&
+        message.receiver_user_id === input.viewerUserId
+    );
 
   const refresh = async (options?: { silent?: boolean }) => {
     if (!enabled) {
@@ -64,21 +81,9 @@ export function useTeamCommunicationConversation(input: {
       setIsRefreshing(true);
     }
     try {
-      const nextMessages = await repositoryRef.current.listConversation({
-        doctorId: input.doctorId,
-        adminUserId: input.adminUserId,
-        viewerRole: input.viewerRole,
-        viewerUserId: input.viewerUserId
-      });
+      const nextMessages = await repositoryRef.current.listConversation(conversationQuery);
       setMessages(nextMessages);
-      setUnreadCount(
-        nextMessages.filter(
-          (message) =>
-            !message.is_read &&
-            message.receiver_role === input.viewerRole &&
-            message.receiver_user_id === input.viewerUserId
-        ).length
-      );
+      setUnreadCount(resolveUnreadMessages(nextMessages).length);
       setLastSyncedAt(new Date().toISOString());
       setSyncError(null);
     } catch (error) {
@@ -105,16 +110,19 @@ export function useTeamCommunicationConversation(input: {
       window.clearInterval(intervalId);
       window.removeEventListener(TEAM_COMMUNICATION_SYNC_EVENT, handleSync);
     };
-  }, [enabled, input.adminUserId, input.db, input.doctorId, input.repositories, input.viewerRole, input.viewerUserId]);
+  }, [conversationQuery, enabled, input.db, input.repositories]);
 
   const markConversationRead = async () => {
-    const unreadMessages = messages.filter(
-      (message) =>
-        !message.is_read &&
-        message.receiver_role === input.viewerRole &&
-        message.receiver_user_id === input.viewerUserId
-    );
+    const latestMessages =
+      messages.length > 0
+        ? messages
+        : await repositoryRef.current.listConversation(conversationQuery);
+    const unreadMessages = resolveUnreadMessages(latestMessages);
     if (!unreadMessages.length) {
+      setMessages(latestMessages);
+      setUnreadCount(0);
+      await refresh({ silent: true });
+      emitTeamCommunicationSync();
       return;
     }
     await Promise.all(
@@ -122,14 +130,16 @@ export function useTeamCommunicationConversation(input: {
         repositoryRef.current.markMessageRead(message.id, input.viewerRole, input.viewerUserId)
       )
     );
-    setMessages((current) =>
-      current.map((message) =>
+    const readAt = new Date().toISOString();
+    setMessages(
+      latestMessages.map((message) =>
         unreadMessages.some((item) => item.id === message.id)
-          ? { ...message, is_read: true, read_at: new Date().toISOString() }
+          ? { ...message, is_read: true, read_at: readAt }
           : message
       )
     );
     setUnreadCount(0);
+    await refresh({ silent: true });
     emitTeamCommunicationSync();
   };
 

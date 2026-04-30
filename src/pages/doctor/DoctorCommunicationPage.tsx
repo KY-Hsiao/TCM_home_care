@@ -1,7 +1,6 @@
 import { useMemo } from "react";
 import { useAppContext } from "../../app/use-app-context";
 import { StaffCommunicationPanel } from "../../shared/components/StaffCommunicationDialog";
-import { formatDateTimeFull } from "../../shared/utils/format";
 import { maskPatientName } from "../../shared/utils/patient-name";
 import { Panel } from "../../shared/ui/Panel";
 import { useTeamCommunicationConversation } from "../../services/team-communication/use-team-communication";
@@ -105,57 +104,32 @@ export function DoctorTeamCommunicationPage() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="min-w-0 space-y-4">
       <Panel title="團隊通訊" className="p-3 lg:p-4">
-        <div className="space-y-3">
-          <div className="grid gap-2.5 md:grid-cols-3">
-            <div className="rounded-[1.4rem] border border-slate-200 bg-white px-4 py-3 text-sm">
-              <p className="text-xs text-slate-500">對話對象</p>
-              <p className="mt-2 font-semibold text-brand-ink">行政人員</p>
-            </div>
-            <div className="rounded-[1.4rem] border border-slate-200 bg-white px-4 py-3 text-sm">
-              <p className="text-xs text-slate-500">目前案件</p>
-              <p className="mt-2 font-semibold text-brand-ink">
-                {activeSchedule && activePatient
-                  ? `第 ${activeSchedule.route_order} 站 ${maskPatientName(activePatient.name)}`
-                  : "院內行政協調"}
-              </p>
-            </div>
-            <div className="rounded-[1.4rem] border border-slate-200 bg-white px-4 py-3 text-sm">
-              <p className="text-xs text-slate-500">最近聯絡時間</p>
-              <p className="mt-2 font-semibold text-brand-ink">
-                {conversation.messages.at(-1)?.contacted_at
-                  ? formatDateTimeFull(conversation.messages.at(-1)!.contacted_at)
-                  : "尚未聯絡"}
-              </p>
-            </div>
-          </div>
-
-          <div className="h-[min(72dvh,820px)] min-h-[420px]">
-            <StaffCommunicationPanel
-              title="團隊通訊｜行政人員"
-              counterpartLabel="行政人員"
-              counterpartPhone={currentAdmin.phone}
-              currentUserLabel={currentDoctor.name}
-              contextLabel={
-                activeSchedule && activePatient
-                  ? `第 ${activeSchedule.route_order} 站 ${maskPatientName(activePatient.name)}`
-                  : "院內行政協調"
-              }
-              doctorId={currentDoctor.id}
-              adminUserId={currentAdmin.id}
-              patientId={activePatient?.id ?? null}
-              visitScheduleId={activeSchedule?.id ?? null}
-              logs={conversation.messages}
-              unreadConversationCount={conversation.unreadCount}
-              syncError={conversation.syncError}
-              lastSyncedAt={conversation.lastSyncedAt}
-              isRefreshing={conversation.isRefreshing}
-              onRefresh={() => void conversation.refresh()}
-              onConversationViewed={() => void conversation.markConversationRead()}
-              onCreateLog={createDoctorAdminContactLog}
-            />
-          </div>
+        <div className="h-[min(72dvh,820px)] min-h-[420px]">
+          <StaffCommunicationPanel
+            title="團隊通訊｜行政人員"
+            counterpartLabel="行政人員"
+            counterpartPhone={currentAdmin.phone}
+            currentUserLabel={currentDoctor.name}
+            contextLabel={
+              activeSchedule && activePatient
+                ? `第 ${activeSchedule.route_order} 站 ${maskPatientName(activePatient.name)}`
+                : "院內行政協調"
+            }
+            doctorId={currentDoctor.id}
+            adminUserId={currentAdmin.id}
+            patientId={activePatient?.id ?? null}
+            visitScheduleId={activeSchedule?.id ?? null}
+            logs={conversation.messages}
+            unreadConversationCount={conversation.unreadCount}
+            syncError={conversation.syncError}
+            lastSyncedAt={conversation.lastSyncedAt}
+            isRefreshing={conversation.isRefreshing}
+            onRefresh={() => void conversation.refresh()}
+            onConversationViewed={() => void conversation.markConversationRead()}
+            onCreateLog={createDoctorAdminContactLog}
+          />
         </div>
       </Panel>
     </div>

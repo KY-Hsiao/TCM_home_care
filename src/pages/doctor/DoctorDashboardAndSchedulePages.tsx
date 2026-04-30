@@ -674,7 +674,7 @@ function DoctorRouteSelector({ embedded = false }: { embedded?: boolean }) {
                     isActive ? "border-brand-moss bg-brand-sand/40" : "border-slate-200 bg-white"
                   }`}
                 >
-                  <div className="grid grid-cols-[minmax(0,1.55fr)_64px_minmax(0,0.95fr)] items-stretch gap-2 lg:grid-cols-[minmax(0,1.35fr)_92px_minmax(0,1fr)] lg:gap-3">
+                  <div className="grid gap-2 lg:grid-cols-[minmax(0,1.35fr)_92px_minmax(0,1fr)] lg:gap-3">
                     <button
                       type="button"
                       onClick={() => handleOpenRouteList(routePlan.id)}
@@ -694,17 +694,17 @@ function DoctorRouteSelector({ embedded = false }: { embedded?: boolean }) {
                     <button
                       type="button"
                       onClick={() => handleResetRouteProgress(routePlan.id)}
-                      className="rounded-[0.95rem] border border-slate-200 bg-white px-1.5 py-2 text-[13px] font-semibold text-brand-ink transition hover:border-brand-moss hover:text-brand-forest sm:rounded-[1.25rem]"
+                      className="rounded-[0.95rem] border border-slate-200 bg-white px-3 py-2 text-[13px] font-semibold text-brand-ink transition hover:border-brand-moss hover:text-brand-forest sm:rounded-[1.25rem] lg:px-1.5"
                     >
                       重置路線
                     </button>
-                    <div className="rounded-[0.95rem] border border-slate-200 bg-white/70 px-2.5 py-2 text-[10px] leading-tight text-slate-500 ring-1 ring-white/60 sm:rounded-[1.25rem] lg:px-4 lg:py-3 lg:text-xs">
+                    <div className="rounded-[0.95rem] border border-slate-200 bg-white/70 px-2.5 py-2 text-[10px] leading-tight text-slate-500 ring-1 ring-white/60 sm:rounded-[1.25rem] lg:col-span-1 lg:px-4 lg:py-3 lg:text-xs">
                       <div className="space-y-0.5 lg:space-y-1">
-                        <p>起點：{routePlan.start_address}</p>
-                        <p>終點：{routePlan.end_address}</p>
+                        <p className="break-words">起點：{routePlan.start_address}</p>
+                        <p className="break-words">終點：{routePlan.end_address}</p>
                         <p>行車 {routePlan.total_minutes} 分鐘</p>
                         <p>{routePlan.total_distance_kilometers.toFixed(1)} 公里</p>
-                        <p>{navigationState.routeNavigationHint}</p>
+                        <p className="break-words">{navigationState.routeNavigationHint}</p>
                       </div>
                     </div>
                   </div>
@@ -772,15 +772,15 @@ function DoctorRouteSelector({ embedded = false }: { embedded?: boolean }) {
                         : "border-slate-200 bg-slate-100 text-slate-400"
                     }`}
                   >
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div>
+                    <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+                      <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-2">
                           <p className="text-sm font-semibold text-brand-ink lg:text-base">{maskPatientName(item.patient_name)}</p>
                           <Badge value={item.status} compact />
                         </div>
-                        <p className="mt-1 text-sm text-slate-500">{item.address}</p>
+                        <p className="mt-1 break-words text-sm text-slate-500">{item.address}</p>
                       </div>
-                      <div className="text-right">
+                      <div className="sm:text-right">
                         <p className="text-sm font-semibold text-brand-forest">
                           {item.status !== "paused" && detail
                             ? `第 ${getRouteDisplayOrder(orderedSchedules, detail.schedule.id) ?? item.route_order ?? "-"} 站`

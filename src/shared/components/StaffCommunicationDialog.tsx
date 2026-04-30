@@ -157,6 +157,8 @@ export function StaffCommunicationPanel({
   counterpartPhone,
   currentUserLabel,
   contextLabel,
+  doctorId,
+  adminUserId,
   patientId,
   visitScheduleId,
   logs,
@@ -174,6 +176,7 @@ export function StaffCommunicationPanel({
   const [feedback, setFeedback] = useState<string | null>(null);
   const [nowTick, setNowTick] = useState(() => Date.now());
   const conversationBottomRef = useRef<HTMLDivElement | null>(null);
+  const openedConversationKeyRef = useRef<string | null>(null);
   const displayLogs = useMemo(() => [...logs].slice(0, 30).reverse(), [logs]);
   const callSession = useMemo(
     () => resolveCallSession(logs, currentUserLabel),
@@ -223,6 +226,15 @@ export function StaffCommunicationPanel({
       });
     }
   }, [displayLogs, activeTab]);
+
+  useEffect(() => {
+    const conversationKey = `${doctorId}:${adminUserId}`;
+    if (openedConversationKeyRef.current === conversationKey) {
+      return;
+    }
+    openedConversationKeyRef.current = conversationKey;
+    onConversationViewed?.();
+  }, [adminUserId, doctorId, onConversationViewed]);
 
   useEffect(() => {
     if (unreadConversationCount > 0) {
@@ -316,21 +328,17 @@ export function StaffCommunicationPanel({
   return (
     <div className="flex h-full min-h-0 w-full flex-col overflow-hidden rounded-[28px] bg-[#f4f7f1] shadow-2xl lg:rounded-[32px]">
       <div className="shrink-0 border-b border-slate-200 bg-white/95 px-4 py-3 backdrop-blur sm:px-5 sm:py-4">
-        <div className="flex items-center justify-between gap-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
           <div className="min-w-0">
             <p className="text-sm font-medium text-brand-coral">團隊通訊</p>
-            <h2 className="mt-1 truncate text-xl font-semibold text-brand-ink sm:text-2xl">{title}</h2>
-            <p className="mt-1 text-xs text-slate-500 sm:text-sm">
-              對話對象：{counterpartLabel}
-              {counterpartPhone ? `｜${counterpartPhone}` : ""}
-            </p>
+            <h2 className="mt-1 break-words text-lg font-semibold text-brand-ink sm:text-2xl">{title}</h2>
           </div>
-          <div className="flex flex-wrap items-center justify-end gap-2">
+          <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
             {onRefresh ? (
               <button
                 type="button"
                 onClick={onRefresh}
-                className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-brand-ink"
+                className="w-full rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-brand-ink sm:w-auto"
               >
                 {isRefreshing ? "同步中..." : "立即同步"}
               </button>
@@ -339,7 +347,7 @@ export function StaffCommunicationPanel({
               <button
                 type="button"
                 onClick={onClose}
-                className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-600 ring-1 ring-slate-200"
+                className="w-full rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-600 ring-1 ring-slate-200 sm:w-auto"
               >
                 關閉
               </button>
@@ -380,7 +388,7 @@ export function StaffCommunicationPanel({
           </div>
         ) : null}
         {lastSyncedAt ? (
-          <div className="mb-4 text-right text-xs text-slate-500">
+          <div className="mb-4 break-words text-right text-xs text-slate-500">
             最後同步：{formatDateTimeFull(lastSyncedAt)}
           </div>
         ) : null}
@@ -422,8 +430,8 @@ export function StaffCommunicationPanel({
                   key={log.id}
                   className={`flex ${isOutgoing ? "justify-end" : "justify-start"}`}
                 >
-                  <div className={`flex max-w-[88%] flex-col gap-1 ${isOutgoing ? "items-end" : "items-start"}`}>
-                    <div className="flex items-center gap-2 px-1 text-[11px] text-slate-500">
+                  <div className={`flex max-w-[94%] min-w-0 flex-col gap-1 sm:max-w-[88%] ${isOutgoing ? "items-end" : "items-start"}`}>
+                    <div className="flex flex-wrap items-center gap-2 px-1 text-[11px] text-slate-500">
                       <span className={`rounded-full px-2 py-0.5 font-semibold ${statusTone(log.channel)}`}>
                         {channelLabel(log.channel)}
                       </span>
@@ -437,11 +445,11 @@ export function StaffCommunicationPanel({
                           : "rounded-bl-md border border-slate-200 bg-white text-slate-700"
                       }`}
                     >
-                      <p className={`text-xs font-semibold ${isOutgoing ? "text-white/80" : "text-slate-500"}`}>
+                      <p className={`break-words text-xs font-semibold ${isOutgoing ? "text-white/80" : "text-slate-500"}`}>
                         {log.subject}
                       </p>
-                      <p className="mt-1 whitespace-pre-wrap leading-6">{log.content}</p>
-                      <p className={`mt-2 text-[11px] ${isOutgoing ? "text-white/75" : "text-slate-400"}`}>
+                      <p className="mt-1 break-words whitespace-pre-wrap leading-6">{log.content}</p>
+                      <p className={`mt-2 break-words text-[11px] ${isOutgoing ? "text-white/75" : "text-slate-400"}`}>
                         {log.outcome}
                       </p>
                     </div>
@@ -490,7 +498,7 @@ export function StaffCommunicationPanel({
               <button
                 type="button"
                 onClick={handleSendMessage}
-                className="rounded-full bg-brand-forest px-5 py-3 text-sm font-semibold text-white"
+                className="w-full rounded-full bg-brand-forest px-5 py-3 text-sm font-semibold text-white sm:w-auto"
               >
                 送出站內訊息
               </button>
@@ -499,7 +507,7 @@ export function StaffCommunicationPanel({
         ) : (
           <div className="space-y-3">
               <div className="rounded-3xl border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-600">
-                <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
                   <div>
                     <p className="text-xs text-slate-500">目前狀態</p>
                     <p className="mt-1 font-semibold text-brand-ink">
@@ -514,7 +522,7 @@ export function StaffCommunicationPanel({
                             : "尚未開始"}
                   </p>
                   </div>
-                  <div className="text-right">
+                  <div className="sm:text-right">
                   <p className="text-xs text-slate-500">
                     {callSession.status === "connected" ? "通話時間" : "等待時間"}
                   </p>
@@ -536,7 +544,7 @@ export function StaffCommunicationPanel({
                 <button
                   type="button"
                   onClick={handleEndCall}
-                  className="rounded-full bg-slate-900 px-5 py-3 text-sm font-semibold text-white"
+                  className="w-full rounded-full bg-slate-900 px-5 py-3 text-sm font-semibold text-white sm:w-auto"
                 >
                   結束通話
                 </button>
@@ -544,7 +552,7 @@ export function StaffCommunicationPanel({
                 <button
                   type="button"
                   onClick={handleAcceptCall}
-                  className="rounded-full bg-rose-600 px-5 py-3 text-sm font-semibold text-white"
+                  className="w-full rounded-full bg-rose-600 px-5 py-3 text-sm font-semibold text-white sm:w-auto"
                 >
                   接受語音邀請
                 </button>
@@ -552,7 +560,7 @@ export function StaffCommunicationPanel({
                 <button
                   type="button"
                   onClick={handleEndCall}
-                  className="rounded-full border border-slate-300 bg-white px-5 py-3 text-sm font-semibold text-slate-700"
+                  className="w-full rounded-full border border-slate-300 bg-white px-5 py-3 text-sm font-semibold text-slate-700 sm:w-auto"
                 >
                   取消邀請
                 </button>
@@ -560,7 +568,7 @@ export function StaffCommunicationPanel({
                 <button
                   type="button"
                   onClick={handleStartCall}
-                  className="rounded-full bg-brand-coral px-5 py-3 text-sm font-semibold text-white"
+                  className="w-full rounded-full bg-brand-coral px-5 py-3 text-sm font-semibold text-white sm:w-auto"
                 >
                   開始語音通話
                 </button>

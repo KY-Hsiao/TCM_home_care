@@ -161,6 +161,8 @@ function resolveTrackingTimeSlot(schedule: Pick<VisitSchedule, "service_time_slo
 function resolveTrackingLocationLogs(input: {
   doctorId: string;
   routeDate: string;
+  routeTimeSlot: RouteTimeSlot;
+  routeSchedules: VisitSchedule[];
   routeScheduleIds: Set<string>;
   repositories: ReturnType<typeof useAppContext>["repositories"];
 }) {
@@ -174,6 +176,34 @@ function resolveTrackingLocationLogs(input: {
   );
   if (scheduleLinkedLogs.length) {
     return scheduleLinkedLogs;
+  }
+
+  const routeStartAtCandidates = input.routeSchedules
+    .map((schedule) => new Date(schedule.scheduled_start_at).getTime())
+    .filter((value) => Number.isFinite(value));
+  if (routeStartAtCandidates.length) {
+    const earliestStartAt = Math.min(...routeStartAtCandidates);
+    const latestStartAt = Math.max(...routeStartAtCandidates);
+    const routeWindowStartAt = earliestStartAt - 2 * 60 * 60 * 1000;
+    const routeWindowEndAt = latestStartAt + 4 * 60 * 60 * 1000;
+    const routeWindowLogs = sortedLogs.filter((log) => {
+      const recordedAt = new Date(log.recorded_at).getTime();
+      return recordedAt >= routeWindowStartAt && recordedAt <= routeWindowEndAt;
+    });
+    if (routeWindowLogs.length) {
+      return routeWindowLogs;
+    }
+  }
+
+  const timeSlotLogs = sortedLogs.filter((log) => {
+    if (log.recorded_at.slice(0, 10) !== input.routeDate) {
+      return false;
+    }
+    const hour = new Date(log.recorded_at).getHours();
+    return input.routeTimeSlot === "上午" ? hour < 13 : hour >= 12;
+  });
+  if (timeSlotLogs.length) {
+    return timeSlotLogs;
   }
 
   const sameDateLogs = sortedLogs.filter((log) => log.recorded_at.slice(0, 10) === input.routeDate);
@@ -666,6 +696,12 @@ export function AdminDoctorTrackingPage() {
   const [routeDate, setRouteDate] = useState<string>(buildDateInputValue());
   const [routeTimeSlot, setRouteTimeSlot] = useState<RouteTimeSlot>("上午");
   const [selectedDoctorId, setSelectedDoctorId] = useState<string>("");
+  const [allowTrackingMapInteraction, setAllowTrackingMapInteraction] = useState<boolean>(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+      return true;
+    }
+    return !window.matchMedia("(min-width: 1024px) and (hover: hover) and (pointer: fine)").matches;
+  });
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const dragStateRef = useRef<{
     pointerId: number;
@@ -746,6 +782,8 @@ export function AdminDoctorTrackingPage() {
         const locationLogs = resolveTrackingLocationLogs({
           doctorId: doctor.id,
           routeDate,
+          routeTimeSlot,
+          routeSchedules,
           routeScheduleIds,
           repositories
         });
@@ -878,6 +916,17 @@ export function AdminDoctorTrackingPage() {
   }, []);
 
   useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+      return;
+    }
+    const mediaQuery = window.matchMedia("(min-width: 1024px) and (hover: hover) and (pointer: fine)");
+    const syncInteractionMode = () => setAllowTrackingMapInteraction(!mediaQuery.matches);
+    syncInteractionMode();
+    mediaQuery.addEventListener("change", syncInteractionMode);
+    return () => mediaQuery.removeEventListener("change", syncInteractionMode);
+  }, []);
+
+  useEffect(() => {
     if (!selectedDoctor) {
       setTrackingMapView(null);
       autoCenteredDoctorKeyRef.current = "";
@@ -960,16 +1009,16 @@ export function AdminDoctorTrackingPage() {
 
   return (
     <div className="space-y-4">
-      <Panel title="同時段醫師追蹤總覽" className="p-3 lg:p-4">
-        <div className="space-y-3">
-          <div className="grid gap-3 lg:grid-cols-[180px_140px_1fr]">
+      <Panel title="同時段醫師追蹤總覽" className="p-2.5 lg:p-3.5">
+        <div className="space-y-2.5">
+          <div className="grid gap-2.5 lg:grid-cols-[180px_140px_1fr]">
             <label className="block text-sm">
               <span className="mb-1 block font-medium text-brand-ink">路線日期</span>
               <input
                 type="date"
                 value={routeDate}
                 onChange={(event) => setRouteDate(event.target.value)}
-                className="w-full rounded-2xl border border-slate-200 px-4 py-3"
+                className="w-full rounded-2xl border border-slate-200 px-4 py-2.5"
               />
             </label>
             <label className="block text-sm">
@@ -978,7 +1027,7 @@ export function AdminDoctorTrackingPage() {
                 aria-label="規劃時段"
                 value={routeTimeSlot}
                 onChange={(event) => setRouteTimeSlot(event.target.value as RouteTimeSlot)}
-                className="w-full rounded-2xl border border-slate-200 px-4 py-3"
+                className="w-full rounded-2xl border border-slate-200 px-4 py-2.5"
               >
                 {routeTimeSlotOptions.map((option) => (
                   <option key={option} value={option}>
@@ -987,15 +1036,15 @@ export function AdminDoctorTrackingPage() {
                 ))}
               </select>
             </label>
-            <div className="rounded-2xl bg-slate-50 px-4 py-2.5 text-sm text-slate-600">
+            <div className="rounded-2xl bg-slate-50 px-4 py-2 text-sm text-slate-600">
               {trackedDoctors.length > 0
                 ? `${buildServiceSlotLabel(routeDate, routeTimeSlot)} 共 ${trackedDoctors.length} 位醫師有路線。`
                 : `${buildServiceSlotLabel(routeDate, routeTimeSlot)} 目前沒有可追蹤路線。`}
             </div>
           </div>
 
-          <div className="rounded-[1.6rem] border border-slate-200 bg-white p-3.5">
-            <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="rounded-[1.45rem] border border-slate-200 bg-white p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2.5">
               <div>
                 <p className="text-sm font-semibold text-brand-ink">
                   {selectedDoctor ? `${selectedDoctor.doctorName} 追蹤地圖` : "醫師追蹤地圖"}
@@ -1004,7 +1053,7 @@ export function AdminDoctorTrackingPage() {
                   點選下方醫師後，地圖只顯示該醫師的最新位置、停留站點與簡化路線。
                 </p>
               </div>
-              <div className="flex flex-wrap gap-2 text-xs">
+              <div className="flex flex-wrap gap-1.5 text-xs">
                 {trackedDoctors.map((doctor) => (
                   <button
                     key={doctor.doctorId}
@@ -1033,7 +1082,7 @@ export function AdminDoctorTrackingPage() {
                 title={selectedDoctor ? `${selectedDoctor.doctorName} Google Map 追蹤圖` : "Google Map 追蹤圖"}
                 ref={mapContainerRef}
                 onPointerDown={(event) => {
-                  if (!trackingMapView) {
+                  if (!allowTrackingMapInteraction || !trackingMapView) {
                     return;
                   }
                   const currentTarget = event.currentTarget;
@@ -1047,7 +1096,7 @@ export function AdminDoctorTrackingPage() {
                   };
                 }}
                 onPointerMove={(event) => {
-                  if (!dragStateRef.current || !trackingMapView) {
+                  if (!allowTrackingMapInteraction || !dragStateRef.current || !trackingMapView) {
                     return;
                   }
                   const dragState = dragStateRef.current;
@@ -1064,12 +1113,18 @@ export function AdminDoctorTrackingPage() {
                   );
                 }}
                 onPointerUp={(event) => {
+                  if (!allowTrackingMapInteraction) {
+                    return;
+                  }
                   if (dragStateRef.current?.pointerId === event.pointerId) {
                     dragStateRef.current = null;
                     event.currentTarget.releasePointerCapture(event.pointerId);
                   }
                 }}
                 onPointerCancel={(event) => {
+                  if (!allowTrackingMapInteraction) {
+                    return;
+                  }
                   if (dragStateRef.current?.pointerId === event.pointerId) {
                     dragStateRef.current = null;
                     event.currentTarget.releasePointerCapture(event.pointerId);
@@ -1077,9 +1132,11 @@ export function AdminDoctorTrackingPage() {
                 }}
                 onWheel={(event) => {
                   event.preventDefault();
-                  updateTrackingMapZoom(event.deltaY < 0 ? 1 : -1);
+                  event.stopPropagation();
                 }}
-                className="relative mt-3 h-[400px] overflow-hidden rounded-[1.5rem] border border-slate-200 bg-slate-100 touch-none cursor-grab active:cursor-grabbing lg:h-[420px]"
+                className={`relative mt-2.5 h-[340px] overflow-hidden rounded-[1.35rem] border border-slate-200 bg-slate-100 touch-none lg:h-[380px] ${
+                  allowTrackingMapInteraction ? "cursor-grab active:cursor-grabbing" : "cursor-default"
+                }`}
               >
                 <div className="absolute inset-0 z-0 bg-[#eef3ee]">
                   {visibleMapTiles.map((tile) => (
@@ -1237,28 +1294,30 @@ export function AdminDoctorTrackingPage() {
                   ) : null}
                 </svg>
                 <div className="absolute left-3 top-3 z-20 rounded-full bg-white/92 px-3 py-1 text-[11px] font-semibold text-brand-ink shadow-sm">
-                  重新點醫師姓名可回到醫師中心
+                    {allowTrackingMapInteraction
+                      ? "重新點醫師姓名可回到醫師中心"
+                      : "桌機版固定檢視，請改用右上角按鍵放大或縮小，重新點醫師姓名可回到醫師中心"}
                 </div>
               </div>
             ) : (
-              <div className="mt-3 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
+              <div className="mt-2.5 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-5 text-center text-sm text-slate-500">
                 目前這個日期與時段沒有可繪製的醫師位置資料。
               </div>
             )}
           </div>
 
-          <div className="grid gap-3 xl:grid-cols-[1.02fr_0.98fr]">
-            <div className="grid gap-3 md:grid-cols-2">
+          <div className="grid gap-2.5 xl:grid-cols-[1.02fr_0.98fr]">
+            <div className="grid gap-2.5 md:grid-cols-2">
               {trackedDoctors.map((doctor) => (
                 <div
                   key={doctor.doctorId}
-                  className={`rounded-[1.6rem] border p-4 ${
+                  className={`rounded-[1.45rem] border p-3.5 ${
                     selectedDoctor?.doctorId === doctor.doctorId
                       ? "border-brand-forest bg-emerald-50/40"
                       : "border-slate-200 bg-white"
                   }`}
                 >
-                  <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-start justify-between gap-2.5">
                     <div>
                       <p className="font-semibold text-brand-ink">{doctor.doctorName}</p>
                       <p className="mt-1 text-xs text-slate-500">
@@ -1281,36 +1340,36 @@ export function AdminDoctorTrackingPage() {
                       </span>
                     </div>
                   </div>
-                  <div className="mt-3 grid gap-2 sm:grid-cols-3 text-sm">
-                    <div className="rounded-2xl bg-slate-50 px-3 py-2.5">
+                  <div className="mt-2.5 grid gap-2 sm:grid-cols-3 text-sm">
+                    <div className="rounded-2xl bg-slate-50 px-3 py-2">
                       <p className="text-xs text-slate-500">目前案件</p>
-                      <p className="mt-2 font-semibold text-brand-ink">
+                      <p className="mt-1.5 font-semibold text-brand-ink">
                         {doctor.activePatientName ?? "待命中"}
                       </p>
                     </div>
-                    <div className="rounded-2xl bg-slate-50 px-3 py-2.5">
+                    <div className="rounded-2xl bg-slate-50 px-3 py-2">
                       <p className="text-xs text-slate-500">已過站點</p>
-                      <p className="mt-2 font-semibold text-brand-ink">{doctor.passedStops.length}</p>
+                      <p className="mt-1.5 font-semibold text-brand-ink">{doctor.passedStops.length}</p>
                     </div>
-                    <div className="rounded-2xl bg-slate-50 px-3 py-2.5">
+                    <div className="rounded-2xl bg-slate-50 px-3 py-2">
                       <p className="text-xs text-slate-500">未到站點</p>
-                      <p className="mt-2 font-semibold text-brand-ink">{doctor.upcomingStops.length}</p>
+                      <p className="mt-1.5 font-semibold text-brand-ink">{doctor.upcomingStops.length}</p>
                     </div>
                   </div>
-                  <p className="mt-2.5 text-sm text-slate-600">
+                  <p className="mt-2 text-sm text-slate-600">
                     {doctor.currentDistanceKilometers !== null
                       ? `距離目前案件約 ${doctor.currentDistanceKilometers.toFixed(1)} 公里`
                       : doctor.displayLocation?.isFallback
                         ? "未上線，位置顯示在最近排程起點周圍"
                         : "等待定位或案件座標"}
                   </p>
-                  <div className="mt-3 flex flex-wrap gap-2">
+                  <div className="mt-2.5 flex flex-wrap gap-2">
                     {doctor.routeMapUrl ? (
                       <a
                         href={doctor.routeMapUrl}
                         target="_blank"
                         rel="noreferrer"
-                        className="rounded-full bg-brand-forest px-4 py-2 text-xs font-semibold text-white"
+                        className="rounded-full bg-brand-forest px-3.5 py-2 text-xs font-semibold text-white"
                       >
                         打開 {doctor.doctorName} 路線
                       </a>
@@ -1318,7 +1377,7 @@ export function AdminDoctorTrackingPage() {
                     <button
                       type="button"
                       onClick={() => handleTrackingDoctorFocus(doctor.doctorId)}
-                      className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-brand-ink"
+                      className="rounded-full border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-brand-ink"
                     >
                       查看細節
                     </button>
@@ -1328,8 +1387,8 @@ export function AdminDoctorTrackingPage() {
             </div>
 
             {selectedDoctor ? (
-              <div className="space-y-3">
-                <div className="rounded-[1.6rem] border border-slate-200 bg-white p-4">
+              <div className="space-y-2.5">
+                <div className="rounded-[1.45rem] border border-slate-200 bg-white p-3.5">
                   <div>
                     <div>
                       <p className="font-semibold text-brand-ink">{selectedDoctor.doctorName} 細節</p>
@@ -1341,42 +1400,42 @@ export function AdminDoctorTrackingPage() {
                       </p>
                     </div>
                   </div>
-                  <div className="mt-3 grid gap-2 md:grid-cols-3">
-                    <div className="rounded-2xl bg-slate-50 px-3 py-2.5 text-sm text-slate-600">
+                  <div className="mt-2.5 grid gap-2 md:grid-cols-3">
+                    <div className="rounded-2xl bg-slate-50 px-3 py-2 text-sm text-slate-600">
                       <p className="text-xs text-slate-500">目前位置</p>
-                      <p className="mt-2 font-semibold text-brand-ink">
+                      <p className="mt-1.5 font-semibold text-brand-ink">
                         {selectedDoctor.displayLocation?.addressLabel ?? "未上線"}
                       </p>
                     </div>
-                    <div className="rounded-2xl bg-slate-50 px-3 py-2.5 text-sm text-slate-600">
+                    <div className="rounded-2xl bg-slate-50 px-3 py-2 text-sm text-slate-600">
                       <p className="text-xs text-slate-500">最新時間</p>
-                      <p className="mt-2 font-semibold text-brand-ink">
+                      <p className="mt-1.5 font-semibold text-brand-ink">
                         {selectedDoctor.latestLocation
                           ? formatDateTimeFull(selectedDoctor.latestLocation.recorded_at)
                           : "未上線"}
                       </p>
                     </div>
-                    <div className="rounded-2xl bg-slate-50 px-3 py-2.5 text-sm text-slate-600">
+                    <div className="rounded-2xl bg-slate-50 px-3 py-2 text-sm text-slate-600">
                       <p className="text-xs text-slate-500">定位狀態</p>
-                      <p className="mt-2 font-semibold text-brand-ink">
+                      <p className="mt-1.5 font-semibold text-brand-ink">
                         {getLocationStatusLabel(selectedDoctor.locationStatus)}
                       </p>
                     </div>
                   </div>
                 </div>
 
-                <div className="grid gap-3 md:grid-cols-2">
-                  <div className="rounded-[1.6rem] border border-slate-200 bg-white p-4 text-sm">
+                <div className="grid gap-2.5 md:grid-cols-2">
+                  <div className="rounded-[1.45rem] border border-slate-200 bg-white p-3.5 text-sm">
                     <div className="flex items-center justify-between gap-3">
                       <p className="font-semibold text-brand-ink">已經過的地點</p>
                       <span className="text-xs text-slate-500">{selectedDoctor.passedStops.length} 筆</span>
                     </div>
-                    <div className="mt-2.5 space-y-2">
+                    <div className="mt-2 space-y-2">
                       {selectedDoctor.passedStops.length ? (
                         selectedDoctor.passedStops.map((schedule) => {
                           const patient = db.patients.find((item) => item.id === schedule.patient_id);
                           return (
-                            <div key={schedule.id} className="rounded-2xl bg-slate-50 px-3 py-2.5">
+                            <div key={schedule.id} className="rounded-2xl bg-slate-50 px-3 py-2">
                               <p className="font-medium text-brand-ink">
                                 第 {schedule.route_order} 站 {patient ? maskPatientName(patient.name) : schedule.patient_id}
                               </p>
@@ -1387,24 +1446,24 @@ export function AdminDoctorTrackingPage() {
                           );
                         })
                       ) : (
-                        <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
+                        <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-5 text-center text-sm text-slate-500">
                           目前還沒有已過站點。
                         </p>
                       )}
                     </div>
                   </div>
 
-                  <div className="rounded-[1.6rem] border border-slate-200 bg-white p-4 text-sm">
+                  <div className="rounded-[1.45rem] border border-slate-200 bg-white p-3.5 text-sm">
                     <div className="flex items-center justify-between gap-3">
                       <p className="font-semibold text-brand-ink">尚未到的地點</p>
                       <span className="text-xs text-slate-500">{selectedDoctor.upcomingStops.length} 筆</span>
                     </div>
-                    <div className="mt-2.5 space-y-2">
+                    <div className="mt-2 space-y-2">
                       {selectedDoctor.upcomingStops.length ? (
                         selectedDoctor.upcomingStops.map((schedule) => {
                           const patient = db.patients.find((item) => item.id === schedule.patient_id);
                           return (
-                            <div key={schedule.id} className="rounded-2xl bg-slate-50 px-3 py-2.5">
+                            <div key={schedule.id} className="rounded-2xl bg-slate-50 px-3 py-2">
                               <p className="font-medium text-brand-ink">
                                 第 {schedule.route_order} 站 {patient ? maskPatientName(patient.name) : schedule.patient_id}
                               </p>
@@ -1415,7 +1474,7 @@ export function AdminDoctorTrackingPage() {
                           );
                         })
                       ) : (
-                        <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
+                        <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-5 text-center text-sm text-slate-500">
                           目前這位醫師沒有待前往站點。
                         </p>
                       )}

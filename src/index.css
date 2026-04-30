@@ -13,10 +13,18 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
 body {
   margin: 0;
+  width: 100%;
   min-width: 320px;
   min-height: 100vh;
+  overflow-x: hidden;
 }
 
 a {
@@ -32,7 +40,17 @@ textarea {
 }
 
 #root {
+  width: 100%;
   min-height: 100vh;
+  overflow-x: hidden;
+}
+
+img,
+svg,
+canvas,
+iframe,
+video {
+  max-width: 100%;
 }
 
 .card-clamp-1 {

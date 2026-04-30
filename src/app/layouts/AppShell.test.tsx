@@ -267,6 +267,10 @@ describe("AppShell", () => {
     expect(screen.getByRole("heading", { name: "團隊通訊｜行政人員" })).toBeInTheDocument();
     expect(screen.getByLabelText("訊息內容")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "開啟團隊通訊" })).not.toBeInTheDocument();
+    expect(screen.queryByText("對話對象")).not.toBeInTheDocument();
+    expect(screen.queryByText("目前案件")).not.toBeInTheDocument();
+    expect(screen.queryByText("最近聯絡時間")).not.toBeInTheDocument();
+    expect(screen.queryByText(/對話對象：行政人員/)).not.toBeInTheDocument();
   });
 
   it("行政傳給醫師的未讀團隊通訊，醫師打開團隊通訊後會立刻轉成已讀並切換為綠燈", async () => {

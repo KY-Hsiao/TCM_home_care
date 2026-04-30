@@ -22,7 +22,33 @@ describe("httpTeamCommunicationRepository", () => {
     });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/team-communications?doctorId=doc-001&adminUserId=admin-001&role=doctor&userId=doc-001"
+      "/api/team-communications?doctorId=doc-001&adminUserId=admin-001&role=doctor&userId=doc-001",
+      {
+        cache: "no-store"
+      }
+    );
+  });
+
+  it("會禁用未讀數查詢快取", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ count: 1 })
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const repository = createHttpTeamCommunicationRepository();
+
+    await repository.getUnreadCount({
+      role: "doctor",
+      userId: "doc-001",
+      doctorId: "doc-001",
+      adminUserId: "admin-001"
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/team-communications/unread-count?role=doctor&userId=doc-001&doctorId=doc-001&adminUserId=admin-001",
+      {
+        cache: "no-store"
+      }
     );
   });
 

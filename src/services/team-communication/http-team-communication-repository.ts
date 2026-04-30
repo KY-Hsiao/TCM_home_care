@@ -24,7 +24,9 @@ export function createHttpTeamCommunicationRepository(): TeamCommunicationReposi
         role: query.viewerRole,
         userId: query.viewerUserId
       });
-      const response = await fetch(`/api/team-communications?${params.toString()}`);
+      const response = await fetch(`/api/team-communications?${params.toString()}`, {
+        cache: "no-store"
+      });
       const payload = (await readJsonOrThrow(response)) as { items: TeamCommunicationMessage[] };
       return payload.items;
     },
@@ -39,7 +41,9 @@ export function createHttpTeamCommunicationRepository(): TeamCommunicationReposi
       if (query.adminUserId) {
         params.set("adminUserId", query.adminUserId);
       }
-      const response = await fetch(`/api/team-communications/unread-count?${params.toString()}`);
+      const response = await fetch(`/api/team-communications/unread-count?${params.toString()}`, {
+        cache: "no-store"
+      });
       const payload = (await readJsonOrThrow(response)) as { count: number };
       return payload.count;
     },

@@ -40,13 +40,13 @@ export function DoctorPatientPage() {
         >
           <div className="space-y-4 text-sm text-slate-600">
             <p>基本資料：{profile.patient.gender} / {formatDateOnly(profile.patient.date_of_birth)}</p>
-            <p>地址：{profile.patient.address}</p>
-            <p>定位關鍵字：{profile.patient.location_keyword}</p>
-            <a
+            <p className="break-words">地址：{profile.patient.address}</p>
+            <p className="break-words">定位關鍵字：{profile.patient.location_keyword}</p>
+              <a
               href={profile.patient.google_maps_link}
               target="_blank"
               rel="noreferrer"
-              className="inline-flex rounded-full bg-brand-sand px-3 py-1 font-medium text-brand-forest"
+              className="inline-flex max-w-full break-words rounded-full bg-brand-sand px-3 py-1 font-medium text-brand-forest"
             >
               地圖連結
             </a>
@@ -215,7 +215,7 @@ export function DoctorLeaveRequestPage() {
               <p className="font-medium text-brand-ink">目前登入醫師</p>
               <p className="mt-1">{activeDoctor?.name ?? "未指定醫師"}</p>
             </div>
-            <div className="grid gap-3 md:grid-cols-2">
+            <div className="grid gap-3 lg:grid-cols-2">
               <label className="block">
                 <span className="mb-1 block font-medium text-brand-ink">開始日期</span>
                 <input

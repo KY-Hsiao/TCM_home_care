@@ -249,6 +249,25 @@ describe("AdminPages", () => {
     expect(screen.getAllByText("暫停").length).toBeGreaterThan(0);
   });
 
+  it("AdminSchedulesPage 可在符合時段個案視窗中全選與反全選", () => {
+    renderWithProviders(<AdminSchedulesPage />);
+
+    selectScheduleFilters();
+    const slotPatientDialog = openSlotPatientDialog();
+
+    fireEvent.click(within(slotPatientDialog).getByRole("button", { name: "反全選" }));
+
+    expect(within(slotPatientDialog).getByLabelText("王○珠 勾選")).not.toBeChecked();
+    expect(within(slotPatientDialog).getByLabelText("陳○雄 勾選")).not.toBeChecked();
+    expect(screen.getByText("可執行 0 站")).toBeInTheDocument();
+
+    fireEvent.click(within(slotPatientDialog).getByRole("button", { name: "全選" }));
+
+    expect(within(slotPatientDialog).getByLabelText("王○珠 勾選")).toBeChecked();
+    expect(within(slotPatientDialog).getByLabelText("陳○雄 勾選")).toBeChecked();
+    expect(screen.getByText("可執行 8 站")).toBeInTheDocument();
+  });
+
   it("AdminSchedulesPage 會顯示帶背景地圖的頁內路線預覽與外部 Google 路線按鈕", () => {
     renderWithProviders(<AdminSchedulesPage />);
 
@@ -300,6 +319,22 @@ describe("AdminPages", () => {
     expect(screen.getByText("第 1 站 陳○雄")).toBeInTheDocument();
     expect(screen.getByText("第 2 站 李○蘭")).toBeInTheDocument();
     expect(screen.getByText("第 3 站 王○珠")).toBeInTheDocument();
+  });
+
+  it("AdminSchedulesPage 可依站點直線距離自動排序本次路線", () => {
+    renderWithProviders(<AdminSchedulesPage />);
+
+    selectScheduleFilters();
+
+    expect(screen.getByText("第 2 站 陳○雄")).toBeInTheDocument();
+    expect(screen.getByText("第 8 站 鄭○華")).toBeInTheDocument();
+    const routeLink = screen.getByRole("link", { name: "用 Google 地圖開啟完整路線" });
+    const initialHref = routeLink.getAttribute("href");
+
+    fireEvent.click(screen.getByRole("button", { name: "自動排序" }));
+
+    expect(screen.getByRole("status")).toHaveTextContent("已依站點直線距離自動排序，可再拖曳微調。");
+    expect(routeLink.getAttribute("href")).not.toBe(initialHref);
   });
 
   it("AdminSchedulesPage 可儲存路線、清除頁面，再完整還原醫師、日期、勾選狀態與排序", async () => {
@@ -572,14 +607,38 @@ describe("AdminPages", () => {
     expect(screen.getByText("同時段醫師追蹤總覽")).toBeInTheDocument();
     expect(screen.getByLabelText("蕭坤元醫師 追蹤地圖")).toBeInTheDocument();
     expect(screen.getByTitle("蕭坤元醫師 Google Map 追蹤圖")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "放大地圖" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "縮小地圖" })).toBeInTheDocument();
     expect(screen.getAllByText("目前位置").length).toBeGreaterThan(0);
     const locationSummaryLabel = screen.getAllByText("目前位置", { selector: "p" }).at(-1);
     expect(locationSummaryLabel?.parentElement?.textContent).toContain("附近");
     expect(screen.getByRole("button", { name: "蕭坤元醫師" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "林若謙醫師" })).toBeInTheDocument();
     expect(screen.getAllByText("已經過的地點").length).toBeGreaterThan(0);
+  });
+
+  it("AdminDoctorTrackingPage 在桌機版會改成固定檢視，但保留按鍵縮放", async () => {
+    const originalMatchMedia = window.matchMedia;
+    window.matchMedia = vi.fn().mockImplementation(() => ({
+      matches: true,
+      media: "(min-width: 1024px) and (hover: hover) and (pointer: fine)",
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn()
+    }));
+
+    renderWithProviders(<AdminDoctorTrackingPage />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "放大地圖" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "縮小地圖" })).toBeInTheDocument();
+      expect(
+        screen.getByText("桌機版固定檢視，請改用右上角按鍵放大或縮小，重新點醫師姓名可回到醫師中心")
+      ).toBeInTheDocument();
+    });
+
+    window.matchMedia = originalMatchMedia;
   });
 
   it("AdminDoctorTrackingPage 會標示定位延遲與尚未收到定位", () => {
@@ -1551,50 +1610,11 @@ describe("AdminPages", () => {
     expect(screen.queryByRole("button", { name: "建立請假申請" })).not.toBeInTheDocument();
   });
 
-  it("AdminStaffPage 會顯示更新到 GitHub / Vercel 的按鈕與部署密碼欄位", () => {
+  it("AdminStaffPage 不再顯示線上更新與部署密碼區塊", () => {
     renderWithProviders(<AdminStaffPage />);
 
-    expect(screen.getByRole("button", { name: "更新到 GitHub / Vercel" })).toBeInTheDocument();
-    expect(screen.getByPlaceholderText("請輸入部署密碼")).toBeInTheDocument();
-  });
-
-  it("AdminStaffPage 可顯示線上更新成功與失敗訊息", async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce({
-        ok: false,
-        json: async () => ({ error: "部署密碼不正確。" })
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          message: "已觸發 GitHub workflow：deploy-vercel.yml（main），後續將由 workflow 接續觸發 Vercel。"
-        })
-      });
-    vi.stubGlobal("fetch", fetchMock);
-
-    renderWithProviders(<AdminStaffPage />);
-
-    fireEvent.change(screen.getByPlaceholderText("請輸入部署密碼"), {
-      target: { value: "wrong-secret" }
-    });
-    fireEvent.click(screen.getByRole("button", { name: "更新到 GitHub / Vercel" }));
-
-    await waitFor(() => {
-      expect(screen.getByText("部署密碼不正確。")).toBeInTheDocument();
-    });
-
-    fireEvent.change(screen.getByPlaceholderText("請輸入部署密碼"), {
-      target: { value: "correct-secret" }
-    });
-    fireEvent.click(screen.getByRole("button", { name: "更新到 GitHub / Vercel" }));
-
-    await waitFor(() => {
-      expect(
-        screen.getByText("已觸發 GitHub workflow：deploy-vercel.yml（main），後續將由 workflow 接續觸發 Vercel。")
-      ).toBeInTheDocument();
-    });
-
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText("線上更新")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "更新到 GitHub / Vercel" })).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("請輸入部署密碼")).not.toBeInTheDocument();
   });
 });

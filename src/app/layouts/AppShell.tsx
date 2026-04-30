@@ -391,14 +391,14 @@ export function AppShell() {
   }
 
   return (
-    <div className="min-h-dvh bg-brand-sand text-brand-ink">
+    <div className="min-h-dvh overflow-x-hidden bg-brand-sand text-brand-ink">
       <div
-        className={`mx-auto grid min-h-dvh max-w-[1600px] items-start ${
+        className={`mx-auto grid min-h-dvh max-w-[1600px] min-w-0 items-start overflow-x-hidden ${
           isDoctorShell ? "gap-2 px-2 py-2 lg:grid-cols-[280px_1fr] lg:gap-3 lg:px-3 lg:py-3" : "gap-6 px-4 py-4 lg:grid-cols-[280px_1fr]"
         }`}
       >
         <aside
-          className={`border border-white/70 bg-brand-ink text-white shadow-card ${
+          className={`min-w-0 overflow-hidden border border-white/70 bg-brand-ink text-white shadow-card ${
             isDoctorShell
               ? "rounded-[1.35rem] p-3 pb-2.5 lg:rounded-[2rem] lg:p-6"
               : "rounded-[2rem] p-6"
@@ -448,7 +448,7 @@ export function AppShell() {
           <nav
             className={
               isDoctorShell
-                ? "mt-3 flex gap-2 overflow-x-auto pb-1 lg:mt-6 lg:block lg:space-y-2 lg:overflow-visible lg:pb-0"
+                ? "mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:mt-6 lg:block lg:space-y-2"
                 : "mt-6 space-y-2"
             }
           >
@@ -457,13 +457,13 @@ export function AppShell() {
                 key={item.to}
                 to={item.to}
                 className={({ isActive }) =>
-                  `${isDoctorShell ? "min-w-[104px] shrink-0 rounded-2xl px-3 py-2 text-sm lg:block lg:min-w-0 lg:rounded-3xl lg:px-4 lg:py-3" : "block rounded-3xl px-4 py-3"} transition ${
+                  `${isDoctorShell ? "block min-w-0 rounded-2xl px-3 py-2 text-sm lg:rounded-3xl lg:px-4 lg:py-3" : "block rounded-3xl px-4 py-3"} transition ${
                     isActive ? "bg-white text-brand-ink" : "bg-white/5 hover:bg-white/10"
                   }`
                 }
               >
                 <div className="flex items-center justify-between gap-2 font-semibold">
-                  <span>{item.label}</span>
+                  <span className="min-w-0 break-words">{item.label}</span>
                   {item.to === notificationCenterPath && unreadNotificationCount > 0 ? (
                     <span className="rounded-full bg-brand-coral px-2 py-0.5 text-[11px] font-semibold text-white">
                       {unreadNotificationCount}
@@ -477,7 +477,7 @@ export function AppShell() {
                   ) : null}
                 </div>
                 <div
-                  className={`${isDoctorShell ? "mt-1 hidden text-[11px] lg:block" : "mt-1 text-xs"} ${
+                  className={`${isDoctorShell ? "mt-1 hidden min-w-0 break-words text-[11px] lg:block" : "mt-1 text-xs"} ${
                     location.pathname === item.to ? "text-slate-500" : "text-brand-sand/70"
                   }`}
                 >
@@ -501,7 +501,7 @@ export function AppShell() {
                 <div className="text-[13px] text-slate-500 lg:text-sm">
                   目前登入醫師：{currentUserName ?? "未登入"}
                 </div>
-                <div className="mt-2.5 grid grid-cols-2 gap-2">
+                <div className="mt-2.5 grid grid-cols-1 gap-2">
                   <Link
                     to="/doctor/reminders"
                     className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-center text-sm font-semibold text-brand-ink lg:py-2.5"
@@ -521,7 +521,7 @@ export function AppShell() {
                   <button
                     type="button"
                     onClick={() => setIsStaffCommunicationOpen(true)}
-                    className={`col-span-2 rounded-2xl border px-4 py-2 text-sm font-semibold lg:py-2.5 ${
+                    className={`rounded-2xl border px-4 py-2 text-sm font-semibold lg:py-2.5 ${
                       doctorTeamCommunicationUnreadCount > 0
                         ? "border-rose-300 bg-rose-50 text-rose-700"
                         : "border-slate-200 bg-white text-brand-ink"
@@ -546,12 +546,12 @@ export function AppShell() {
                     doctorLocationSync.status
                   )} lg:mt-3 lg:py-2.5`}
                 >
-                  <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
+                  <div className="flex flex-col gap-1 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-x-4 sm:gap-y-1">
                     <div className="min-w-0">
                       <p className="font-semibold text-brand-ink">醫師手機定位共享</p>
                       <p className="mt-0.5 text-xs leading-4 lg:leading-5">{doctorLocationSync.message}</p>
                     </div>
-                    <p className="shrink-0 text-[11px] text-slate-500">
+                    <p className="text-[11px] text-slate-500 sm:shrink-0">
                       最後更新：{formatDateTimeFull(doctorLocationSync.lastUpdatedAt)}
                     </p>
                   </div>
@@ -577,7 +577,7 @@ export function AppShell() {
           ) : null}
         </aside>
 
-        <div className={`${isDoctorShell ? "space-y-3 lg:space-y-4" : "space-y-4"}`}>
+        <div className={`min-w-0 ${isDoctorShell ? "space-y-3 lg:space-y-4" : "space-y-4"}`}>
           {shellRole !== "doctor" ? (
             <header className="rounded-[2rem] border border-white/70 bg-white/90 p-5 shadow-card backdrop-blur">
               <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
@@ -628,7 +628,7 @@ export function AppShell() {
               ) : null}
             </header>
           ) : null}
-          <main>
+          <main className="min-w-0">
             <Outlet />
           </main>
         </div>

@@ -468,6 +468,191 @@ function buildRoutePreviewInput(input: {
   };
 }
 
+type RouteCoordinate = {
+  latitude: number;
+  longitude: number;
+};
+
+function isValidRouteCoordinate(
+  latitude: number | null,
+  longitude: number | null
+): boolean {
+  return typeof latitude === "number" && typeof longitude === "number";
+}
+
+function calculateStraightLineDistanceKilometers(start: RouteCoordinate, end: RouteCoordinate) {
+  const earthRadiusKm = 6371;
+  const latitudeDelta = ((end.latitude - start.latitude) * Math.PI) / 180;
+  const longitudeDelta = ((end.longitude - start.longitude) * Math.PI) / 180;
+  const startLatitudeRadians = (start.latitude * Math.PI) / 180;
+  const endLatitudeRadians = (end.latitude * Math.PI) / 180;
+  const haversine =
+    Math.sin(latitudeDelta / 2) ** 2 +
+    Math.cos(startLatitudeRadians) *
+      Math.cos(endLatitudeRadians) *
+      Math.sin(longitudeDelta / 2) ** 2;
+  const arc = 2 * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine));
+  return earthRadiusKm * arc;
+}
+
+function resolveRouteCoordinate(
+  address: string,
+  fallback: { address: string; latitude: number; longitude: number }
+) {
+  return address.trim() === fallback.address
+    ? {
+        latitude: fallback.latitude,
+        longitude: fallback.longitude
+      }
+    : null;
+}
+
+function getPlannerRowCoordinate(row: PlannerRow) {
+  if (!isValidRouteCoordinate(row.latitude, row.longitude)) {
+    return null;
+  }
+  return {
+    latitude: row.latitude as number,
+    longitude: row.longitude as number
+  };
+}
+
+function calculateRouteDistance(input: {
+  rows: PlannerRow[];
+  startCoordinate: RouteCoordinate;
+  endCoordinate: RouteCoordinate | null;
+}) {
+  if (input.rows.length === 0) {
+    return 0;
+  }
+
+  const routeCoordinates = input.rows
+    .map((row) => getPlannerRowCoordinate(row))
+    .filter((coordinate): coordinate is RouteCoordinate => Boolean(coordinate));
+
+  if (routeCoordinates.length === 0) {
+    return 0;
+  }
+
+  let totalDistance = calculateStraightLineDistanceKilometers(
+    input.startCoordinate,
+    routeCoordinates[0]
+  );
+
+  for (let index = 0; index < routeCoordinates.length - 1; index += 1) {
+    totalDistance += calculateStraightLineDistanceKilometers(
+      routeCoordinates[index],
+      routeCoordinates[index + 1]
+    );
+  }
+
+  if (input.endCoordinate) {
+    totalDistance += calculateStraightLineDistanceKilometers(
+      routeCoordinates[routeCoordinates.length - 1],
+      input.endCoordinate
+    );
+  }
+
+  return totalDistance;
+}
+
+// 這裡採最近鄰 + 2-opt 的近似法，目標是縮短站與站之間的直線距離總和，
+// 不是理論上的全域最佳解，因此仍保留人工拖曳微調。
+function optimizePlannerRowsByDistance(input: {
+  checkedRows: PlannerRow[];
+  startAddress: string;
+  endAddress: string;
+}) {
+  if (input.checkedRows.length < 2) {
+    return {
+      reorderedRows: input.checkedRows,
+      unresolvedCoordinateCount: 0
+    };
+  }
+
+  const coordinateRows = input.checkedRows.filter((row) => Boolean(getPlannerRowCoordinate(row)));
+  const unresolvedCoordinateRows = input.checkedRows.filter((row) => !getPlannerRowCoordinate(row));
+
+  if (coordinateRows.length < 2) {
+    return {
+      reorderedRows: input.checkedRows,
+      unresolvedCoordinateCount: unresolvedCoordinateRows.length
+    };
+  }
+
+  const startCoordinate =
+    resolveRouteCoordinate(input.startAddress, routeStartLocation) ?? getPlannerRowCoordinate(coordinateRows[0]);
+  if (!startCoordinate) {
+    return {
+      reorderedRows: input.checkedRows,
+      unresolvedCoordinateCount: unresolvedCoordinateRows.length
+    };
+  }
+
+  const endCoordinate =
+    resolveRouteCoordinate(input.endAddress, routeEndLocation) ?? startCoordinate;
+
+  const remainingRows = [...coordinateRows];
+  const nearestNeighborRows: PlannerRow[] = [];
+  let currentCoordinate = startCoordinate;
+
+  while (remainingRows.length > 0) {
+    let nearestIndex = 0;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+
+    remainingRows.forEach((row, index) => {
+      const coordinate = getPlannerRowCoordinate(row);
+      if (!coordinate) {
+        return;
+      }
+      const distance = calculateStraightLineDistanceKilometers(currentCoordinate, coordinate);
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearestIndex = index;
+      }
+    });
+
+    const [nearestRow] = remainingRows.splice(nearestIndex, 1);
+    nearestNeighborRows.push(nearestRow);
+    currentCoordinate = getPlannerRowCoordinate(nearestRow) ?? currentCoordinate;
+  }
+
+  let optimizedRows = [...nearestNeighborRows];
+  let improved = true;
+
+  while (improved) {
+    improved = false;
+    for (let startIndex = 0; startIndex < optimizedRows.length - 2; startIndex += 1) {
+      for (let endIndex = startIndex + 1; endIndex < optimizedRows.length - 1; endIndex += 1) {
+        const candidateRows = [
+          ...optimizedRows.slice(0, startIndex),
+          ...optimizedRows.slice(startIndex, endIndex + 1).reverse(),
+          ...optimizedRows.slice(endIndex + 1)
+        ];
+        const currentDistance = calculateRouteDistance({
+          rows: optimizedRows,
+          startCoordinate,
+          endCoordinate
+        });
+        const candidateDistance = calculateRouteDistance({
+          rows: candidateRows,
+          startCoordinate,
+          endCoordinate
+        });
+        if (candidateDistance + 0.01 < currentDistance) {
+          optimizedRows = candidateRows;
+          improved = true;
+        }
+      }
+    }
+  }
+
+  return {
+    reorderedRows: [...optimizedRows, ...unresolvedCoordinateRows],
+    unresolvedCoordinateCount: unresolvedCoordinateRows.length
+  };
+}
+
 export function AdminSchedulesPage() {
   const { repositories, db } = useAppContext();
   const [selectedDoctorId, setSelectedDoctorId] = useState<string>("");
@@ -750,6 +935,28 @@ export function AdminSchedulesPage() {
     );
   };
 
+  const selectAllPlannerRows = () => {
+    setPlannerRows((current) =>
+      reindexPlannerRows(
+        current.map((row) => ({
+          ...row,
+          checked: true
+        }))
+      )
+    );
+  };
+
+  const invertPlannerRowSelection = () => {
+    setPlannerRows((current) =>
+      reindexPlannerRows(
+        current.map((row) => ({
+          ...row,
+          checked: !row.checked
+        }))
+      )
+    );
+  };
+
   const movePlannerRow = (patientId: string, direction: "up" | "down") => {
     setPlannerRows((current) => {
       const orderedCheckedRows = sortPlannerRows(current).filter((row) => row.checked);
@@ -767,6 +974,26 @@ export function AdminSchedulesPage() {
         orderedCheckedRows[targetIndex].patientId
       );
     });
+  };
+
+  const autoSortPlannerRows = () => {
+    if (checkedRows.length < 2) {
+      setRecentAction("至少要保留兩站以上，才需要自動排序。");
+      return;
+    }
+
+    const { reorderedRows, unresolvedCoordinateCount } = optimizePlannerRowsByDistance({
+      checkedRows,
+      startAddress: routeStartAddress,
+      endAddress: routeEndAddress
+    });
+    const uncheckedRows = sortPlannerRows(plannerRows).filter((row) => !row.checked);
+    setPlannerRows(reindexPlannerRows([...reorderedRows, ...uncheckedRows]));
+    setRecentAction(
+      unresolvedCoordinateCount > 0
+        ? `已依站點直線距離自動排序；另有 ${unresolvedCoordinateCount} 站缺少座標，先保留在後段，可再拖曳微調。`
+        : "已依站點直線距離自動排序，可再拖曳微調。"
+    );
   };
 
   const handlePlannerRowDragStart = (patientId: string) => {
@@ -1256,10 +1483,20 @@ export function AdminSchedulesPage() {
                 <div>
                   <p className="text-sm font-semibold text-brand-ink">本次路線排序</p>
                   <p className="mt-1 text-xs text-slate-500">
-                    地圖固定在左側，這裡專門做拖曳排序與微調站序。
+                    地圖固定在左側，這裡可先自動排序，再拖曳微調站序。
                   </p>
                 </div>
-                <p className="text-xs text-slate-500">可執行 {checkedRows.length} 站</p>
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  <p className="text-xs text-slate-500">可執行 {checkedRows.length} 站</p>
+                  <button
+                    type="button"
+                    onClick={autoSortPlannerRows}
+                    disabled={checkedRows.length < 2}
+                    className="rounded-full border border-brand-forest/20 bg-white px-3 py-1.5 text-xs font-semibold text-brand-forest disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-400"
+                  >
+                    自動排序
+                  </button>
+                </div>
               </div>
 
               <div className="mt-4 space-y-2">
@@ -1529,9 +1766,29 @@ export function AdminSchedulesPage() {
             </div>
 
             <div className="flex-1 overflow-y-auto px-6 py-5">
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm">
-                <p className="font-semibold text-brand-ink">目前共有 {sortedPlannerRows.length} 位個案</p>
-                <p className="mt-1 text-xs text-slate-500">已勾選 {checkedRows.length} 位，可直接結案或取消勾選。</p>
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm">
+                <div>
+                  <p className="font-semibold text-brand-ink">目前共有 {sortedPlannerRows.length} 位個案</p>
+                  <p className="mt-1 text-xs text-slate-500">已勾選 {checkedRows.length} 位，可直接結案或取消勾選。</p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={selectAllPlannerRows}
+                    disabled={sortedPlannerRows.length === 0}
+                    className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-brand-ink disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    全選
+                  </button>
+                  <button
+                    type="button"
+                    onClick={invertPlannerRowSelection}
+                    disabled={sortedPlannerRows.length === 0}
+                    className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-brand-ink disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    反全選
+                  </button>
+                </div>
               </div>
 
               <div className="mt-4 space-y-2">
