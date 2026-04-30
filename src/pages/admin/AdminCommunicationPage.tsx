@@ -106,6 +106,14 @@ export function AdminTeamCommunicationPage() {
     enabled: Boolean(selectedDoctor && selectedAdmin)
   });
 
+  useEffect(() => {
+    if (!selectedDoctor || !selectedAdmin) {
+      return;
+    }
+    void conversation.markConversationRead();
+    // 行政端切進對話頁或切換醫師時，主動同步已讀，避免外層未讀燈殘留舊值。
+  }, [selectedAdmin?.id, selectedDoctor?.id]);
+
   if (!selectedDoctor || !selectedAdmin) {
     return <Panel title="團隊通訊">目前找不到可使用的行政或醫師資料。</Panel>;
   }

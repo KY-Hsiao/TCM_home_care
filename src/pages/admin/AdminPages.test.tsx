@@ -615,7 +615,7 @@ describe("AdminPages", () => {
     expect(screen.getAllByText("已經過的地點").length).toBeGreaterThan(0);
   });
 
-  it("AdminDoctorTrackingPage 在桌機版會改成固定檢視，但保留按鍵縮放", async () => {
+  it("AdminDoctorTrackingPage 在桌機版會停止滾輪縮放，但保留拖曳與按鍵縮放", async () => {
     const originalMatchMedia = window.matchMedia;
     window.matchMedia = vi.fn().mockImplementation(() => ({
       matches: true,
@@ -634,7 +634,7 @@ describe("AdminPages", () => {
       expect(screen.getByRole("button", { name: "放大地圖" })).toBeInTheDocument();
       expect(screen.getByRole("button", { name: "縮小地圖" })).toBeInTheDocument();
       expect(
-        screen.getByText("桌機版固定檢視，請改用右上角按鍵放大或縮小，重新點醫師姓名可回到醫師中心")
+        screen.getByText("可拖曳移動地圖，請改用右上角按鍵放大或縮小，重新點醫師姓名可回到醫師中心")
       ).toBeInTheDocument();
     });
 
@@ -732,7 +732,7 @@ describe("AdminPages", () => {
     expect(screen.getByText("高雄市旗山區大德路 52 號附近")).toBeInTheDocument();
   });
 
-  it("AdminDoctorTrackingPage 即使定位 sample 尚未綁到當前排程，也會用同日最新定位顯示地圖", () => {
+  it("AdminDoctorTrackingPage 會忽略遠離本次路線的同日定位 sample，避免把醫師位置帶偏", () => {
     const seededDb = createSeedDb();
     window.localStorage.setItem(
       MOCK_DB_STORAGE_KEY,
@@ -758,7 +758,8 @@ describe("AdminPages", () => {
     expect(screen.queryByText("目前這個日期與時段沒有可繪製的醫師位置資料。")).not.toBeInTheDocument();
     expect(screen.getByLabelText("蕭坤元醫師 追蹤地圖")).toBeInTheDocument();
     expect(screen.getByTitle("蕭坤元醫師 Google Map 追蹤圖")).toBeInTheDocument();
-    expect(screen.getByText(/最後定位/)).toBeInTheDocument();
+    expect(screen.getAllByText("未上線").length).toBeGreaterThan(0);
+    expect(screen.queryByText(/最後定位/)).not.toBeInTheDocument();
   });
 
   it("AdminTeamCommunicationPage 可從獨立頁面直接送出給醫師的院內文字訊息", async () => {

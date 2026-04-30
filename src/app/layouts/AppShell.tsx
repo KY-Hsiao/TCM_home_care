@@ -332,6 +332,8 @@ export function AppShell() {
   }, [currentUserId, repositories, shellRole]);
   const notificationSummaryLabel =
     unreadNotificationCount > 0 ? `通知中心（未讀 ${unreadNotificationCount}）` : "通知中心";
+  const isTeamCommunicationRoute =
+    location.pathname === "/doctor/team-communication" || location.pathname === "/admin/team-communication";
   const teamCommunicationUnread = useTeamCommunicationUnreadCount({
     db,
     repositories,
@@ -341,7 +343,6 @@ export function AppShell() {
     doctorId: shellRole === "doctor" ? currentUserId ?? undefined : undefined,
     adminUserId: shellRole === "admin" ? currentUserId ?? undefined : currentAdmin?.id
   });
-  const doctorTeamCommunicationUnreadCount = teamCommunicationUnread.count;
   const shellConversation = useTeamCommunicationConversation({
     db,
     repositories,
@@ -351,6 +352,21 @@ export function AppShell() {
     viewerUserId: currentDoctor?.id ?? "",
     enabled: Boolean(shellRole === "doctor" && currentDoctor && currentAdmin)
   });
+  const doctorTeamCommunicationUnreadCount =
+    shellRole === "doctor" && isTeamCommunicationRoute ? shellConversation.unreadCount : teamCommunicationUnread.count;
+
+  useEffect(() => {
+    if (!isTeamCommunicationRoute || !shellRole || !currentUserId) {
+      return;
+    }
+
+    void teamCommunicationUnread.refresh();
+    const timeoutId = window.setTimeout(() => {
+      void teamCommunicationUnread.refresh();
+    }, 400);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [currentUserId, isTeamCommunicationRoute, shellRole]);
 
   const handleLogout = () => {
     if (!shellRole) {

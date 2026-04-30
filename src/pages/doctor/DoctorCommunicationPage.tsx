@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { useAppContext } from "../../app/use-app-context";
 import { StaffCommunicationPanel } from "../../shared/components/StaffCommunicationDialog";
 import { maskPatientName } from "../../shared/utils/patient-name";
@@ -98,6 +98,14 @@ export function DoctorTeamCommunicationPage() {
     viewerUserId: currentDoctor?.id ?? "",
     enabled: Boolean(currentDoctor && currentAdmin)
   });
+
+  useEffect(() => {
+    if (!currentDoctor || !currentAdmin) {
+      return;
+    }
+    void conversation.markConversationRead();
+    // 團隊通訊頁一打開就主動同步已讀，避免線上環境因輪詢/載入順序差異而殘留未讀燈。
+  }, [currentAdmin?.id, currentDoctor?.id]);
 
   if (!currentDoctor || !currentAdmin) {
     return <Panel title="團隊通訊">目前找不到登入中的醫師或行政資料。</Panel>;

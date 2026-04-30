@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useAppContext } from "../../app/use-app-context";
-import type { Patient, VisitSchedule } from "../../domain/models";
+import type { DoctorLocationLog, Patient, VisitSchedule } from "../../domain/models";
 import type { RouteMapInput } from "../../services/types";
 import { Badge } from "../../shared/ui/Badge";
 import { Panel } from "../../shared/ui/Panel";
@@ -38,6 +38,7 @@ const trackingMapDefaultSize = { width: 960, height: 440 } as const;
 const trackingMapPadding = 56;
 const trackingMapMinZoom = 11;
 const trackingMapMaxZoom = 18;
+const trackingLocationRouteDistanceThresholdKm = 8;
 
 type RouteTimeSlot = (typeof routeTimeSlotOptions)[number];
 type TrackingRouteOption = {
@@ -158,6 +159,38 @@ function resolveTrackingTimeSlot(schedule: Pick<VisitSchedule, "service_time_slo
   return hour < 13 ? "上午" : "下午";
 }
 
+function buildTrackingReferencePoints(routeSchedules: VisitSchedule[]) {
+  const routePoints = routeSchedules
+    .filter(
+      (schedule) =>
+        schedule.home_latitude_snapshot !== null && schedule.home_longitude_snapshot !== null
+    )
+    .map((schedule) => ({
+      latitude: schedule.home_latitude_snapshot as number,
+      longitude: schedule.home_longitude_snapshot as number
+    }));
+
+  return [{ latitude: trackingMapOrigin.latitude, longitude: trackingMapOrigin.longitude }, ...routePoints];
+}
+
+function isTrackingLogNearRoute(
+  log: Pick<DoctorLocationLog, "latitude" | "longitude">,
+  routeSchedules: VisitSchedule[]
+) {
+  const referencePoints = buildTrackingReferencePoints(routeSchedules);
+  const nearestDistance = referencePoints.reduce((bestDistance, point) => {
+    const currentDistance = estimateDistanceKilometersBetween(
+      log.latitude,
+      log.longitude,
+      point.latitude,
+      point.longitude
+    );
+    return Math.min(bestDistance, currentDistance);
+  }, Number.POSITIVE_INFINITY);
+
+  return nearestDistance <= trackingLocationRouteDistanceThresholdKm;
+}
+
 function resolveTrackingLocationLogs(input: {
   doctorId: string;
   routeDate: string;
@@ -178,6 +211,9 @@ function resolveTrackingLocationLogs(input: {
     return scheduleLinkedLogs;
   }
 
+  const nearRouteLogs = (logs: DoctorLocationLog[]) =>
+    logs.filter((log) => isTrackingLogNearRoute(log, input.routeSchedules));
+
   const routeStartAtCandidates = input.routeSchedules
     .map((schedule) => new Date(schedule.scheduled_start_at).getTime())
     .filter((value) => Number.isFinite(value));
@@ -190,8 +226,9 @@ function resolveTrackingLocationLogs(input: {
       const recordedAt = new Date(log.recorded_at).getTime();
       return recordedAt >= routeWindowStartAt && recordedAt <= routeWindowEndAt;
     });
-    if (routeWindowLogs.length) {
-      return routeWindowLogs;
+    const routeWindowNearLogs = nearRouteLogs(routeWindowLogs);
+    if (routeWindowNearLogs.length) {
+      return routeWindowNearLogs;
     }
   }
 
@@ -202,16 +239,18 @@ function resolveTrackingLocationLogs(input: {
     const hour = new Date(log.recorded_at).getHours();
     return input.routeTimeSlot === "上午" ? hour < 13 : hour >= 12;
   });
-  if (timeSlotLogs.length) {
-    return timeSlotLogs;
+  const timeSlotNearLogs = nearRouteLogs(timeSlotLogs);
+  if (timeSlotNearLogs.length) {
+    return timeSlotNearLogs;
   }
 
   const sameDateLogs = sortedLogs.filter((log) => log.recorded_at.slice(0, 10) === input.routeDate);
-  if (sameDateLogs.length) {
-    return sameDateLogs;
+  const sameDateNearLogs = nearRouteLogs(sameDateLogs);
+  if (sameDateNearLogs.length) {
+    return sameDateNearLogs;
   }
 
-  return sortedLogs;
+  return [];
 }
 
 function buildDateInputValue(date = new Date()) {
@@ -696,12 +735,6 @@ export function AdminDoctorTrackingPage() {
   const [routeDate, setRouteDate] = useState<string>(buildDateInputValue());
   const [routeTimeSlot, setRouteTimeSlot] = useState<RouteTimeSlot>("上午");
   const [selectedDoctorId, setSelectedDoctorId] = useState<string>("");
-  const [allowTrackingMapInteraction, setAllowTrackingMapInteraction] = useState<boolean>(() => {
-    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
-      return true;
-    }
-    return !window.matchMedia("(min-width: 1024px) and (hover: hover) and (pointer: fine)").matches;
-  });
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const dragStateRef = useRef<{
     pointerId: number;
@@ -916,17 +949,6 @@ export function AdminDoctorTrackingPage() {
   }, []);
 
   useEffect(() => {
-    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
-      return;
-    }
-    const mediaQuery = window.matchMedia("(min-width: 1024px) and (hover: hover) and (pointer: fine)");
-    const syncInteractionMode = () => setAllowTrackingMapInteraction(!mediaQuery.matches);
-    syncInteractionMode();
-    mediaQuery.addEventListener("change", syncInteractionMode);
-    return () => mediaQuery.removeEventListener("change", syncInteractionMode);
-  }, []);
-
-  useEffect(() => {
     const mapElement = mapContainerRef.current;
     if (!mapElement) {
       return;
@@ -1099,7 +1121,7 @@ export function AdminDoctorTrackingPage() {
                 title={selectedDoctor ? `${selectedDoctor.doctorName} Google Map 追蹤圖` : "Google Map 追蹤圖"}
                 ref={mapContainerRef}
                 onPointerDown={(event) => {
-                  if (!allowTrackingMapInteraction || !trackingMapView) {
+                  if (!trackingMapView) {
                     return;
                   }
                   const currentTarget = event.currentTarget;
@@ -1113,7 +1135,7 @@ export function AdminDoctorTrackingPage() {
                   };
                 }}
                 onPointerMove={(event) => {
-                  if (!allowTrackingMapInteraction || !dragStateRef.current || !trackingMapView) {
+                  if (!dragStateRef.current || !trackingMapView) {
                     return;
                   }
                   const dragState = dragStateRef.current;
@@ -1130,26 +1152,18 @@ export function AdminDoctorTrackingPage() {
                   );
                 }}
                 onPointerUp={(event) => {
-                  if (!allowTrackingMapInteraction) {
-                    return;
-                  }
                   if (dragStateRef.current?.pointerId === event.pointerId) {
                     dragStateRef.current = null;
                     event.currentTarget.releasePointerCapture(event.pointerId);
                   }
                 }}
                 onPointerCancel={(event) => {
-                  if (!allowTrackingMapInteraction) {
-                    return;
-                  }
                   if (dragStateRef.current?.pointerId === event.pointerId) {
                     dragStateRef.current = null;
                     event.currentTarget.releasePointerCapture(event.pointerId);
                   }
                 }}
-                className={`relative mt-2.5 h-[340px] overflow-hidden rounded-[1.35rem] border border-slate-200 bg-slate-100 touch-none lg:h-[380px] ${
-                  allowTrackingMapInteraction ? "cursor-grab active:cursor-grabbing" : "cursor-default"
-                }`}
+                className="relative mt-2.5 h-[340px] overflow-hidden rounded-[1.35rem] border border-slate-200 bg-slate-100 touch-none cursor-grab active:cursor-grabbing lg:h-[380px]"
               >
                 <div className="absolute inset-0 z-0 bg-[#eef3ee]">
                   {visibleMapTiles.map((tile) => (
@@ -1307,9 +1321,7 @@ export function AdminDoctorTrackingPage() {
                   ) : null}
                 </svg>
                 <div className="absolute left-3 top-3 z-20 rounded-full bg-white/92 px-3 py-1 text-[11px] font-semibold text-brand-ink shadow-sm">
-                    {allowTrackingMapInteraction
-                      ? "重新點醫師姓名可回到醫師中心"
-                      : "桌機版固定檢視，請改用右上角按鍵放大或縮小，重新點醫師姓名可回到醫師中心"}
+                  可拖曳移動地圖，請改用右上角按鍵放大或縮小，重新點醫師姓名可回到醫師中心
                 </div>
               </div>
             ) : (
