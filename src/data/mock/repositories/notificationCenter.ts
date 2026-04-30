@@ -100,13 +100,17 @@ export function buildNotificationCenterItemFromLeaveRequest(
   leaveRequest: LeaveRequest
 ): NotificationCenterItem {
   const doctor = db.doctors.find((item) => item.id === leaveRequest.doctor_id);
+  const rejectionNote =
+    leaveRequest.status === "rejected" && leaveRequest.rejection_reason
+      ? `｜駁回理由：${leaveRequest.rejection_reason}`
+      : "";
   return {
     id: `nc-leave-${leaveRequest.id}`,
     role: "admin",
     owner_user_id: null,
     source_type: "leave_request",
     title: `醫師請假申請｜${doctor?.name ?? leaveRequest.doctor_id}`,
-    content: `${leaveRequest.start_date} 至 ${leaveRequest.end_date}｜${leaveRequest.reason}｜交班：${leaveRequest.handoff_note}`,
+    content: `${leaveRequest.start_date} 至 ${leaveRequest.end_date}｜${leaveRequest.reason}｜交班：${leaveRequest.handoff_note}${rejectionNote}`,
     linked_patient_id: null,
     linked_visit_schedule_id: null,
     linked_doctor_id: leaveRequest.doctor_id,

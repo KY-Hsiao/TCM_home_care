@@ -27,14 +27,13 @@ describe("DoctorReturnRecordPage", () => {
     renderWithProviders(<DoctorReturnRecordPage />);
 
     expect(screen.getByLabelText("主訴")).toBeInTheDocument();
-    expect(screen.queryByLabelText("主訴其他內容")).not.toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText("主訴"), {
       target: { value: "其他" }
     });
 
     expect(screen.queryByLabelText("提醒內容")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("checkbox", { name: "加入提醒中心，讓醫師與行政後續追蹤" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "加入通知中心，讓醫師與行政後續追蹤" }));
 
     expect(screen.getByLabelText("主訴其他內容")).toBeInTheDocument();
     expect(screen.getByLabelText("提醒內容")).toBeInTheDocument();
@@ -89,7 +88,7 @@ describe("DoctorReturnRecordPage", () => {
       follow_up_note: "延續上次病史",
       medical_history_note: "延續上次病史",
       generated_record_text:
-        "1150510 09000930\n四診：望 少神、其他：眼神反應較慢；聞 其他：夜間痰聲明顯；問 疲倦乏力；切 脈細\n主訴：翻身不適\n病史：延續上次病史",
+        "治療日期：1150510\n開始治療時間：0900\n結束治療時間：0930\n四診：望 少神、其他：眼神反應較慢；聞 其他：夜間痰聲明顯；問 疲倦乏力；切 脈細\n主訴：翻身不適\n病史：延續上次病史\n提醒：請持續追蹤翻身與夜間痰聲變化",
       next_visit_suggestion_date: null,
       visit_feedback_code: null,
       visit_feedback_at: null,
@@ -112,8 +111,16 @@ describe("DoctorReturnRecordPage", () => {
     expect(screen.getByLabelText("望 其他")).toHaveValue("眼神反應較慢");
     expect(within(listeningFieldset).getByLabelText("其他")).toBeChecked();
     expect(screen.getByLabelText("聞 其他")).toHaveValue("夜間痰聲明顯");
+    expect(screen.getByLabelText("主訴")).toHaveValue("其他");
+    expect(screen.getByLabelText("主訴其他內容")).toHaveValue("翻身不適");
     expect(screen.getByLabelText("其他", { selector: 'input[value="其他"][name="medical_history_tags"]' })).toBeChecked();
     expect(screen.getByLabelText("病史其他內容")).toHaveValue("延續上次病史");
+    expect(screen.getByDisplayValue(/主訴：翻身不適/)).toBeInTheDocument();
+    expect(screen.getByText("已自動帶入此個案上一筆登打的主訴、四診、病史與病歷草稿內容，可直接修改後送出。")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "加入通知中心，讓醫師與行政後續追蹤" }));
+
+    expect(screen.getByLabelText("提醒內容")).toHaveValue("請持續追蹤翻身與夜間痰聲變化");
   });
 
   it("會對應剛完成的居家訪視時間作為回院病歷設定時間", () => {
@@ -331,7 +338,8 @@ describe("DoctorReturnRecordPage", () => {
       expect(screen.getByLabelText("結束治療時間")).toHaveValue(
         toDateTimeLocalValue("2026-05-11T01:50:00.000Z")
       );
-      expect(screen.getByDisplayValue(/1150511 09150950/)).toBeInTheDocument();
+      expect(screen.getByDisplayValue(/開始治療時間：0915/)).toBeInTheDocument();
+      expect(screen.getByDisplayValue(/結束治療時間：0950/)).toBeInTheDocument();
     });
 
     fireEvent.click(screen.getByRole("button", { name: "建立回院病歷" }));
@@ -350,7 +358,7 @@ describe("DoctorReturnRecordPage", () => {
         expect.objectContaining({
           treatment_start_time: "2026-05-11T01:15:00.000Z",
           treatment_end_time: "2026-05-11T01:50:00.000Z",
-          generated_record_text: expect.stringContaining("1150511 09150950")
+          generated_record_text: expect.stringContaining("開始治療時間：0915")
         })
       );
     });
@@ -420,13 +428,225 @@ describe("DoctorReturnRecordPage", () => {
     renderWithProviders(<DoctorReturnRecordPage />, "/doctor/return-records");
 
     expect(screen.getByLabelText("選擇個案")).toHaveValue("pat-004");
-    expect(screen.getByText(/已對應剛完成案件：2026\/05\/10 11:00 ／周文德/)).toBeInTheDocument();
+    expect(screen.getByText(/已對應剛完成案件：2026\/05\/10 11:00 ／周○德/)).toBeInTheDocument();
   });
 
-  it("勾選異常個案後會同步建立醫師與行政提醒", () => {
+  it("會先載入路線，且個案下拉只顯示該路線內的患者", () => {
+    const seeded = createSeedDb();
+    const firstBaseSchedule = seeded.visit_schedules.find((schedule) => schedule.patient_id === "pat-001");
+    const secondBaseSchedule = seeded.visit_schedules.find((schedule) => schedule.patient_id === "pat-004");
+    const thirdBaseSchedule = seeded.visit_schedules.find((schedule) => schedule.patient_id === "pat-002");
+    if (!firstBaseSchedule || !secondBaseSchedule || !thirdBaseSchedule) {
+      throw new Error("找不到測試用個案排程");
+    }
+
+    seeded.visit_schedules.unshift(
+      {
+        ...thirdBaseSchedule,
+        id: "vs-route-b-1",
+        assigned_doctor_id: "doc-001",
+        patient_id: "pat-002",
+        route_group_id: "route-pm-older",
+        route_order: 1,
+        scheduled_start_at: "2026-05-09T06:00:00.000Z",
+        scheduled_end_at: "2026-05-09T06:40:00.000Z",
+        status: "completed",
+        visit_type: "居家訪視",
+        service_time_slot: "下午",
+        updated_at: "2026-05-09T06:45:00.000Z"
+      },
+      {
+        ...secondBaseSchedule,
+        id: "vs-route-a-2",
+        assigned_doctor_id: "doc-001",
+        patient_id: "pat-004",
+        route_group_id: "route-am-latest",
+        route_order: 2,
+        scheduled_start_at: "2026-05-10T02:00:00.000Z",
+        scheduled_end_at: "2026-05-10T02:40:00.000Z",
+        status: "completed",
+        visit_type: "居家訪視",
+        service_time_slot: "上午",
+        updated_at: "2026-05-10T02:45:00.000Z"
+      },
+      {
+        ...firstBaseSchedule,
+        id: "vs-route-a-1",
+        assigned_doctor_id: "doc-001",
+        patient_id: "pat-001",
+        route_group_id: "route-am-latest",
+        route_order: 1,
+        scheduled_start_at: "2026-05-10T03:00:00.000Z",
+        scheduled_end_at: "2026-05-10T03:40:00.000Z",
+        status: "completed",
+        visit_type: "居家訪視",
+        service_time_slot: "上午",
+        updated_at: "2026-05-10T03:45:00.000Z"
+      }
+    );
+    seeded.visit_records.unshift(
+      {
+        id: "vr-route-b-1",
+        visit_schedule_id: "vs-route-b-1",
+        departure_time: "2026-05-09T05:30:00.000Z",
+        arrival_time: "2026-05-09T05:55:00.000Z",
+        departure_from_patient_home_time: "2026-05-09T06:45:00.000Z",
+        stay_duration_minutes: 50,
+        treatment_start_time: "2026-05-09T06:00:00.000Z",
+        treatment_end_time: "2026-05-09T06:40:00.000Z",
+        treatment_duration_minutes: 40,
+        treatment_duration_manually_adjusted: true,
+        chief_complaint: "下午路線",
+        sleep_status: "",
+        appetite_status: "",
+        bowel_movement_status: "",
+        pain_status: "",
+        energy_status: "",
+        inspection_tags: [],
+        inspection_other: "",
+        listening_tags: [],
+        listening_other: "",
+        inquiry_tags: [],
+        inquiry_other: "",
+        palpation_tags: [],
+        palpation_other: "",
+        physician_assessment: "",
+        treatment_provided: "",
+        doctor_note: "",
+        caregiver_feedback: "",
+        follow_up_note: "",
+        medical_history_note: "",
+        generated_record_text: "",
+        next_visit_suggestion_date: null,
+        visit_feedback_code: "normal",
+        visit_feedback_at: "2026-05-09T06:40:00.000Z",
+        family_followup_status: "not_needed",
+        family_followup_sent_at: null,
+        created_at: "2026-05-09T05:30:00.000Z",
+        updated_at: "2026-05-09T06:45:00.000Z"
+      },
+      {
+        id: "vr-route-a-2",
+        visit_schedule_id: "vs-route-a-2",
+        departure_time: "2026-05-10T01:35:00.000Z",
+        arrival_time: "2026-05-10T01:55:00.000Z",
+        departure_from_patient_home_time: "2026-05-10T02:45:00.000Z",
+        stay_duration_minutes: 50,
+        treatment_start_time: "2026-05-10T02:00:00.000Z",
+        treatment_end_time: "2026-05-10T02:40:00.000Z",
+        treatment_duration_minutes: 40,
+        treatment_duration_manually_adjusted: true,
+        chief_complaint: "上午第二站",
+        sleep_status: "",
+        appetite_status: "",
+        bowel_movement_status: "",
+        pain_status: "",
+        energy_status: "",
+        inspection_tags: [],
+        inspection_other: "",
+        listening_tags: [],
+        listening_other: "",
+        inquiry_tags: [],
+        inquiry_other: "",
+        palpation_tags: [],
+        palpation_other: "",
+        physician_assessment: "",
+        treatment_provided: "",
+        doctor_note: "",
+        caregiver_feedback: "",
+        follow_up_note: "",
+        medical_history_note: "",
+        generated_record_text: "",
+        next_visit_suggestion_date: null,
+        visit_feedback_code: "normal",
+        visit_feedback_at: "2026-05-10T02:40:00.000Z",
+        family_followup_status: "not_needed",
+        family_followup_sent_at: null,
+        created_at: "2026-05-10T01:35:00.000Z",
+        updated_at: "2026-05-10T02:45:00.000Z"
+      },
+      {
+        id: "vr-route-a-1",
+        visit_schedule_id: "vs-route-a-1",
+        departure_time: "2026-05-10T02:35:00.000Z",
+        arrival_time: "2026-05-10T02:55:00.000Z",
+        departure_from_patient_home_time: "2026-05-10T03:45:00.000Z",
+        stay_duration_minutes: 50,
+        treatment_start_time: "2026-05-10T03:00:00.000Z",
+        treatment_end_time: "2026-05-10T03:40:00.000Z",
+        treatment_duration_minutes: 40,
+        treatment_duration_manually_adjusted: true,
+        chief_complaint: "上午第一站",
+        sleep_status: "",
+        appetite_status: "",
+        bowel_movement_status: "",
+        pain_status: "",
+        energy_status: "",
+        inspection_tags: [],
+        inspection_other: "",
+        listening_tags: [],
+        listening_other: "",
+        inquiry_tags: [],
+        inquiry_other: "",
+        palpation_tags: [],
+        palpation_other: "",
+        physician_assessment: "",
+        treatment_provided: "",
+        doctor_note: "",
+        caregiver_feedback: "",
+        follow_up_note: "",
+        medical_history_note: "",
+        generated_record_text: "",
+        next_visit_suggestion_date: null,
+        visit_feedback_code: "normal",
+        visit_feedback_at: "2026-05-10T03:40:00.000Z",
+        family_followup_status: "not_needed",
+        family_followup_sent_at: null,
+        created_at: "2026-05-10T02:35:00.000Z",
+        updated_at: "2026-05-10T03:45:00.000Z"
+      }
+    );
+    window.localStorage.setItem("tcm-home-care-mvp-db", JSON.stringify(seeded));
+
+    renderWithProviders(<DoctorReturnRecordPage />, "/doctor/return-records");
+
+    const routeSelect = screen.getByLabelText("選擇路線");
+    const patientSelect = screen.getByLabelText("選擇個案");
+    const initialPatientOptions = within(patientSelect)
+      .getAllByRole("option")
+      .map((option) => option.textContent);
+
+    expect(initialPatientOptions).toEqual(
+      expect.arrayContaining(["A0001｜王○珠", "A0004｜周○德"])
+    );
+    expect(initialPatientOptions).not.toEqual(expect.arrayContaining(["A0002｜陳○雄"]));
+
+    const olderRouteValue = within(routeSelect)
+      .getAllByRole("option")
+      .find((option) => option.textContent?.includes("2026/05/09"))?.getAttribute("value");
+    if (!olderRouteValue) {
+      throw new Error("找不到下午舊路線選項");
+    }
+
+    fireEvent.change(routeSelect, {
+      target: { value: olderRouteValue }
+    });
+
+    const switchedPatientOptions = within(screen.getByLabelText("選擇個案"))
+      .getAllByRole("option")
+      .map((option) => option.textContent);
+
+    expect(switchedPatientOptions).toEqual(["A0002｜陳○雄"]);
+  });
+
+  it("勾選異常個案後會同步建立醫師與行政通知中心訊息", () => {
     renderWithProviders(<DoctorReturnRecordPage />, "/doctor/return-records?patientId=pat-001");
 
-    fireEvent.click(screen.getByRole("checkbox", { name: "勾選為異常個案，建立病歷後同步提醒醫師與行政追蹤" }));
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: "勾選為異常個案，建立病歷後同步新增醫師與行政通知中心訊息"
+      })
+    );
     fireEvent.change(screen.getByLabelText("主訴"), {
       target: { value: "其他" }
     });
@@ -438,22 +658,33 @@ describe("DoctorReturnRecordPage", () => {
     return waitFor(() => {
       const storedDb = JSON.parse(window.localStorage.getItem("tcm-home-care-mvp-db") ?? "{}");
       const abnormalReminders = (storedDb.reminders ?? []).filter((reminder: { title: string }) =>
-        reminder.title?.includes("異常個案｜王麗珠")
+        reminder.title?.includes("異常個案｜王○珠")
       );
+      const abnormalNotifications = (
+        storedDb.notification_center_items ?? []
+      ).filter((item: { title: string }) => item.title?.includes("異常個案｜王○珠"));
 
       expect(abnormalReminders).toHaveLength(2);
       expect(abnormalReminders.map((reminder: { role: string }) => reminder.role).sort()).toEqual([
         "admin",
         "doctor"
       ]);
-      expect(window.alert).toHaveBeenCalledWith("回院病歷已建立，異常個案提醒已同步到醫師與行政提醒中心。");
+      expect(abnormalNotifications).toHaveLength(2);
+      expect(
+        abnormalNotifications.map((item: { role: string }) => item.role).sort()
+      ).toEqual(["admin", "doctor"]);
+      expect(window.alert).toHaveBeenCalledWith(
+        "回院病歷已建立，異常個案訊息已同步新增到醫師與行政通知中心。"
+      );
     });
   });
 
-  it("勾選加入提醒中心後會同步建立醫師與行政提醒", () => {
+  it("勾選加入通知中心後會同步建立醫師與行政通知中心訊息", () => {
     renderWithProviders(<DoctorReturnRecordPage />, "/doctor/return-records?patientId=pat-001");
 
-    fireEvent.click(screen.getByRole("checkbox", { name: "加入提醒中心，讓醫師與行政後續追蹤" }));
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "加入通知中心，讓醫師與行政後續追蹤" })
+    );
     fireEvent.change(screen.getByLabelText("提醒內容"), {
       target: { value: "請於下次回診前追蹤睡眠與吞嚥變化" }
     });
@@ -462,7 +693,10 @@ describe("DoctorReturnRecordPage", () => {
     return waitFor(() => {
       const storedDb = JSON.parse(window.localStorage.getItem("tcm-home-care-mvp-db") ?? "{}");
       const reminders = (storedDb.reminders ?? []).filter((reminder: { title: string }) =>
-        reminder.title?.includes("回院病歷提醒｜王麗珠")
+        reminder.title?.includes("回院病歷提醒｜王○珠")
+      );
+      const notifications = (storedDb.notification_center_items ?? []).filter(
+        (item: { title: string }) => item.title?.includes("回院病歷提醒｜王○珠")
       );
 
       expect(reminders).toHaveLength(2);
@@ -470,8 +704,15 @@ describe("DoctorReturnRecordPage", () => {
         "admin",
         "doctor"
       ]);
+      expect(notifications).toHaveLength(2);
+      expect(notifications.map((item: { role: string }) => item.role).sort()).toEqual([
+        "admin",
+        "doctor"
+      ]);
       expect(reminders[0].detail).toContain("請於下次回診前追蹤睡眠與吞嚥變化");
-      expect(window.alert).toHaveBeenCalledWith("回院病歷已建立，提醒內容已同步到醫師與行政提醒中心。");
+      expect(window.alert).toHaveBeenCalledWith(
+        "回院病歷已建立，提醒內容已同步新增到醫師與行政通知中心。"
+      );
     });
   });
 
@@ -627,7 +868,7 @@ describe("DoctorReturnRecordPage", () => {
     fireEvent.change(screen.getByLabelText("主訴其他內容"), {
       target: { value: "此次出巡匯出測試" }
     });
-    fireEvent.click(screen.getByRole("checkbox", { name: "加入提醒中心，讓醫師與行政後續追蹤" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "加入通知中心，讓醫師與行政後續追蹤" }));
     fireEvent.change(screen.getByLabelText("提醒內容"), {
       target: { value: "請追蹤此次出巡後續反應" }
     });

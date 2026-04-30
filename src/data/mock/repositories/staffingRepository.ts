@@ -10,6 +10,24 @@ export function createStaffingRepository(
   getDb: () => AppDb,
   updateDb: (updater: (db: AppDb) => AppDb) => void
 ): StaffingRepository {
+  const resolveDashboardDate = (db: AppDb) => {
+    const today = new Date();
+    const todaySchedules = db.visit_schedules.filter((schedule) =>
+      isSameDay(new Date(schedule.scheduled_start_at), today)
+    );
+    if (todaySchedules.length) {
+      return todaySchedules[0].scheduled_start_at.slice(0, 10);
+    }
+
+    const nearestSchedule = [...db.visit_schedules].sort((left, right) => {
+      const leftDistance = Math.abs(new Date(left.scheduled_start_at).getTime() - today.getTime());
+      const rightDistance = Math.abs(new Date(right.scheduled_start_at).getTime() - today.getTime());
+      return leftDistance - rightDistance;
+    })[0];
+
+    return nearestSchedule?.scheduled_start_at.slice(0, 10) ?? null;
+  };
+
   const getImpactedSchedules = (doctorId: string, startDate: string, endDate: string) => {
     const start = new Date(`${startDate}T00:00:00`);
     const end = new Date(`${endDate}T23:59:59`);
@@ -27,9 +45,10 @@ export function createStaffingRepository(
   return {
     getAdminDashboard() {
       const db = getDb();
-      const todaySchedules = db.visit_schedules.filter((schedule) =>
-        isSameDay(new Date(schedule.scheduled_start_at), new Date())
-      );
+      const dashboardDate = resolveDashboardDate(db);
+      const todaySchedules = dashboardDate
+        ? db.visit_schedules.filter((schedule) => schedule.scheduled_start_at.slice(0, 10) === dashboardDate)
+        : [];
       const pendingLeaveRequests = db.leave_requests.filter((leave) => leave.status === "pending");
       const pendingRescheduleActions = db.reschedule_actions.filter((item) =>
         ["pending", "draft"].includes(item.status)
@@ -37,20 +56,40 @@ export function createStaffingRepository(
       const draftRoutePlans = db.saved_route_plans.filter(
         (routePlan) => routePlan.execution_status === "draft"
       );
-      const exceptionSchedules = todaySchedules.filter((schedule) =>
-        ["paused", "issue_pending", "followup_pending", "rescheduled", "cancelled"].includes(
-          schedule.status
-        )
+      const pendingPatientExceptionItems = db.notification_center_items.filter(
+        (item) => item.role === "admin" && item.status === "pending" && item.source_type === "patient_exception"
       );
+      const exceptionScheduleIds = new Set(
+        pendingPatientExceptionItems
+          .map((item) => item.linked_visit_schedule_id)
+          .filter((scheduleId): scheduleId is string => Boolean(scheduleId))
+      );
+      const exceptionSchedules = todaySchedules.filter(
+        (schedule) =>
+          ["paused", "issue_pending", "followup_pending", "rescheduled", "cancelled"].includes(schedule.status) ||
+          exceptionScheduleIds.has(schedule.id)
+      );
+      const trackingStatuses = ["on_the_way", "tracking", "proximity_pending", "arrived", "in_treatment"];
+      const urgentScheduleIds = new Set(
+        todaySchedules
+          .filter((schedule) => schedule.last_feedback_code === "urgent")
+          .map((schedule) => schedule.id)
+      );
+      pendingPatientExceptionItems.forEach((item) => {
+        if (
+          item.linked_visit_schedule_id &&
+          (item.title.includes("urgent") || item.content.includes("urgent") || item.title.includes("緊急"))
+        ) {
+          urgentScheduleIds.add(item.linked_visit_schedule_id);
+        }
+      });
 
       return {
         todayVisitTotal: todaySchedules.length,
         draftRouteCount: draftRoutePlans.length,
-        trackingCount: todaySchedules.filter((schedule) =>
-          ["tracking", "on_the_way"].includes(schedule.status)
-        ).length,
+        trackingCount: todaySchedules.filter((schedule) => trackingStatuses.includes(schedule.status)).length,
         pausedCount: todaySchedules.filter((schedule) => schedule.status === "paused").length,
-        urgentCount: todaySchedules.filter((schedule) => schedule.last_feedback_code === "urgent").length,
+        urgentCount: urgentScheduleIds.size,
         unrecordedCount: todaySchedules.filter(
           (schedule) =>
             schedule.status === "completed" &&
@@ -80,6 +119,7 @@ export function createStaffingRepository(
           reason: input.reason,
           status: input.status ?? "pending",
           handoff_note: input.handoffNote,
+          rejection_reason: null,
           created_at: now,
           updated_at: now
         } as const;
@@ -99,7 +139,7 @@ export function createStaffingRepository(
         };
       });
     },
-    updateLeaveRequestStatus(leaveRequestId, status) {
+    updateLeaveRequestStatus(leaveRequestId, status, options) {
       updateDb((db) => {
         const now = new Date().toISOString();
         const nextLeaveRequests = db.leave_requests.map((leaveRequest) =>
@@ -107,6 +147,10 @@ export function createStaffingRepository(
             ? {
                 ...leaveRequest,
                 status,
+                rejection_reason:
+                  status === "rejected"
+                    ? options?.rejectionReason?.trim() || null
+                    : null,
                 updated_at: now
               }
             : leaveRequest
@@ -135,8 +179,19 @@ export function createStaffingRepository(
                 }
               )
             : db.notification_center_items
-        };
+          };
       });
+    },
+    deleteLeaveRequest(leaveRequestId) {
+      updateDb((db) => ({
+        ...db,
+        leave_requests: db.leave_requests.filter((leaveRequest) => leaveRequest.id !== leaveRequestId),
+        notification_center_items: db.notification_center_items.filter(
+          (item) =>
+            item.linked_leave_request_id !== leaveRequestId &&
+            item.id !== `nc-leave-${leaveRequestId}`
+        )
+      }));
     },
     getImpactedSchedules(doctorId, startDate, endDate) {
       return getImpactedSchedules(doctorId, startDate, endDate);

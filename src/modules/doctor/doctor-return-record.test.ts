@@ -47,7 +47,7 @@ describe("doctor return record helpers", () => {
     });
 
     expect(draft).toBe(
-      "1150421 09001000\n四診：望 少神、舌淡白、其他：眼神反應慢；聞 語音低弱；問 夜尿多、其他：翻身時易喘；切 脈細\n主訴：腰痠、夜尿多\n病史：延續上次病史，仍偶有夜醒。"
+      "治療日期：1150421\n開始治療時間：0900\n結束治療時間：1000\n四診：望 少神、舌淡白、其他：眼神反應慢；聞 語音低弱；問 夜尿多、其他：翻身時易喘；切 脈細\n主訴：腰痠、夜尿多\n病史：延續上次病史，仍偶有夜醒。"
     );
   });
 
@@ -197,7 +197,7 @@ describe("doctor return record helpers", () => {
         isException: true,
         reminderNote: "請追蹤夜間翻身狀況",
         generatedRecordText:
-          "1150510 10201050\n四診：望 少神；聞 語音低弱\n主訴：腰痠,夜尿多",
+          "治療日期：1150510\n開始治療時間：1020\n結束治療時間：1050\n四診：望 少神；聞 語音低弱\n主訴：腰痠,夜尿多",
         linkedHomeVisitScheduleId: "vs-home-1",
         returnRecordScheduleId: "vs-return-1"
       }
@@ -208,6 +208,8 @@ describe("doctor return record helpers", () => {
     );
     expect(csv).toContain("2026/05/10,2026/05/10 上午出巡,蕭坤元醫師,上午,1,王麗珠,TCM-001");
     expect(csv).toContain("\"腰痠,夜尿多\"");
-    expect(csv).toContain("\"1150510 10201050\n四診：望 少神；聞 語音低弱\n主訴：腰痠,夜尿多\"");
+    expect(csv).toContain(
+      "\"治療日期：1150510\n開始治療時間：1020\n結束治療時間：1050\n四診：望 少神；聞 語音低弱\n主訴：腰痠,夜尿多\""
+    );
   });
 });

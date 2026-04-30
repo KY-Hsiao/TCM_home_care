@@ -5,6 +5,7 @@ import { LocationSummaryCard } from "../../modules/maps/LocationSummaryCard";
 import { VisitAutomationPanel } from "../../modules/maps/VisitAutomationPanel";
 import { Badge } from "../../shared/ui/Badge";
 import { Panel } from "../../shared/ui/Panel";
+import { maskPatientName } from "../../shared/utils/patient-name";
 
 export function DemoOverviewPage() {
   const { db } = useAppContext();
@@ -103,7 +104,7 @@ export function MapsOverviewPage() {
                   }`}
                 >
                   <div className="flex items-center justify-between gap-3">
-                    <p className="font-semibold text-brand-ink">{detailItem.patient.name}</p>
+                    <p className="font-semibold text-brand-ink">{maskPatientName(detailItem.patient.name)}</p>
                     <Badge value={schedule.geofence_status} compact />
                   </div>
                   <p className="mt-2 text-sm text-slate-600">{schedule.address_snapshot}</p>
@@ -171,7 +172,7 @@ export function DoctorTracePage() {
                   }`}
                 >
                   <p className="font-semibold text-brand-ink">
-                    {detailItem?.patient.name ?? schedule.patient_id}
+                    {detailItem ? maskPatientName(detailItem.patient.name) : schedule.patient_id}
                   </p>
                   <p className="mt-1 text-sm text-slate-600">{schedule.address_snapshot}</p>
                 </button>

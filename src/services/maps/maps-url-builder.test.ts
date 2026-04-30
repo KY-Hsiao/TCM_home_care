@@ -101,6 +101,36 @@ describe("maps url builder", () => {
     ).toBeNull();
   });
 
+  it("未設定 embed api key 時，路線預覽不再使用不穩定的 directions iframe", () => {
+    const maps = createMapsUrlBuilder({ embedApiKey: "" });
+
+    const state = maps.getRoutePreviewState({
+      origin: {
+        address: "旗山醫院",
+        latitude: 22.88794,
+        longitude: 120.48341
+      },
+      destination: {
+        address: "旗山醫院",
+        latitude: 22.88794,
+        longitude: 120.48341
+      },
+      waypoints: [
+        {
+          address: "高雄市旗山區延平一路 128 號",
+          latitude: null,
+          longitude: null
+        }
+      ],
+      travelMode: "driving",
+      label: "測試路線"
+    });
+
+    expect(state.embedUrl).toBeNull();
+    expect(state.externalUrl).toContain("https://www.google.com/maps/dir/?api=1");
+    expect(state.fallbackReason).toBeNull();
+  });
+
   it("設定 embed api key 時，可產生 directions iframe 網址", () => {
     const maps = createMapsUrlBuilder({ embedApiKey: "demo-key" });
 

@@ -8,6 +8,7 @@ import {
   getScheduleDisplayRange
 } from "../../modules/doctor/doctor-page-helpers";
 import { Panel } from "../../shared/ui/Panel";
+import { maskPatientName } from "../../shared/utils/patient-name";
 import {
   formatDateTimeFull,
   fromDateTimeLocalValue,
@@ -129,7 +130,7 @@ export function DoctorRecordPage() {
 
         <Panel title="本次訪視摘要">
           <div className="space-y-3 text-sm text-slate-600">
-            <p>個案：{detail.patient.name}</p>
+            <p>個案：{maskPatientName(detail.patient.name)}</p>
             <p>預約時間：{formatDateTimeFull(detail.schedule.scheduled_start_at)}</p>
             <p>預估治療時段：{getScheduleDisplayRange(detail.schedule, existing)}</p>
             <p>出發時間可由首頁的「出發」快速記錄，這裡以摘要與紀錄內容為主。</p>

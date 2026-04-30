@@ -150,7 +150,7 @@ describe("DoctorDashboardPage", () => {
     expect(screen.getByText("標記暫停")).toBeInTheDocument();
   });
 
-  it("受試者名單 modal 會顯示整條路線預覽 fallback 與外部 Google 路線按鈕", () => {
+  it("受試者名單 modal 會顯示整條路線的頁內預覽與外部 Google 路線按鈕", () => {
     renderLocationPage();
 
     const routeButton = screen.getAllByRole("button").find((button) =>
@@ -164,7 +164,8 @@ describe("DoctorDashboardPage", () => {
     fireEvent.click(routeButton);
 
     expect(screen.getByText("路線圖預覽")).toBeInTheDocument();
-    expect(screen.getByText("頁內路線圖尚未啟用")).toBeInTheDocument();
+    expect(screen.getByText("頁內示意路線預覽")).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: /頁內路線圖預覽/ })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "用 Google 地圖開啟完整路線" })).toHaveAttribute(
       "href",
       expect.stringContaining("waypoints=")

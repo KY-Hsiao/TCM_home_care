@@ -97,9 +97,7 @@ export function createMapsUrlBuilder(options?: { embedApiKey?: string | null }):
       return {
         embedUrl: this.buildRouteEmbedDirectionsUrl(input),
         externalUrl: this.buildRouteDirectionsUrl(input),
-        fallbackReason: embedApiKey
-          ? null
-          : "尚未設定 Google Maps Embed API key，目前只提供外部 Google 路線預覽。",
+        fallbackReason: null,
         waypointCount: input.waypoints.length
       };
     },

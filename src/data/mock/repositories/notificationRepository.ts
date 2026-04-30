@@ -243,6 +243,22 @@ export function createNotificationRepository(
           )
         };
       });
+    },
+    deleteNotificationCenterItem(itemId) {
+      updateDb((db) => ({
+        ...db,
+        notification_center_items: db.notification_center_items.filter((item) => item.id !== itemId)
+      }));
+    },
+    deleteNotificationCenterItems(itemIds) {
+      const ids = new Set(itemIds);
+      if (!ids.size) {
+        return;
+      }
+      updateDb((db) => ({
+        ...db,
+        notification_center_items: db.notification_center_items.filter((item) => !ids.has(item.id))
+      }));
     }
   };
 }

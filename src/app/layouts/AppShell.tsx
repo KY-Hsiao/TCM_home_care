@@ -5,6 +5,7 @@ import { useAppContext } from "../use-app-context";
 import { formatDateTimeFull } from "../../shared/utils/format";
 import { isVisitFinished, isVisitUnlocked } from "../../modules/doctor/doctor-page-helpers";
 import { StaffCommunicationDialog } from "../../shared/components/StaffCommunicationDialog";
+import { maskPatientName } from "../../shared/utils/patient-name";
 
 type DoctorLocationSyncState = {
   status: "idle" | "requesting" | "sharing" | "denied" | "unsupported" | "error";
@@ -154,7 +155,7 @@ export function AppShell() {
           `定位精度：${latestDoctorLocation ? `${Math.round(latestDoctorLocation.accuracy)} 公尺` : "尚未回傳"}`,
           `資料來源：${latestDoctorLocation?.source ?? "等待定位中"}`,
           activeDoctorSchedule && activeDoctorScheduleDetail
-            ? `同步案件：第 ${activeDoctorSchedule.route_order} 站 / ${activeDoctorScheduleDetail.patient.name}`
+            ? `同步案件：第 ${activeDoctorSchedule.route_order} 站 / ${maskPatientName(activeDoctorScheduleDetail.patient.name)}`
             : activeDoctorRoutePlan && doctorRouteSchedules.every((schedule) => isVisitFinished(schedule.status))
               ? "同步案件：返院導航"
               : "同步案件：等待路線"
@@ -283,7 +284,7 @@ export function AppShell() {
 
   const doctorCommunicationContextLabel =
     activeDoctorScheduleDetail
-      ? `第 ${activeDoctorScheduleDetail.schedule.route_order} 站 ${activeDoctorScheduleDetail.patient.name}`
+      ? `第 ${activeDoctorScheduleDetail.schedule.route_order} 站 ${maskPatientName(activeDoctorScheduleDetail.patient.name)}`
       : activeDoctorRoutePlan
         ? `${activeDoctorRoutePlan.route_name} / 返院或待命`
         : "院內行政協調";
@@ -313,6 +314,30 @@ export function AppShell() {
       created_at: now,
       updated_at: now
     });
+    if (input.channel === "web_notice" || input.channel === "phone") {
+      repositories.notificationRepository.createNotificationCenterItem({
+        id: `nc-staff-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        role: "admin",
+        owner_user_id: currentAdmin.id,
+        source_type: input.channel === "phone" ? "system_notification" : "manual_notice",
+        title: input.subject,
+        content:
+          input.channel === "phone"
+            ? `${input.content}\n請打開團隊通訊頁面立即回應。`
+            : input.content,
+        linked_patient_id: activeDoctorScheduleDetail?.patient.id ?? null,
+        linked_visit_schedule_id: activeDoctorScheduleDetail?.schedule.id ?? null,
+        linked_doctor_id: currentDoctor.id,
+        linked_leave_request_id: null,
+        status: "pending",
+        is_unread: true,
+        reply_text: null,
+        reply_updated_at: null,
+        reply_updated_by_role: null,
+        created_at: now,
+        updated_at: now
+      });
+    }
   };
 
   const notificationCenterPath =
@@ -325,6 +350,48 @@ export function AppShell() {
       .getNotificationCenterItems(shellRole, currentUserId)
       .filter((item) => item.is_unread && item.role === shellRole).length;
   }, [currentUserId, repositories, shellRole]);
+  const notificationSummaryLabel =
+    unreadNotificationCount > 0 ? `通知中心（未讀 ${unreadNotificationCount}）` : "通知中心";
+  const doctorTeamCommunicationUnreadCount = useMemo(() => {
+    if (!shellRole || !currentUserId) {
+      return 0;
+    }
+    return repositories.notificationRepository
+      .getNotificationCenterItems(shellRole, currentUserId)
+      .filter(
+        (item) =>
+          item.is_unread &&
+          item.role === shellRole &&
+          (shellRole === "admin" || item.owner_user_id === currentUserId) &&
+          (shellRole === "doctor" ? item.linked_doctor_id === currentUserId : true) &&
+          ["manual_notice", "system_notification"].includes(item.source_type) &&
+          (item.title.startsWith("院內對話｜") ||
+            item.title.startsWith("語音通話邀請｜") ||
+            item.content.includes("團隊通訊"))
+      ).length;
+  }, [currentUserId, repositories, shellRole]);
+
+  const markShellConversationRead = () => {
+    if (!shellRole || !currentUserId) {
+      return;
+    }
+    repositories.notificationRepository
+      .getNotificationCenterItems(shellRole, currentUserId)
+      .filter(
+        (item) =>
+          item.is_unread &&
+          item.role === shellRole &&
+          (shellRole === "admin" || item.owner_user_id === currentUserId) &&
+          (shellRole === "doctor" ? item.linked_doctor_id === currentUserId : true) &&
+          ["manual_notice", "system_notification"].includes(item.source_type) &&
+          (item.title.startsWith("院內對話｜") ||
+            item.title.startsWith("語音通話邀請｜") ||
+            item.content.includes("團隊通訊"))
+      )
+      .forEach((item) => {
+        repositories.notificationRepository.markNotificationCenterItemRead(item.id);
+      });
+  };
 
   const handleLogout = () => {
     if (!shellRole) {
@@ -394,6 +461,31 @@ export function AppShell() {
             </p>
           </div>
 
+          {shellRole ? (
+            <Link
+              to={shellRole === "doctor" ? "/doctor/team-communication" : "/admin/team-communication"}
+              aria-label={doctorTeamCommunicationUnreadCount > 0 ? "團隊通訊未讀紅燈" : "團隊通訊已讀綠燈"}
+              className={`mt-3 flex items-center gap-2 rounded-2xl border px-3 py-2.5 shadow-sm ${
+                doctorTeamCommunicationUnreadCount > 0
+                  ? "border-rose-300 bg-rose-50 text-rose-700"
+                  : "border-emerald-200 bg-emerald-50 text-emerald-800"
+              } ${isDoctorShell ? "lg:mt-4" : "lg:mt-5"}`}
+            >
+              <span
+                className={`inline-flex h-3.5 w-3.5 shrink-0 rounded-full ${
+                  doctorTeamCommunicationUnreadCount > 0
+                    ? "bg-rose-500 shadow-[0_0_0_4px_rgba(244,63,94,0.15)]"
+                    : "bg-emerald-500 shadow-[0_0_0_4px_rgba(16,185,129,0.15)]"
+                }`}
+              />
+              <span className="text-sm font-semibold">
+                {doctorTeamCommunicationUnreadCount > 0
+                  ? `團隊通訊未讀 ${doctorTeamCommunicationUnreadCount} 則`
+                  : "團隊通訊已讀"}
+              </span>
+            </Link>
+          ) : null}
+
           <nav
             className={
               isDoctorShell
@@ -416,6 +508,12 @@ export function AppShell() {
                   {item.to === notificationCenterPath && unreadNotificationCount > 0 ? (
                     <span className="rounded-full bg-brand-coral px-2 py-0.5 text-[11px] font-semibold text-white">
                       {unreadNotificationCount}
+                    </span>
+                  ) : shellRole === "doctor" &&
+                    item.to === "/doctor/team-communication" &&
+                    doctorTeamCommunicationUnreadCount > 0 ? (
+                    <span className="rounded-full bg-rose-500 px-2 py-0.5 text-[11px] font-semibold text-white">
+                      {doctorTeamCommunicationUnreadCount}
                     </span>
                   ) : null}
                 </div>
@@ -449,7 +547,7 @@ export function AppShell() {
                     to="/doctor/reminders"
                     className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-center text-sm font-semibold text-brand-ink lg:py-2.5"
                   >
-                    通知中心 {unreadNotificationCount > 0 ? `(${unreadNotificationCount})` : ""}
+                    {notificationSummaryLabel}
                   </Link>
                   <button
                     type="button"
@@ -464,9 +562,15 @@ export function AppShell() {
                   <button
                     type="button"
                     onClick={() => setIsStaffCommunicationOpen(true)}
-                    className="col-span-2 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-brand-ink lg:py-2.5"
+                    className={`col-span-2 rounded-2xl border px-4 py-2 text-sm font-semibold lg:py-2.5 ${
+                      doctorTeamCommunicationUnreadCount > 0
+                        ? "border-rose-300 bg-rose-50 text-rose-700"
+                        : "border-slate-200 bg-white text-brand-ink"
+                    }`}
                   >
-                    聯絡行政人員
+                    {doctorTeamCommunicationUnreadCount > 0
+                      ? `團隊通訊（新訊息 ${doctorTeamCommunicationUnreadCount}）`
+                      : "團隊通訊"}
                   </button>
                 </div>
                 {doctorNavigationSummaryItems.length > 0 ? (
@@ -493,6 +597,22 @@ export function AppShell() {
                     </p>
                   </div>
                 </div>
+                {unreadNotificationCount > 0 ? (
+                  <Link
+                    to="/doctor/reminders"
+                    className="mt-2.5 block rounded-2xl border border-brand-coral/30 bg-rose-50 px-4 py-3 text-sm text-rose-700 lg:mt-3"
+                  >
+                    目前有 {unreadNotificationCount} 則未讀通知，請先查看通知中心。
+                  </Link>
+                ) : null}
+                {doctorTeamCommunicationUnreadCount > 0 ? (
+                  <Link
+                    to="/doctor/team-communication"
+                    className="mt-2.5 block rounded-2xl border border-rose-300 bg-rose-100 px-4 py-3 text-sm font-semibold text-rose-700 lg:mt-3"
+                  >
+                    行政人員剛送來 {doctorTeamCommunicationUnreadCount} 則未讀團隊通訊，請立即查看。
+                  </Link>
+                ) : null}
               </div>
             </div>
           ) : null}
@@ -514,7 +634,7 @@ export function AppShell() {
                     to="/admin/reminders"
                     className="rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-center text-sm font-semibold text-brand-ink"
                   >
-                    通知中心 {unreadNotificationCount > 0 ? `(${unreadNotificationCount})` : ""}
+                    {notificationSummaryLabel}
                   </Link>
                   {shellRole ? (
                     <button
@@ -539,6 +659,14 @@ export function AppShell() {
                   ) : null}
                 </div>
               </div>
+              {unreadNotificationCount > 0 ? (
+                <Link
+                  to="/admin/reminders"
+                  className="rounded-2xl border border-brand-coral/30 bg-rose-50 px-4 py-3 text-sm text-rose-700"
+                >
+                  目前有 {unreadNotificationCount} 則未讀通知，請先查看通知中心。
+                </Link>
+              ) : null}
             </header>
           ) : null}
           <main>
@@ -574,7 +702,7 @@ export function AppShell() {
 
       {shellRole === "doctor" && isStaffCommunicationOpen && currentDoctor && currentAdmin ? (
         <StaffCommunicationDialog
-          title="直接聯絡行政人員"
+          title="團隊通訊｜行政人員"
           counterpartLabel="行政人員"
           counterpartPhone={currentAdmin.phone}
           currentUserLabel={currentDoctor.name}
@@ -582,11 +710,13 @@ export function AppShell() {
           doctorId={currentDoctor.id}
           adminUserId={currentAdmin.id}
           patientId={activeDoctorScheduleDetail?.patient.id ?? null}
-          visitScheduleId={activeDoctorScheduleDetail?.schedule.id ?? null}
-          logs={doctorAdminConversationLogs}
-          onClose={() => setIsStaffCommunicationOpen(false)}
-          onCreateLog={createDoctorAdminContactLog}
-        />
+            visitScheduleId={activeDoctorScheduleDetail?.schedule.id ?? null}
+            logs={doctorAdminConversationLogs}
+            unreadConversationCount={doctorTeamCommunicationUnreadCount}
+            onConversationViewed={markShellConversationRead}
+            onClose={() => setIsStaffCommunicationOpen(false)}
+            onCreateLog={createDoctorAdminContactLog}
+          />
       ) : null}
 
       {isPasswordModalOpen ? (

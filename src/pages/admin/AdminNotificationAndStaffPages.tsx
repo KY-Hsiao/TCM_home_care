@@ -1,10 +1,8 @@
-import { addHours, format } from "date-fns";
 import { useMemo, useState } from "react";
 import { useAppContext } from "../../app/use-app-context";
-import type { AdminUser, Doctor, VisitSchedule } from "../../domain/models";
+import type { AdminUser, Doctor } from "../../domain/models";
 import { Badge } from "../../shared/ui/Badge";
 import { Panel } from "../../shared/ui/Panel";
-import { formatDateTimeFull } from "../../shared/utils/format";
 
 type ManageableRole = "doctor" | "admin";
 
@@ -179,7 +177,6 @@ export function AdminStaffPage() {
   const [selectedStaffKey, setSelectedStaffKey] = useState<string>(defaultDoctorKey);
   const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [activeServiceDay, setActiveServiceDay] = useState<ServiceDay>(serviceDayOptions[0]);
-  const [showLeaveConsole, setShowLeaveConsole] = useState(false);
   const [recentAction, setRecentAction] = useState<string | null>(null);
   const staffList = useMemo<StaffListItem[]>(
     () =>
@@ -207,11 +204,6 @@ export function AdminStaffPage() {
       ? resolveDraftByKey(defaultDoctorKey)
       : buildEmptyStaffDraft("doctor")
   );
-  const [doctorId, setDoctorId] = useState<string>(db.doctors[0]?.id ?? "");
-  const [startDate, setStartDate] = useState<string>(format(new Date(), "yyyy-MM-dd"));
-  const [endDate, setEndDate] = useState<string>(format(addHours(new Date(), 24), "yyyy-MM-dd"));
-  const [reason, setReason] = useState<string>("請假登記");
-  const [handoffNote, setHandoffNote] = useState<string>("請協助檢查受影響個案");
   const supportedServiceSlots = useMemo(
     () => getSupportedServiceSlots(draft.serviceSlotsText),
     [draft.serviceSlotsText]
@@ -220,17 +212,6 @@ export function AdminStaffPage() {
     () => getLegacyServiceSlotWarnings(draft.serviceSlotsText),
     [draft.serviceSlotsText]
   );
-  const impactedSchedules = repositories.staffingRepository.getImpactedSchedules(
-    doctorId,
-    startDate,
-    endDate
-  );
-  const pendingDoctorTaskCount = repositories.notificationRepository
-    .getTasksByRecipientRole("doctor")
-    .filter((task) => ["pending", "awaiting_reply", "replied"].includes(task.status)).length;
-  const pendingLeaveCount = repositories.staffingRepository
-    .getLeaveRequests()
-    .filter((leave) => leave.status === "pending").length;
   const currentDoctorAssignments = draft.originalRole === "doctor" && draft.sourceId
     ? db.visit_schedules.filter((schedule) => schedule.assigned_doctor_id === draft.sourceId).length
     : 0;
@@ -393,55 +374,6 @@ export function AdminStaffPage() {
     }
     setIsEditorOpen(false);
     setRecentAction(`已移除 ${draft.name || "該角色"}。`);
-  };
-
-  const createLeave = () => {
-    repositories.staffingRepository.createLeaveRequest({
-      doctorId,
-      startDate,
-      endDate,
-      reason,
-      handoffNote,
-      status: "pending"
-    });
-    setRecentAction("請假申請已建立。");
-  };
-
-  const applyImpactAction = (
-    schedule: VisitSchedule,
-    action: "reschedule" | "coverage" | "notify_only" | "pause_visit"
-  ) => {
-    const caregiver = db.caregivers.find((item) => item.id === schedule.primary_caregiver_id);
-    if (action === "reschedule") {
-      repositories.visitRepository.rescheduleVisit({
-        visitScheduleId: schedule.id,
-        requestedByRole: "admin",
-        newStartAt: addHours(new Date(schedule.scheduled_start_at), 24).toISOString(),
-        newEndAt: addHours(new Date(schedule.scheduled_end_at), 24).toISOString(),
-        reason: "醫師請假改期",
-        changeSummary: "由請假與異動處理頁模擬改期"
-      });
-    }
-    if (action === "coverage") {
-      const backupDoctor = db.doctors.find((item) => item.id !== schedule.assigned_doctor_id);
-      if (backupDoctor) {
-        repositories.visitRepository.coverVisit({
-          visitScheduleId: schedule.id,
-          requestedByRole: "admin",
-          newDoctorId: backupDoctor.id,
-          reason: "醫師請假改由代班處理",
-          changeSummary: "由請假與異動處理頁模擬代班"
-        });
-      }
-    }
-    if (action === "pause_visit") {
-      repositories.visitRepository.pauseVisit(
-        schedule.id,
-        "醫師請假，本次先暫停",
-        "由請假與異動處理頁模擬暫停"
-      );
-    }
-    setRecentAction("受影響案件已套用異動。");
   };
 
   return (
@@ -670,139 +602,6 @@ export function AdminStaffPage() {
             </div>
           </div>
         </div>
-      ) : null}
-
-      <Panel
-        title="請假與任務摘要"
-        action={
-          <button
-            type="button"
-            onClick={() => setShowLeaveConsole((current) => !current)}
-            className="rounded-full bg-brand-sand px-4 py-2 text-sm font-semibold text-brand-forest"
-          >
-            {showLeaveConsole ? "收合請假處理" : "展開請假處理"}
-          </button>
-        }
-      >
-        <div className="grid gap-4 md:grid-cols-3 text-sm">
-          <div className="rounded-2xl border border-slate-200 bg-white p-4">
-            <p className="text-xs text-slate-500">待審請假</p>
-            <p className="mt-2 text-2xl font-semibold text-brand-ink">{pendingLeaveCount}</p>
-            <p className="mt-1 text-xs text-slate-500">近期請假衝突已整合到角色設置頁統一查看。</p>
-          </div>
-          <div className="rounded-2xl border border-slate-200 bg-white p-4">
-            <p className="text-xs text-slate-500">待處理院內任務</p>
-            <p className="mt-2 text-2xl font-semibold text-brand-ink">{pendingDoctorTaskCount}</p>
-            <p className="mt-1 text-xs text-slate-500">醫師出發、抵達與異常通知都由同頁面接手。</p>
-          </div>
-          <div className="rounded-2xl border border-slate-200 bg-white p-4">
-            <p className="text-xs text-slate-500">受影響案件</p>
-            <p className="mt-2 text-2xl font-semibold text-brand-ink">{impactedSchedules.length}</p>
-            <p className="mt-1 text-xs text-slate-500">需要改期、代班或暫停的案件可在展開後直接處理。</p>
-          </div>
-        </div>
-      </Panel>
-
-      {showLeaveConsole ? (
-        <>
-      <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
-        <Panel title="請假與異動處理">
-          <div className="grid gap-4 md:grid-cols-2 text-sm">
-            <label className="block">
-              <span className="mb-1 block font-medium text-brand-ink">醫師請假登記</span>
-              <select value={doctorId} onChange={(event) => setDoctorId(event.target.value)} className="w-full rounded-2xl border border-slate-200 px-4 py-3">
-                {db.doctors.map((doctor) => (
-                  <option key={doctor.id} value={doctor.id}>
-                    {doctor.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="block">
-              <span className="mb-1 block font-medium text-brand-ink">開始日期</span>
-              <input type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} className="w-full rounded-2xl border border-slate-200 px-4 py-3" />
-            </label>
-            <label className="block">
-              <span className="mb-1 block font-medium text-brand-ink">結束日期</span>
-              <input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} className="w-full rounded-2xl border border-slate-200 px-4 py-3" />
-            </label>
-            <label className="block md:col-span-2">
-              <span className="mb-1 block font-medium text-brand-ink">原因與交接</span>
-              <textarea value={`${reason}\n${handoffNote}`} onChange={(event) => {
-                const [reasonLine, ...noteLines] = event.target.value.split("\n");
-                setReason(reasonLine);
-                setHandoffNote(noteLines.join("\n"));
-              }} rows={4} className="w-full rounded-2xl border border-slate-200 px-4 py-3" />
-            </label>
-          </div>
-          <button type="button" onClick={createLeave} className="mt-4 rounded-full bg-brand-coral px-5 py-3 font-semibold text-white">
-            建立請假申請
-          </button>
-        </Panel>
-
-        <Panel title="受影響案件">
-          <div className="space-y-3">
-            {impactedSchedules.map((schedule) => {
-              const patient = db.patients.find((item) => item.id === schedule.patient_id);
-              return (
-                <div key={schedule.id} className="rounded-2xl border border-slate-200 p-4 text-sm">
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="font-semibold text-brand-ink">{patient?.name ?? schedule.patient_id}</p>
-                    <Badge value={schedule.status} compact />
-                  </div>
-                  <p className="mt-2 text-slate-600">{formatDateTimeFull(schedule.scheduled_start_at)}</p>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <button type="button" onClick={() => applyImpactAction(schedule, "reschedule")} className="rounded-full bg-brand-sand px-3 py-2 text-xs font-semibold text-brand-forest">
-                      改期
-                    </button>
-                    <button type="button" onClick={() => applyImpactAction(schedule, "coverage")} className="rounded-full bg-brand-sand px-3 py-2 text-xs font-semibold text-brand-forest">
-                      代班
-                    </button>
-                    <button type="button" onClick={() => applyImpactAction(schedule, "pause_visit")} className="rounded-full bg-brand-sand px-3 py-2 text-xs font-semibold text-brand-forest">
-                      暫停本次訪視
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </Panel>
-      </div>
-
-      <div className="grid gap-6 xl:grid-cols-2">
-        <Panel title="請假申請歷程">
-          <div className="space-y-3">
-            {repositories.staffingRepository.getLeaveRequests().map((leave) => (
-              <div key={leave.id} className="rounded-2xl bg-slate-50 p-4 text-sm">
-                <div className="flex items-center justify-between gap-3">
-                  <p className="font-semibold text-brand-ink">{db.doctors.find((item) => item.id === leave.doctor_id)?.name ?? leave.doctor_id}</p>
-                  <Badge value={leave.status} compact />
-                </div>
-                <p className="mt-2 text-slate-600">
-                  {leave.start_date} ~ {leave.end_date}
-                </p>
-                <p className="mt-1 text-slate-500">{leave.handoff_note}</p>
-              </div>
-            ))}
-          </div>
-        </Panel>
-
-        <Panel title="異動歷程">
-          <div className="space-y-3">
-            {repositories.staffingRepository.getRescheduleActions().map((action) => (
-              <div key={action.id} className="rounded-2xl border border-slate-200 p-4 text-sm">
-                <div className="flex items-center justify-between gap-3">
-                  <p className="font-semibold text-brand-ink">{action.action_type}</p>
-                  <span className="text-xs text-slate-500">{action.status}</span>
-                </div>
-                <p className="mt-2 text-slate-600">{formatDateTimeFull(action.original_start_at)} → {formatDateTimeFull(action.new_start_at)}</p>
-                <p className="mt-1 text-slate-500">{action.change_summary}</p>
-              </div>
-            ))}
-          </div>
-        </Panel>
-      </div>
-        </>
       ) : null}
     </div>
   );

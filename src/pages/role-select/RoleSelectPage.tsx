@@ -35,6 +35,16 @@ export function RoleSelectPage() {
   const [adminPassword, setAdminPassword] = useState("");
   const [doctorMessage, setDoctorMessage] = useState<string | null>(null);
   const [adminMessage, setAdminMessage] = useState<string | null>(null);
+  const selectedDoctorUnreadCount = doctorId
+    ? repositories.notificationRepository
+        .getNotificationCenterItems("doctor", doctorId)
+        .filter((item) => item.is_unread && item.role === "doctor").length
+    : 0;
+  const adminUnreadCount = sharedAdminId
+    ? repositories.notificationRepository
+        .getNotificationCenterItems("admin", sharedAdminId)
+        .filter((item) => item.is_unread && item.role === "admin").length
+    : 0;
 
   const handleLogin = (role: "doctor" | "admin") => {
     const result = login({
@@ -132,12 +142,24 @@ export function RoleSelectPage() {
                     <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
                       醫師登入後會立即要求手機瀏覽器定位分享。若未允許或未取得定位，系統會明確顯示目前未取得定位分享，行政端也無法看到即時位置。
                     </div>
+                    {selectedDoctorUnreadCount > 0 ? (
+                      <div className="rounded-2xl border border-brand-coral/30 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                        這個醫師帳號目前有 {selectedDoctorUnreadCount} 則未讀通知，登入後請先查看通知中心。
+                      </div>
+                    ) : null}
                   </>
                 ) : (
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                    <p className="font-medium text-brand-ink">共用行政帳號</p>
-                    <p className="mt-1 text-slate-600">行政人員</p>
-                  </div>
+                  <>
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                      <p className="font-medium text-brand-ink">共用行政帳號</p>
+                      <p className="mt-1 text-slate-600">行政人員</p>
+                    </div>
+                    {adminUnreadCount > 0 ? (
+                      <div className="rounded-2xl border border-brand-coral/30 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                        行政人員目前有 {adminUnreadCount} 則未讀通知，登入後請先查看通知中心。
+                      </div>
+                    ) : null}
+                  </>
                 )}
                 <label className="block">
                   <span className="mb-1 block font-medium text-brand-ink">登入密碼</span>

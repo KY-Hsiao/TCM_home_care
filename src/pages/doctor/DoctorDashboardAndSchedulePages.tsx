@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useAppContext } from "../../app/use-app-context";
 import type { SavedRoutePlan } from "../../domain/models";
@@ -15,6 +16,7 @@ import {
 import { Badge } from "../../shared/ui/Badge";
 import { Panel } from "../../shared/ui/Panel";
 import { formatDateTimeFull, formatTimeOnly } from "../../shared/utils/format";
+import { maskPatientName } from "../../shared/utils/patient-name";
 import type { TrackingRuntime } from "../../services/types";
 
 function openExternalNavigation(url: string) {
@@ -180,7 +182,10 @@ function resolveRoutePlanItemStatusLabel(status: string) {
   return "已排程";
 }
 
-function buildRouteMapInputFromRoutePlan(routePlan: SavedRoutePlan): RouteMapInput | null {
+function buildRouteMapInputFromRoutePlan(
+  routePlan: SavedRoutePlan,
+  repositories: ReturnType<typeof useAppContext>["repositories"]
+): RouteMapInput | null {
   const orderedStops = routePlan.route_items
     .filter((item) => item.checked)
     .slice()
@@ -205,11 +210,23 @@ function buildRouteMapInputFromRoutePlan(routePlan: SavedRoutePlan): RouteMapInp
       latitude: routePlan.end_latitude,
       longitude: routePlan.end_longitude
     },
-    waypoints: orderedStops.map((item) => ({
-      address: item.address,
-      latitude: null,
-      longitude: null
-    })),
+    waypoints: orderedStops.map((item) => {
+      const scheduleDetail = item.schedule_id
+        ? repositories.visitRepository.getScheduleDetail(item.schedule_id)
+        : undefined;
+      const patient = repositories.patientRepository.getPatientById(item.patient_id);
+      return {
+        address: item.address,
+        latitude:
+          scheduleDetail?.schedule.home_latitude_snapshot ??
+          patient?.home_latitude ??
+          null,
+        longitude:
+          scheduleDetail?.schedule.home_longitude_snapshot ??
+          patient?.home_longitude ??
+          null
+      };
+    }),
     travelMode: "driving",
     label: formatRoutePlanButtonLabel(routePlan)
   };
@@ -262,7 +279,7 @@ function resolveRoutePlanNavigationState(input: {
   const routeNavigationHint = currentNavigationSchedule
     ? `目前導航進行到第 ${currentNavigationDisplayOrder ?? currentNavigationSchedule.route_order} 站，抵達後請手動進入治療流程。`
     : nextRouteScheduleDetail
-      ? `下一位會從第 ${nextRouteDisplayOrder ?? nextRouteScheduleDetail.schedule.route_order} 站 ${nextRouteScheduleDetail.patient.name} 開始。`
+      ? `下一位會從第 ${nextRouteDisplayOrder ?? nextRouteScheduleDetail.schedule.route_order} 站 ${maskPatientName(nextRouteScheduleDetail.patient.name)} 開始。`
       : shouldReturnHospital
         ? "所有患者已完成，最後一段請返回醫院。"
         : "目前這條路線沒有可開始的導航站點。";
@@ -707,85 +724,90 @@ function DoctorRouteSelector({ embedded = false }: { embedded?: boolean }) {
     <section id="doctor-route-selector">
       {embedded ? routeListContent : <Panel title="今日導航路線">{routeListContent}</Panel>}
 
-      {selectedRoutePlan ? (
-        <div className="fixed inset-0 z-40 flex items-end justify-center overflow-y-auto bg-slate-950/45 px-3 pt-16 pb-0 lg:items-center lg:p-4">
-          <div className="flex max-h-[88dvh] w-full max-w-3xl flex-col rounded-t-[1.5rem] bg-white p-4 shadow-2xl lg:max-h-[85vh] lg:rounded-[2rem] lg:p-6">
-            <div className="flex items-center justify-between gap-4">
+      {selectedRoutePlan && typeof document !== "undefined"
+        ? createPortal(
+        <div className="fixed inset-0 z-[90] flex items-end justify-center overflow-y-auto bg-slate-950/45 px-2 pt-[max(0.5rem,env(safe-area-inset-top))] pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:px-3 lg:items-center lg:p-4">
+          <div className="flex max-h-[calc(100dvh-1rem)] w-full max-w-3xl flex-col overflow-hidden rounded-[1.35rem] bg-white shadow-2xl sm:max-h-[calc(100dvh-1.25rem)] lg:max-h-[85vh] lg:rounded-[2rem]">
+            <div className="sticky top-0 z-10 flex items-start justify-between gap-3 border-b border-slate-200 bg-white px-4 py-3 lg:px-6">
               <div>
                 <p className="text-sm font-medium text-brand-coral">受試者名單</p>
-                <h2 className="mt-1 text-xl font-semibold text-brand-ink lg:text-2xl">
+                <h2 className="mt-1 text-lg font-semibold text-brand-ink lg:text-2xl">
                   {formatRoutePlanButtonLabel(selectedRoutePlan)}
                 </h2>
               </div>
               <button
                 type="button"
                 onClick={() => setRouteListModalId(null)}
-                className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600"
+                className="shrink-0 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-600"
               >
                 關閉
               </button>
             </div>
-            <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-              點任一位患者即可跳出單人的紀錄視窗；導航仍以右側的開始導航按鈕為主。
-            </div>
-            <div className="mt-4 lg:mt-5">
-              <RouteMapPreviewCard
-                route={buildRouteMapInputFromRoutePlan(selectedRoutePlan)}
-                emptyText="這條路線目前沒有已勾選的患者站點，因此無法建立整體路線預覽。"
-              />
-            </div>
-            <div className="mt-4 flex-1 space-y-2 overflow-y-auto pr-1 lg:mt-5 lg:space-y-3">
-              {selectedRouteEntries.map(({ item, detail }) => (
-                <button
-                  key={`${selectedRoutePlan.id}-${item.patient_id}`}
-                  type="button"
-                  disabled={!detail}
-                  onClick={() => {
-                    if (!detail) {
-                      return;
-                    }
-                    setPatientDetailScheduleId(detail.schedule.id);
-                  }}
-                  className={`w-full rounded-[1rem] border px-3 py-3 text-left transition lg:rounded-[1.25rem] lg:px-4 lg:py-4 ${
-                    detail
-                      ? "border-slate-200 bg-white hover:border-brand-moss hover:bg-brand-sand/30"
-                      : "border-slate-200 bg-slate-100 text-slate-400"
-                  }`}
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <p className="text-sm font-semibold text-brand-ink lg:text-base">{item.patient_name}</p>
-                        <Badge value={item.status} compact />
+            <div className="flex-1 overflow-y-auto px-4 py-3 lg:px-6 lg:py-4">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                點任一位患者即可跳出單人的紀錄視窗；導航仍以右側的開始導航按鈕為主。
+              </div>
+              <div className="mt-3 lg:mt-4">
+                <RouteMapPreviewCard
+                  route={buildRouteMapInputFromRoutePlan(selectedRoutePlan, repositories)}
+                  emptyText="這條路線目前沒有已勾選的患者站點，因此無法建立整體路線預覽。"
+                  compact
+                />
+              </div>
+              <div className="mt-3 space-y-2 pb-1 lg:mt-4 lg:space-y-3">
+                {selectedRouteEntries.map(({ item, detail }) => (
+                  <button
+                    key={`${selectedRoutePlan.id}-${item.patient_id}`}
+                    type="button"
+                    disabled={!detail}
+                    onClick={() => {
+                      if (!detail) {
+                        return;
+                      }
+                      setPatientDetailScheduleId(detail.schedule.id);
+                    }}
+                    className={`w-full rounded-[1rem] border px-3 py-3 text-left transition lg:rounded-[1.25rem] lg:px-4 lg:py-4 ${
+                      detail
+                        ? "border-slate-200 bg-white hover:border-brand-moss hover:bg-brand-sand/30"
+                        : "border-slate-200 bg-slate-100 text-slate-400"
+                    }`}
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="text-sm font-semibold text-brand-ink lg:text-base">{maskPatientName(item.patient_name)}</p>
+                          <Badge value={item.status} compact />
+                        </div>
+                        <p className="mt-1 text-sm text-slate-500">{item.address}</p>
                       </div>
-                      <p className="mt-1 text-sm text-slate-500">{item.address}</p>
+                      <div className="text-right">
+                        <p className="text-sm font-semibold text-brand-forest">
+                          {item.status !== "paused" && detail
+                            ? `第 ${getRouteDisplayOrder(orderedSchedules, detail.schedule.id) ?? item.route_order ?? "-"} 站`
+                            : "未排站"}
+                        </p>
+                        <p className="mt-1 text-xs text-slate-500">
+                          {resolveRoutePlanItemStatusLabel(item.status)}
+                        </p>
+                      </div>
                     </div>
-                    <div className="text-right">
-                      <p className="text-sm font-semibold text-brand-forest">
-                        {item.status !== "paused" && detail
-                          ? `第 ${getRouteDisplayOrder(orderedSchedules, detail.schedule.id) ?? item.route_order ?? "-"} 站`
-                          : "未排站"}
-                      </p>
-                      <p className="mt-1 text-xs text-slate-500">
-                        {resolveRoutePlanItemStatusLabel(item.status)}
-                      </p>
-                    </div>
-                  </div>
-                </button>
-              ))}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       ) : null}
 
-      {patientDetail ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-3 lg:p-4">
+      {patientDetail && typeof document !== "undefined" ? createPortal(
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/55 p-3 lg:p-4">
           <div className="max-h-[92dvh] w-full max-w-4xl overflow-y-auto rounded-[1.5rem] bg-white p-4 shadow-2xl lg:rounded-[2rem] lg:p-6">
             <div className="flex items-center justify-between gap-4">
               <div>
                 <p className="text-sm font-medium text-brand-coral">單人紀錄</p>
                 <h2 className="mt-1 text-xl font-semibold text-brand-ink lg:text-2xl">
-                  {patientDetail.patient.name} 訪視紀錄
+                  {maskPatientName(patientDetail.patient.name)} 訪視紀錄
                 </h2>
               </div>
               <button
@@ -915,7 +937,8 @@ function DoctorRouteSelector({ embedded = false }: { embedded?: boolean }) {
               </div>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       ) : null}
     </section>
   );
@@ -1122,10 +1145,10 @@ export function DoctorLocationPage() {
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 px-3 py-2.5 lg:gap-3 lg:px-5 lg:py-4">
                 <div>
                   <p className="text-xs font-semibold tracking-[0.2em] text-white/70">導航進行中</p>
-                  <h3 className="mt-1 text-base font-semibold leading-tight lg:text-xl">前往 {navigatingContext.detail.patient.name} 的停留點</h3>
+                  <h3 className="mt-1 text-base font-semibold leading-tight lg:text-xl">前往 {maskPatientName(navigatingContext.detail.patient.name)} 的停留點</h3>
                 </div>
                 <div className="rounded-xl bg-white/10 px-3 py-2 text-xs lg:rounded-2xl lg:px-4 lg:py-3 lg:text-sm">
-                  第 {getRouteDisplayOrder(routeSchedules, navigatingContext.schedule.id) ?? navigatingContext.schedule.route_order} 站 / 下一位 {nextRouteContext?.detail.patient.name ?? "返院"}
+                  第 {getRouteDisplayOrder(routeSchedules, navigatingContext.schedule.id) ?? navigatingContext.schedule.route_order} 站 / 下一位 {nextRouteContext ? maskPatientName(nextRouteContext.detail.patient.name) : "返院"}
                 </div>
               </div>
               <div className="space-y-3 p-3 xl:p-5">
@@ -1151,7 +1174,7 @@ export function DoctorLocationPage() {
                       onClick={() => openExternalNavigation(nextMapUrl)}
                       className="inline-flex min-h-[44px] flex-1 items-center justify-center rounded-full border border-white/20 bg-white/10 px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/20"
                     >
-                      開啟下一站導航：{nextRouteContext?.detail.patient.name}
+                      開啟下一站導航：{nextRouteContext ? maskPatientName(nextRouteContext.detail.patient.name) : ""}
                     </button>
                   ) : hospitalMapUrl ? (
                     <button
@@ -1178,11 +1201,11 @@ export function DoctorLocationPage() {
             <section className="rounded-[1.15rem] border border-emerald-200 bg-emerald-50 p-3 lg:rounded-[1.75rem] lg:p-6">
               <p className="text-sm font-semibold text-emerald-800">治療進行中</p>
               <h3 className="mt-1.5 text-lg font-bold leading-tight text-brand-ink lg:mt-2 lg:text-2xl">
-                {treatmentContext.detail.patient.name} 已到站，完成治療後即可接續下一段
+                {maskPatientName(treatmentContext.detail.patient.name)} 已到站，完成治療後即可接續下一段
               </h3>
               <p className="mt-1.5 text-sm text-slate-600">
                 {nextRouteContext
-                  ? `按下後會直接開啟下一家 ${nextRouteContext.detail.patient.name} 的 Google 地圖導航。`
+                  ? `按下後會直接開啟下一家 ${maskPatientName(nextRouteContext.detail.patient.name)} 的 Google 地圖導航。`
                   : "按下後可接續最後一段返院導航。"}
               </p>
               <button
@@ -1199,7 +1222,7 @@ export function DoctorLocationPage() {
             <section className="rounded-[1.15rem] border border-slate-200 bg-white p-3 lg:rounded-[1.75rem] lg:p-6">
               <p className="text-sm font-semibold text-brand-moss">待出發</p>
               <h3 className="mt-1.5 text-lg font-bold leading-tight text-brand-ink lg:mt-2 lg:text-2xl">
-                即將前往第 {getRouteDisplayOrder(routeSchedules, readyContext.schedule.id) ?? readyContext.schedule.route_order} 站 {readyContext.detail.patient.name}
+                即將前往第 {getRouteDisplayOrder(routeSchedules, readyContext.schedule.id) ?? readyContext.schedule.route_order} 站 {maskPatientName(readyContext.detail.patient.name)}
               </h3>
               <p className="mt-1.5 text-sm text-slate-600">
                 主畫面會固定保留這個即時導航區塊，請直接從這裡開始出發。
@@ -1295,7 +1318,7 @@ export function DoctorScheduleDetailPage() {
   return (
     <div className="grid gap-6 xl:grid-cols-[1.05fr_0.95fr]">
       <Panel
-        title={`${detail.patient.name} 今日訪視詳情`}
+        title={`${maskPatientName(detail.patient.name)} 今日訪視詳情`}
         action={
           <Link
             to={`/doctor/records/${detail.schedule.id}`}

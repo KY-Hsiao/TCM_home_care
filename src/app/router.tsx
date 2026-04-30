@@ -4,6 +4,8 @@ import { RoleSelectPage } from "../pages/role-select/RoleSelectPage";
 import {
   AdminDashboardPage,
   AdminDoctorTrackingPage,
+  AdminTeamCommunicationPage,
+  AdminLeaveRequestsPage,
   AdminPatientDetailPage,
   AdminPatientsPage,
   AdminRemindersPage,
@@ -12,9 +14,11 @@ import {
 } from "../pages/admin/AdminPages";
 import {
   DoctorLocationPage,
+  DoctorLeaveRequestPage,
   DoctorPatientPage,
   DoctorRecordPage,
   DoctorRemindersPage,
+  DoctorTeamCommunicationPage,
   DoctorReturnRecordPage,
   DoctorScheduleDetailPage
 } from "../pages/doctor/DoctorPages";
@@ -35,12 +39,16 @@ export const router = createBrowserRouter([
       { path: "/doctor/schedules/:id", element: <DoctorScheduleDetailPage /> },
       { path: "/doctor/records/:visitScheduleId", element: <DoctorRecordPage /> },
       { path: "/doctor/patients/:id", element: <DoctorPatientPage /> },
+      { path: "/doctor/leave-requests", element: <DoctorLeaveRequestPage /> },
+      { path: "/doctor/team-communication", element: <DoctorTeamCommunicationPage /> },
       { path: "/doctor/reminders", element: <DoctorRemindersPage /> },
       { path: "/admin/dashboard", element: <AdminDashboardPage /> },
       { path: "/admin/doctor-tracking", element: <AdminDoctorTrackingPage /> },
+      { path: "/admin/team-communication", element: <AdminTeamCommunicationPage /> },
       { path: "/admin/patients", element: <AdminPatientsPage /> },
       { path: "/admin/patients/:id", element: <AdminPatientDetailPage /> },
       { path: "/admin/reminders", element: <AdminRemindersPage /> },
+      { path: "/admin/leave-requests", element: <AdminLeaveRequestsPage /> },
       { path: "/admin/schedules", element: <AdminSchedulesPage /> },
       { path: "/admin/staff", element: <AdminStaffPage /> },
       { path: "/maps/overview", element: <MapsOverviewPage /> },

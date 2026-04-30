@@ -27,8 +27,10 @@ import {
   fromDateTimeLocalValue,
   toDateTimeLocalValue
 } from "../../shared/utils/format";
+import { maskPatientName } from "../../shared/utils/patient-name";
 
 type ReturnRecordFormValues = {
+  route_key: string;
   patient_id: string;
   mark_as_exception: boolean;
   add_to_reminders: boolean;
@@ -92,6 +94,15 @@ type ReturnRecordCsvDraftOverride = {
   generatedRecordText: string;
 };
 
+type RouteOption = {
+  key: string;
+  routeName: string;
+  routeDate: string;
+  serviceTimeSlot: string;
+  routeGroupId: string | null;
+  schedules: VisitSchedule[];
+};
+
 const fourDiagnosisSections: Array<{
   field: FourDiagnosisField;
   otherField: FourDiagnosisOtherField;
@@ -134,6 +145,30 @@ const chiefComplaintOptions = [
   "其他"
 ] as const;
 
+function resolvePreviousChiefComplaintFields(chiefComplaint: string | undefined) {
+  const trimmedChiefComplaint = chiefComplaint?.trim() ?? "";
+  if (!trimmedChiefComplaint) {
+    return {
+      chiefComplaintOption: "",
+      chiefComplaintOther: ""
+    };
+  }
+
+  if (
+    chiefComplaintOptions.some((option) => option !== "其他" && option === trimmedChiefComplaint)
+  ) {
+    return {
+      chiefComplaintOption: trimmedChiefComplaint,
+      chiefComplaintOther: ""
+    };
+  }
+
+  return {
+    chiefComplaintOption: "其他",
+    chiefComplaintOther: trimmedChiefComplaint
+  };
+}
+
 function buildInitialStartTime() {
   return toDateTimeLocalValue(new Date().toISOString());
 }
@@ -171,13 +206,15 @@ function resolveLatestCompletedHomeVisit(input: {
   doctorId: string;
   repositories: ReturnType<typeof useAppContext>["repositories"];
   patientId?: string;
+  routeKey?: string;
 }): CompletedHomeVisitContext | null {
   const schedules = input.repositories.visitRepository
     .getSchedules({ doctorId: input.doctorId, patientId: input.patientId })
     .filter(
       (schedule) =>
         schedule.visit_type !== "回院病歷" &&
-        schedule.service_time_slot !== "回院病歷"
+        schedule.service_time_slot !== "回院病歷" &&
+        (!input.routeKey || buildRouteOptionKey(schedule) === input.routeKey)
     );
 
   const completedVisits = schedules
@@ -208,6 +245,22 @@ function resolveLatestCompletedHomeVisit(input: {
   return completedVisits[0] ?? null;
 }
 
+function buildRouteOptionKey(schedule: VisitSchedule) {
+  return schedule.route_group_id
+    ? `route-group:${schedule.route_group_id}`
+    : `route-slot:${schedule.assigned_doctor_id}:${schedule.scheduled_start_at.slice(0, 10)}:${schedule.service_time_slot}`;
+}
+
+function buildRouteOptionName(
+  schedule: VisitSchedule,
+  routePlanName?: string
+) {
+  return (
+    routePlanName ??
+    `${formatDateOnly(schedule.scheduled_start_at)} ${schedule.service_time_slot}出巡`
+  );
+}
+
 function resolveReturnRecordTimeDefaults(
   matchedVisit: CompletedHomeVisitContext | null
 ): ReturnRecordTimeDefaults {
@@ -226,7 +279,7 @@ function resolveReturnRecordTimeDefaults(
   return {
     treatmentStartTime: toDateTimeLocalValue(treatmentWindow.startTime),
     treatmentEndTime: toDateTimeLocalValue(treatmentWindow.endTime),
-    hint: `已對應剛完成的居家訪視：${matchedVisit.detail.patient.name} / ${formatDateTimeFull(
+    hint: `已對應剛完成的居家訪視：${maskPatientName(matchedVisit.detail.patient.name)} / ${formatDateTimeFull(
       treatmentWindow.startTime
     )} 至 ${formatDateTimeFull(treatmentWindow.endTime)}`
   };
@@ -288,10 +341,11 @@ function buildAbnormalCaseReminders(
   relatedVisitScheduleId: string
 ): Reminder[] {
   const now = new Date().toISOString();
-  const title = `異常個案｜${patientName}`;
+  const maskedPatientName = maskPatientName(patientName);
+  const title = `異常個案｜${maskedPatientName}`;
   const detail = chiefComplaint
-    ? `${patientName} 已於回院病歷勾選為異常個案，主訴：${chiefComplaint}`
-    : `${patientName} 已於回院病歷勾選為異常個案，請查看回院病歷內容。`;
+    ? `${maskedPatientName} 已於回院病歷勾選為異常個案，主訴：${chiefComplaint}`
+    : `${maskedPatientName} 已於回院病歷勾選為異常個案，請查看回院病歷內容。`;
 
   return (["doctor", "admin"] as const).map((role, index) => ({
     id: `rem-return-abnormal-${Date.now()}-${index}`,
@@ -312,10 +366,11 @@ function buildReturnRecordReminders(
   relatedVisitScheduleId: string
 ): Reminder[] {
   const now = new Date().toISOString();
-  const title = `回院病歷提醒｜${patientName}`;
+  const maskedPatientName = maskPatientName(patientName);
+  const title = `回院病歷提醒｜${maskedPatientName}`;
   const detail = reminderNote.trim()
-    ? `${patientName} 回院病歷提醒：${reminderNote.trim()}`
-    : `${patientName} 已新增回院病歷提醒，請查看病歷內容。`;
+    ? `${maskedPatientName} 回院病歷提醒：${reminderNote.trim()}`
+    : `${maskedPatientName} 已新增回院病歷提醒，請查看病歷內容。`;
 
   return (["doctor", "admin"] as const).map((role, index) => ({
     id: `rem-return-note-${Date.now()}-${index}`,
@@ -347,20 +402,15 @@ export function DoctorReturnRecordPage() {
         .find((doctor) => doctor.id === session.activeDoctorId),
     [repositories, session.activeDoctorId]
   );
-
-  const patients = useMemo(() => {
-    const schedules = repositories.visitRepository.getSchedules({
-      doctorId: session.activeDoctorId
-    });
-    const schedulePatientIds = new Set(schedules.map((schedule) => schedule.patient_id));
-    return repositories.patientRepository
-      .getPatients()
-      .filter(
-        (patient) =>
-          patient.preferred_doctor_id === session.activeDoctorId ||
-          schedulePatientIds.has(patient.id)
-      );
-  }, [repositories, session.activeDoctorId]);
+  const homeVisitSchedules = useMemo(
+    () =>
+      repositories.visitRepository
+        .getSchedules({
+          doctorId: session.activeDoctorId
+        })
+        .filter((schedule) => !isReturnRecordSchedule(schedule)),
+    [repositories, session.activeDoctorId]
+  );
   const latestCompletedHomeVisit = useMemo(
     () =>
       resolveLatestCompletedHomeVisit({
@@ -369,18 +419,98 @@ export function DoctorReturnRecordPage() {
       }),
     [repositories, session.activeDoctorId]
   );
+  const requestedPatientLatestCompletedVisit = useMemo(
+    () =>
+      searchParams.get("patientId")
+        ? resolveLatestCompletedHomeVisit({
+            doctorId: session.activeDoctorId,
+            repositories,
+            patientId: searchParams.get("patientId") ?? undefined
+          })
+        : null,
+    [repositories, searchParams, session.activeDoctorId]
+  );
+  const routeOptions = useMemo(() => {
+    const routePlanByGroupId = new Map(
+      repositories.visitRepository
+        .getSavedRoutePlans({ doctorId: session.activeDoctorId })
+        .filter((routePlan) => Boolean(routePlan.route_group_id))
+        .map((routePlan) => [routePlan.route_group_id as string, routePlan])
+    );
+    const routeGroups = new Map<string, VisitSchedule[]>();
+
+    homeVisitSchedules.forEach((schedule) => {
+      const routeKey = buildRouteOptionKey(schedule);
+      const existingSchedules = routeGroups.get(routeKey) ?? [];
+      routeGroups.set(routeKey, [...existingSchedules, schedule]);
+    });
+
+    return [...routeGroups.entries()]
+      .map(([key, schedules]) => {
+        const orderedSchedules = [...schedules].sort((left, right) => {
+          const leftOrder = left.route_order ?? Number.MAX_SAFE_INTEGER;
+          const rightOrder = right.route_order ?? Number.MAX_SAFE_INTEGER;
+          if (leftOrder !== rightOrder) {
+            return leftOrder - rightOrder;
+          }
+          return new Date(left.scheduled_start_at).getTime() - new Date(right.scheduled_start_at).getTime();
+        });
+        const referenceSchedule = orderedSchedules[0];
+        const routePlan = referenceSchedule.route_group_id
+          ? routePlanByGroupId.get(referenceSchedule.route_group_id)
+          : undefined;
+        return {
+          key,
+          routeName: buildRouteOptionName(referenceSchedule, routePlan?.route_name),
+          routeDate: routePlan?.route_date ?? referenceSchedule.scheduled_start_at.slice(0, 10),
+          serviceTimeSlot: routePlan?.service_time_slot ?? referenceSchedule.service_time_slot,
+          routeGroupId: referenceSchedule.route_group_id ?? null,
+          schedules: orderedSchedules
+        } satisfies RouteOption;
+      })
+      .sort((left, right) => {
+        const leftLatest = Math.max(
+          ...left.schedules.map((schedule) => new Date(schedule.updated_at).getTime())
+        );
+        const rightLatest = Math.max(
+          ...right.schedules.map((schedule) => new Date(schedule.updated_at).getTime())
+        );
+        return rightLatest - leftLatest;
+      });
+  }, [homeVisitSchedules, repositories, session.activeDoctorId]);
+
+  const defaultRouteKey =
+    routeOptions.find((option) => option.key === searchParams.get("routeKey"))?.key ??
+    (requestedPatientLatestCompletedVisit
+      ? buildRouteOptionKey(requestedPatientLatestCompletedVisit.detail.schedule)
+      : undefined) ??
+    (latestCompletedHomeVisit ? buildRouteOptionKey(latestCompletedHomeVisit.detail.schedule) : routeOptions[0]?.key ?? "");
+  const defaultRoute = routeOptions.find((option) => option.key === defaultRouteKey) ?? routeOptions[0];
+  const defaultRouteCompletedVisit =
+    defaultRoute
+      ? resolveLatestCompletedHomeVisit({
+          doctorId: session.activeDoctorId,
+          repositories,
+          routeKey: defaultRoute.key
+        })
+      : null;
+  const defaultRoutePatients = (defaultRoute?.schedules ?? [])
+    .map((schedule) => repositories.patientRepository.getPatientById(schedule.patient_id))
+    .filter((patient): patient is NonNullable<typeof patient> => Boolean(patient))
+    .filter((patient, index, collection) => collection.findIndex((item) => item.id === patient.id) === index);
 
   const defaultPatientId =
-    patients.find((patient) => patient.id === searchParams.get("patientId"))?.id ??
-    latestCompletedHomeVisit?.detail.patient.id ??
-    patients[0]?.id ??
+    defaultRoutePatients.find((patient) => patient.id === searchParams.get("patientId"))?.id ??
+    defaultRouteCompletedVisit?.detail.patient.id ??
+    defaultRoutePatients[0]?.id ??
     "";
   const initialTimeDefaults = resolveReturnRecordTimeDefaults(
     defaultPatientId
       ? resolveLatestCompletedHomeVisit({
           doctorId: session.activeDoctorId,
           repositories,
-          patientId: defaultPatientId
+          patientId: defaultPatientId,
+          routeKey: defaultRouteKey || undefined
         })
       : null
   );
@@ -388,6 +518,7 @@ export function DoctorReturnRecordPage() {
   const { control, getValues, handleSubmit, register, reset, setValue } =
     useForm<ReturnRecordFormValues>({
       defaultValues: {
+        route_key: defaultRouteKey,
         patient_id: defaultPatientId,
         mark_as_exception: false,
         add_to_reminders: false,
@@ -410,6 +541,28 @@ export function DoctorReturnRecordPage() {
       }
     });
 
+  const selectedRouteKey = useWatch({ control, name: "route_key" });
+  const selectedRoute =
+    routeOptions.find((option) => option.key === selectedRouteKey) ?? routeOptions[0];
+  const routePatients = useMemo(
+    () =>
+      (selectedRoute?.schedules ?? [])
+        .map((schedule) => repositories.patientRepository.getPatientById(schedule.patient_id))
+        .filter((patient): patient is NonNullable<typeof patient> => Boolean(patient))
+        .filter((patient, index, collection) => collection.findIndex((item) => item.id === patient.id) === index),
+    [repositories, selectedRoute]
+  );
+  const selectedRouteCompletedVisit = useMemo(
+    () =>
+      selectedRoute
+        ? resolveLatestCompletedHomeVisit({
+            doctorId: session.activeDoctorId,
+            repositories,
+            routeKey: selectedRoute.key
+          })
+        : null,
+    [repositories, selectedRoute, session.activeDoctorId]
+  );
   const selectedPatientId = useWatch({ control, name: "patient_id" });
   const selectedProfile = useMemo(
     () =>
@@ -421,15 +574,16 @@ export function DoctorReturnRecordPage() {
   const returnRecordTimeDefaults = useMemo(
     () =>
       resolveReturnRecordTimeDefaults(
-        selectedPatientId
-          ? resolveLatestCompletedHomeVisit({
+          selectedPatientId
+            ? resolveLatestCompletedHomeVisit({
               doctorId: session.activeDoctorId,
               repositories,
-              patientId: selectedPatientId
+              patientId: selectedPatientId,
+              routeKey: selectedRoute?.key
             })
           : null
       ),
-    [repositories, selectedPatientId, session.activeDoctorId]
+    [repositories, selectedPatientId, selectedRoute, session.activeDoctorId]
   );
   const matchedCompletedVisit = useMemo(
     () =>
@@ -437,15 +591,38 @@ export function DoctorReturnRecordPage() {
         ? resolveLatestCompletedHomeVisit({
             doctorId: session.activeDoctorId,
             repositories,
-            patientId: selectedPatientId
+            patientId: selectedPatientId,
+            routeKey: selectedRoute?.key
           })
         : null,
-    [repositories, selectedPatientId, session.activeDoctorId]
+    [repositories, selectedPatientId, selectedRoute, session.activeDoctorId]
   );
   const previousRecord = useMemo(() => selectedProfile?.visitRecords[0], [selectedProfile]);
   const previousAutoDraftRef = useRef("");
   const previousRecordUpdatedAt = previousRecord?.updated_at ?? "";
   const selectedPatientMedicalHistory = selectedProfile?.patient.important_medical_history ?? "";
+
+  useEffect(() => {
+    if (!selectedRoute) {
+      return;
+    }
+
+    const nextPatientId =
+      routePatients.find((patient) => patient.id === selectedPatientId)?.id ??
+      selectedRouteCompletedVisit?.detail.patient.id ??
+      routePatients[0]?.id ??
+      "";
+
+    if (nextPatientId && nextPatientId !== selectedPatientId) {
+      setValue("patient_id", nextPatientId, { shouldDirty: false, shouldTouch: false });
+    }
+  }, [
+    routePatients,
+    selectedPatientId,
+    selectedRoute,
+    selectedRouteCompletedVisit,
+    setValue
+  ]);
 
   useEffect(() => {
     if (!selectedPatientId) {
@@ -457,13 +634,18 @@ export function DoctorReturnRecordPage() {
       previousRecord,
       selectedPatientMedicalHistory
     );
+    const previousChiefComplaintFields = resolvePreviousChiefComplaintFields(
+      previousRecord?.chief_complaint
+    );
+    const previousReminderNote = extractReminderNoteFromRecord(previousRecord);
     const nextValues: ReturnRecordFormValues = {
+      route_key: selectedRoute?.key ?? "",
       patient_id: selectedPatientId,
       mark_as_exception: false,
       add_to_reminders: false,
-      reminder_note: "",
-      chief_complaint_option: "",
-      chief_complaint_other: "",
+      reminder_note: previousReminderNote,
+      chief_complaint_option: previousChiefComplaintFields.chiefComplaintOption,
+      chief_complaint_other: previousChiefComplaintFields.chiefComplaintOther,
       treatment_start_time: returnRecordTimeDefaults.treatmentStartTime,
       treatment_end_time: returnRecordTimeDefaults.treatmentEndTime,
       ...previousSelections,
@@ -472,7 +654,10 @@ export function DoctorReturnRecordPage() {
     };
 
     const initialDraft = buildReturnRecordDraft({
-      chiefComplaint: "",
+      chiefComplaint:
+        previousChiefComplaintFields.chiefComplaintOption === "其他"
+          ? previousChiefComplaintFields.chiefComplaintOther
+          : previousChiefComplaintFields.chiefComplaintOption,
       treatmentStartTime: nextValues.treatment_start_time,
       treatmentEndTime: nextValues.treatment_end_time,
       inspection_tags: nextValues.inspection_tags,
@@ -493,7 +678,13 @@ export function DoctorReturnRecordPage() {
       ...nextValues,
       generated_record_text: initialDraft
     });
-    setSearchParams({ patientId: selectedPatientId }, { replace: true });
+    setSearchParams(
+      {
+        routeKey: selectedRoute?.key ?? "",
+        patientId: selectedPatientId
+      },
+      { replace: true }
+    );
   }, [
     previousRecordUpdatedAt,
     previousRecord,
@@ -501,6 +692,7 @@ export function DoctorReturnRecordPage() {
     returnRecordTimeDefaults.treatmentEndTime,
     returnRecordTimeDefaults.treatmentStartTime,
     selectedPatientId,
+    selectedRoute,
     selectedPatientMedicalHistory,
     setSearchParams
   ]);
@@ -586,48 +778,11 @@ export function DoctorReturnRecordPage() {
   }, [getValues, resolvedChiefComplaint, selectedPatientId, watchedValues]);
 
   const exportRows = useMemo(() => {
-    if (!matchedCompletedVisit || !activeDoctor) {
+    if (!selectedRoute || !activeDoctor) {
       return [];
     }
 
-    const sourceSchedule = matchedCompletedVisit.detail.schedule;
-    const routeDate = sourceSchedule.scheduled_start_at.slice(0, 10);
-    const routePlan = repositories.visitRepository
-      .getSavedRoutePlans({
-        doctorId: session.activeDoctorId,
-        routeDate,
-        serviceTimeSlot:
-          sourceSchedule.service_time_slot === "上午" ||
-          sourceSchedule.service_time_slot === "下午"
-            ? sourceSchedule.service_time_slot
-            : undefined
-      })
-      .find(
-        (plan) =>
-          plan.route_group_id === sourceSchedule.route_group_id ||
-          plan.route_items.some((item) => item.schedule_id === sourceSchedule.id)
-      );
-    const homeVisitSchedules = repositories.visitRepository
-      .getSchedules({ doctorId: session.activeDoctorId })
-      .filter((schedule) => !isReturnRecordSchedule(schedule))
-      .filter((schedule) => {
-        if (sourceSchedule.route_group_id) {
-          return schedule.route_group_id === sourceSchedule.route_group_id;
-        }
-        return (
-          schedule.scheduled_start_at.slice(0, 10) === routeDate &&
-          schedule.service_time_slot === sourceSchedule.service_time_slot
-        );
-      })
-      .sort(
-        (left, right) =>
-          (left.route_order ?? Number.MAX_SAFE_INTEGER) -
-            (right.route_order ?? Number.MAX_SAFE_INTEGER) ||
-          new Date(left.scheduled_start_at).getTime() -
-            new Date(right.scheduled_start_at).getTime()
-      );
-
-    return homeVisitSchedules
+    return selectedRoute.schedules
       .map((schedule) => {
         const detail = repositories.visitRepository.getScheduleDetail(schedule.id);
         if (!detail) {
@@ -653,18 +808,16 @@ export function DoctorReturnRecordPage() {
         const referenceRecord = linkedReturnRecord ?? detail.record;
         const currentDraftOverride =
           currentDraftCsvOverride &&
-          schedule.id === matchedCompletedVisit.detail.schedule.id &&
+          schedule.id === matchedCompletedVisit?.detail.schedule.id &&
           currentDraftCsvOverride.patientId === detail.patient.id
             ? currentDraftCsvOverride
             : null;
 
         return {
-          routeDate: routePlan?.route_date ?? routeDate,
-          routeName:
-            routePlan?.route_name ??
-            `${formatDateOnly(routeDate)} ${sourceSchedule.service_time_slot}出巡`,
+          routeDate: selectedRoute.routeDate,
+          routeName: selectedRoute.routeName,
           doctorName: activeDoctor.name,
-          serviceTimeSlot: sourceSchedule.service_time_slot,
+          serviceTimeSlot: selectedRoute.serviceTimeSlot,
           routeOrder: schedule.route_order ?? null,
           patientName: detail.patient.name,
           chartNumber: detail.patient.chart_number,
@@ -712,6 +865,7 @@ export function DoctorReturnRecordPage() {
     currentDraftCsvOverride,
     matchedCompletedVisit,
     repositories,
+    selectedRoute,
     session.activeDoctorId
   ]);
   const exportFileName = useMemo(() => {
@@ -779,7 +933,7 @@ export function DoctorReturnRecordPage() {
       return;
     }
     if (values.add_to_reminders && !reminderNote) {
-      window.alert("若要加入提醒中心，請補充提醒內容。");
+      window.alert("若要加入通知中心，請補充提醒內容。");
       return;
     }
 
@@ -872,17 +1026,17 @@ export function DoctorReturnRecordPage() {
     }
     window.alert(
       values.mark_as_exception && values.add_to_reminders
-        ? "回院病歷已建立，異常個案與提醒內容已同步到醫師與行政提醒中心。"
+        ? "回院病歷已建立，異常個案與提醒內容已同步新增到醫師與行政通知中心。"
         : values.mark_as_exception
-          ? "回院病歷已建立，異常個案提醒已同步到醫師與行政提醒中心。"
+          ? "回院病歷已建立，異常個案訊息已同步新增到醫師與行政通知中心。"
           : values.add_to_reminders
-            ? "回院病歷已建立，提醒內容已同步到醫師與行政提醒中心。"
+            ? "回院病歷已建立，提醒內容已同步新增到醫師與行政通知中心。"
             : "回院病歷已建立，病史與病歷內容會作為下次自動帶入基礎。"
     );
   };
 
-  if (!patients.length) {
-    return <Panel title="查無個案">目前此醫師沒有可建立回院病歷的個案資料。</Panel>;
+  if (!routeOptions.length) {
+    return <Panel title="查無路線">目前此醫師沒有可建立回院病歷的出巡路線資料。</Panel>;
   }
 
   return (
@@ -890,16 +1044,29 @@ export function DoctorReturnRecordPage() {
       <Panel title="醫師回院產生病歷">
         <form className="space-y-4 lg:space-y-5" onSubmit={handleSubmit(onSubmit)}>
           <div className="rounded-[1.5rem] border border-slate-200 bg-slate-50 p-4 lg:rounded-3xl lg:p-5">
-            <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
+            <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] md:items-end">
+              <label className="block text-sm">
+                <span className="mb-1 block font-medium text-brand-ink">選擇路線</span>
+                <select
+                  {...register("route_key")}
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
+                >
+                  {routeOptions.map((routeOption) => (
+                    <option key={routeOption.key} value={routeOption.key}>
+                      {routeOption.routeName}｜{routeOption.schedules.length} 位個案
+                    </option>
+                  ))}
+                </select>
+              </label>
               <label className="block text-sm">
                 <span className="mb-1 block font-medium text-brand-ink">選擇個案</span>
                 <select
                   {...register("patient_id")}
                   className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
                 >
-                  {patients.map((patient) => (
+                  {routePatients.map((patient) => (
                     <option key={patient.id} value={patient.id}>
-                      {patient.chart_number}｜{patient.name}
+                      {patient.chart_number}｜{maskPatientName(patient.name)}
                     </option>
                   ))}
                 </select>
@@ -917,16 +1084,23 @@ export function DoctorReturnRecordPage() {
 
             {selectedProfile ? (
               <div className="mt-4 grid gap-3 text-sm text-slate-600 md:grid-cols-2">
-                <p>個案：{selectedProfile.patient.name}</p>
+                <p>路線：{selectedRoute?.routeName ?? "未指定"}</p>
+                <p>本路線個案數：{routePatients.length}</p>
+                <p>個案：{maskPatientName(selectedProfile.patient.name)}</p>
                 <p>生日：{formatDateOnly(selectedProfile.patient.date_of_birth)}</p>
                 <p>重要病史：{selectedProfile.patient.important_medical_history}</p>
                 <p>上次追蹤摘要：{selectedProfile.patient.last_visit_summary}</p>
               </div>
             ) : null}
+            {previousRecord ? (
+              <div className="mt-4 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600">
+                已自動帶入此個案上一筆登打的主訴、四診、病史與病歷草稿內容，可直接修改後送出。
+              </div>
+            ) : null}
             {matchedCompletedVisit ? (
               <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
                 已對應剛完成案件：{formatDateTimeFull(matchedCompletedVisit.detail.schedule.scheduled_start_at)} ／
-                {matchedCompletedVisit.detail.patient.name}
+                {maskPatientName(matchedCompletedVisit.detail.patient.name)}
               </div>
             ) : null}
           </div>
@@ -957,7 +1131,7 @@ export function DoctorReturnRecordPage() {
               {...register("mark_as_exception")}
               className="h-4 w-4 rounded border-amber-300"
             />
-            <span>勾選為異常個案，建立病歷後同步提醒醫師與行政追蹤</span>
+            <span>勾選為異常個案，建立病歷後同步新增醫師與行政通知中心訊息</span>
           </label>
 
           <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3">
@@ -967,7 +1141,7 @@ export function DoctorReturnRecordPage() {
                 {...register("add_to_reminders")}
                 className="h-4 w-4 rounded border-sky-300"
               />
-              <span>加入提醒中心，讓醫師與行政後續追蹤</span>
+              <span>加入通知中心，讓醫師與行政後續追蹤</span>
             </label>
             {watchedValues?.add_to_reminders ? (
               <label className="mt-3 block text-sm">

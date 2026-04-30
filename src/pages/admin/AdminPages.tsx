@@ -4,5 +4,6 @@ export {
   AdminPatientDetailPage,
   AdminPatientsPage
 } from "./AdminDashboardAndPatientPages";
-export { AdminSchedulesPage, AdminRemindersPage } from "./AdminScheduleAndContactsPages";
+export { AdminLeaveRequestsPage, AdminSchedulesPage, AdminRemindersPage } from "./AdminScheduleAndContactsPages";
 export { AdminStaffPage } from "./AdminNotificationAndStaffPages";
+export { AdminTeamCommunicationPage } from "./AdminCommunicationPage";

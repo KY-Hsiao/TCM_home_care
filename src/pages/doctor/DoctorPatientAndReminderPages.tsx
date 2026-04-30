@@ -1,9 +1,11 @@
+import { useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useAppContext } from "../../app/use-app-context";
 import { buildReadonlySummary } from "../../modules/doctor/doctor-page-helpers";
 import { ReminderCenterPanel } from "../shared/ReminderCenterPanel";
 import { Badge } from "../../shared/ui/Badge";
 import { Panel } from "../../shared/ui/Panel";
+import { maskPatientName } from "../../shared/utils/patient-name";
 import {
   formatDateOnly,
   formatDateTimeFull
@@ -26,7 +28,7 @@ export function DoctorPatientPage() {
     <div className="space-y-6">
       <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
         <Panel
-          title={`${profile.patient.name} 個案詳細頁`}
+          title={`${maskPatientName(profile.patient.name)} 個案詳細頁`}
           action={
             <Link
               to={`/doctor/return-records?patientId=${profile.patient.id}`}
@@ -126,6 +128,193 @@ export function DoctorRemindersPage() {
         detailBasePath="/doctor/patients"
         emptyText="目前醫師端沒有待處理通知。"
       />
+    </div>
+  );
+}
+
+export function DoctorLeaveRequestPage() {
+  const { repositories, db, session } = useAppContext();
+  const activeDoctor = db.doctors.find((doctor) => doctor.id === session.activeDoctorId) ?? db.doctors[0];
+  const [startDate, setStartDate] = useState<string>(new Date().toISOString().slice(0, 10));
+  const [endDate, setEndDate] = useState<string>(new Date().toISOString().slice(0, 10));
+  const [reason, setReason] = useState("請假登記");
+  const [handoffNote, setHandoffNote] = useState("請協助檢查受影響個案");
+  const [statusFeedback, setStatusFeedback] = useState<{
+    tone: "success" | "error";
+    message: string;
+  } | null>(null);
+
+  const leaveHistory = useMemo(
+    () =>
+      repositories.staffingRepository
+        .getLeaveRequests()
+        .filter((leaveRequest) => leaveRequest.doctor_id === activeDoctor?.id)
+        .sort(
+          (left, right) =>
+          new Date(right.created_at).getTime() - new Date(left.created_at).getTime()
+        ),
+    [activeDoctor?.id, db.leave_requests, repositories]
+  );
+
+  const handleCreateLeaveRequest = () => {
+    if (!activeDoctor) {
+      setStatusFeedback({
+        tone: "error",
+        message: "目前找不到登入中的醫師資料。"
+      });
+      return;
+    }
+    if (!startDate || !endDate || !reason.trim()) {
+      setStatusFeedback({
+        tone: "error",
+        message: "請完整填寫請假期間與原因。"
+      });
+      return;
+    }
+    if (startDate > endDate) {
+      setStatusFeedback({
+        tone: "error",
+        message: "開始日期不可晚於結束日期。"
+      });
+      return;
+    }
+    repositories.staffingRepository.createLeaveRequest({
+      doctorId: activeDoctor.id,
+      startDate,
+      endDate,
+      reason: reason.trim(),
+      handoffNote: handoffNote.trim(),
+      status: "pending"
+    });
+    setStatusFeedback({
+      tone: "success",
+      message: "請假申請已送出，行政人員可在待處理請假查看。"
+    });
+  };
+
+  const handleDeleteLeaveRequest = (leaveRequestId: string) => {
+    if (typeof window !== "undefined" && typeof window.confirm === "function") {
+      const confirmed = window.confirm("確定要刪除這筆請假申請嗎？");
+      if (!confirmed) {
+        return;
+      }
+    }
+    repositories.staffingRepository.deleteLeaveRequest(leaveRequestId);
+    setStatusFeedback({
+      tone: "success",
+      message: "請假申請已刪除。"
+    });
+  };
+
+  return (
+    <div className="space-y-6">
+      <Panel title="請假申請">
+        <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
+          <div className="space-y-4 text-sm">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-slate-600">
+              <p className="font-medium text-brand-ink">目前登入醫師</p>
+              <p className="mt-1">{activeDoctor?.name ?? "未指定醫師"}</p>
+            </div>
+            <div className="grid gap-3 md:grid-cols-2">
+              <label className="block">
+                <span className="mb-1 block font-medium text-brand-ink">開始日期</span>
+                <input
+                  type="date"
+                  aria-label="開始日期"
+                  value={startDate}
+                  onChange={(event) => setStartDate(event.target.value)}
+                  className="w-full rounded-2xl border border-slate-200 px-4 py-3"
+                />
+              </label>
+              <label className="block">
+                <span className="mb-1 block font-medium text-brand-ink">結束日期</span>
+                <input
+                  type="date"
+                  aria-label="結束日期"
+                  value={endDate}
+                  onChange={(event) => setEndDate(event.target.value)}
+                  className="w-full rounded-2xl border border-slate-200 px-4 py-3"
+                />
+              </label>
+            </div>
+            <label className="block">
+              <span className="mb-1 block font-medium text-brand-ink">請假原因</span>
+              <input
+                type="text"
+                aria-label="請假原因"
+                value={reason}
+                onChange={(event) => setReason(event.target.value)}
+                className="w-full rounded-2xl border border-slate-200 px-4 py-3"
+              />
+            </label>
+            <label className="block">
+              <span className="mb-1 block font-medium text-brand-ink">交班備註</span>
+              <textarea
+                aria-label="交班備註"
+                value={handoffNote}
+                onChange={(event) => setHandoffNote(event.target.value)}
+                rows={4}
+                className="w-full rounded-2xl border border-slate-200 px-4 py-3"
+              />
+            </label>
+            <button
+              type="button"
+              onClick={handleCreateLeaveRequest}
+              className="rounded-full bg-brand-coral px-5 py-3 font-semibold text-white"
+            >
+              送出請假申請
+            </button>
+            {statusFeedback ? (
+              <div
+                role="status"
+                className={`rounded-2xl border px-4 py-3 ${
+                  statusFeedback.tone === "success"
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                    : "border-rose-200 bg-rose-50 text-rose-700"
+                }`}
+              >
+                {statusFeedback.message}
+              </div>
+            ) : null}
+          </div>
+
+            <div className="rounded-[1.5rem] border border-slate-200 bg-white p-4 lg:rounded-3xl lg:p-5">
+              <div className="flex items-center justify-between gap-3">
+                <p className="font-semibold text-brand-ink">請假申請紀錄</p>
+                <span className="text-xs text-slate-500">{leaveHistory.length} 筆</span>
+            </div>
+            <div className="mt-4 space-y-3">
+              {leaveHistory.length ? (
+                leaveHistory.map((leaveRequest) => (
+                  <div key={leaveRequest.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <p className="card-clamp-1 font-medium text-brand-ink">
+                          {leaveRequest.start_date} 至 {leaveRequest.end_date}
+                        </p>
+                        <Badge value={leaveRequest.status} compact />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteLeaveRequest(leaveRequest.id)}
+                        className="rounded-full border border-rose-200 bg-white px-3 py-1.5 text-xs font-semibold text-rose-600"
+                      >
+                        刪除請假單
+                      </button>
+                    </div>
+                    <p className="card-clamp-2 mt-2 text-slate-600">{leaveRequest.reason}</p>
+                    <p className="card-clamp-2 mt-1 text-xs text-slate-500">{leaveRequest.handoff_note}</p>
+                  </div>
+                ))
+              ) : (
+                <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
+                  目前還沒有請假申請紀錄。
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </Panel>
     </div>
   );
 }

@@ -297,6 +297,7 @@ export const leaveRequestSchema = z.object({
   reason: z.string(),
   status: z.enum(leaveRequestStatusValues),
   handoff_note: z.string(),
+  rejection_reason: z.string().nullable().default(null),
   ...baseTimestamps
 });
 

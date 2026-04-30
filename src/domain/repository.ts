@@ -281,6 +281,8 @@ export interface NotificationRepository {
   ): void;
   markNotificationCenterItemRead(itemId: string): void;
   updateNotificationCenterItemStatus(itemId: string, status: string): void;
+  deleteNotificationCenterItem(itemId: string): void;
+  deleteNotificationCenterItems(itemIds: string[]): void;
 }
 
 export interface StaffingRepository {
@@ -295,7 +297,12 @@ export interface StaffingRepository {
     handoffNote: string;
     status?: LeaveRequest["status"];
   }): void;
-  updateLeaveRequestStatus(leaveRequestId: string, status: LeaveRequest["status"]): void;
+  updateLeaveRequestStatus(
+    leaveRequestId: string,
+    status: LeaveRequest["status"],
+    options?: { rejectionReason?: string | null }
+  ): void;
+  deleteLeaveRequest(leaveRequestId: string): void;
   getImpactedSchedules(doctorId: string, startDate: string, endDate: string): VisitSchedule[];
 }
 

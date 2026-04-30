@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { loadDb } from "./db";
+import { loadDb, MOCK_DB_STORAGE_KEY } from "./db";
 import { createSeedDb } from "../seed";
 import { createRepositories } from "./repositories";
 
 describe("mock db loader", () => {
   beforeEach(() => {
+    vi.useRealTimers();
     window.localStorage.clear();
   });
 
@@ -78,5 +79,49 @@ describe("mock db loader", () => {
     );
 
     expect(sameDaySlotSchedules.length).toBeLessThanOrEqual(8);
+  });
+
+  it("會自動清掉超過一個月的行政端醫師路線暫存", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-30T09:00:00+08:00"));
+
+    const seeded = createSeedDb();
+    const staleRoutePlan = {
+      ...seeded.saved_route_plans[0],
+      id: "route-expired-001",
+      route_group_id: "route-expired-001",
+      route_name: "過期路線",
+      route_date: "2026-03-20",
+      saved_at: "2026-03-20T08:00:00+08:00",
+      created_at: "2026-03-20T08:00:00+08:00",
+      updated_at: "2026-03-20T08:00:00+08:00"
+    };
+    const freshRoutePlan = {
+      ...seeded.saved_route_plans[0],
+      id: "route-fresh-001",
+      route_group_id: "route-fresh-001",
+      route_name: "保留路線",
+      route_date: "2026-04-15",
+      saved_at: "2026-04-15T08:00:00+08:00",
+      created_at: "2026-04-15T08:00:00+08:00",
+      updated_at: "2026-04-15T08:00:00+08:00"
+    };
+
+    window.localStorage.setItem(
+      MOCK_DB_STORAGE_KEY,
+      JSON.stringify({
+        ...seeded,
+        saved_route_plans: [staleRoutePlan, freshRoutePlan]
+      })
+    );
+
+    const db = loadDb();
+    const persistedDb = JSON.parse(window.localStorage.getItem(MOCK_DB_STORAGE_KEY) ?? "{}");
+
+    expect(db.saved_route_plans.map((routePlan) => routePlan.id)).toContain("route-fresh-001");
+    expect(db.saved_route_plans.map((routePlan) => routePlan.id)).not.toContain("route-expired-001");
+    expect(persistedDb.saved_route_plans.map((routePlan: { id: string }) => routePlan.id)).toEqual([
+      "route-fresh-001"
+    ]);
   });
 });

@@ -158,10 +158,14 @@ export function joinMedicalHistory(tags: string[], otherValue: string) {
   return joinTags(tags, otherValue, medicalHistoryOptions);
 }
 
-function formatTimeRange(startValue: string, endValue: string) {
+function buildTreatmentTimeSummary(startValue: string, endValue: string) {
   const start = new Date(startValue);
   const end = new Date(endValue);
-  return `${formatRocCompactDate(start)} ${format(start, "HHmm")}${format(end, "HHmm")}`;
+  return [
+    `治療日期：${formatRocCompactDate(start)}`,
+    `開始治療時間：${format(start, "HHmm")}`,
+    `結束治療時間：${format(end, "HHmm")}`
+  ].join("\n");
 }
 
 export function buildFourDiagnosisSummary(input: FourDiagnosisSelections) {
@@ -186,7 +190,7 @@ export function buildFourDiagnosisSummary(input: FourDiagnosisSelections) {
 
 export function buildReturnRecordDraft(input: ReturnRecordDraftInput) {
   return [
-    formatTimeRange(input.treatmentStartTime, input.treatmentEndTime),
+    buildTreatmentTimeSummary(input.treatmentStartTime, input.treatmentEndTime),
     buildFourDiagnosisSummary(input),
     `主訴：${input.chiefComplaint || "未填寫"}`,
     `病史：${input.medicalHistory || "未填寫"}`,

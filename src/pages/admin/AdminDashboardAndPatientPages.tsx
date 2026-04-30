@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ChangeEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useAppContext } from "../../app/use-app-context";
 import type { Patient, VisitSchedule } from "../../domain/models";
@@ -8,7 +8,6 @@ import { Panel } from "../../shared/ui/Panel";
 import { StatCard } from "../../shared/ui/StatCard";
 import { formatDateOnly, formatDateTimeFull, formatTimeOnly } from "../../shared/utils/format";
 import { anonymizePatientName, maskPatientName } from "../../shared/utils/patient-name";
-import { StaffCommunicationDialog } from "../../shared/components/StaffCommunicationDialog";
 import {
   buildGoogleMapsSearchUrl,
   normalizeLocationKeyword,
@@ -34,6 +33,11 @@ const trackingMapDestination = {
   longitude: 120.48341
 } as const;
 const locationStaleThresholdMs = 5 * 60 * 1000;
+const trackingMapTileSize = 256;
+const trackingMapDefaultSize = { width: 960, height: 440 } as const;
+const trackingMapPadding = 56;
+const trackingMapMinZoom = 11;
+const trackingMapMaxZoom = 18;
 
 type RouteTimeSlot = (typeof routeTimeSlotOptions)[number];
 type TrackingRouteOption = {
@@ -143,6 +147,43 @@ function buildServiceSlotLabel(routeDate: string, routeTimeSlot: RouteTimeSlot) 
   return `${weekdayLabels[date.getDay()]}${routeTimeSlot}`;
 }
 
+function resolveTrackingTimeSlot(schedule: Pick<VisitSchedule, "service_time_slot" | "scheduled_start_at">): RouteTimeSlot {
+  if (schedule.service_time_slot.includes("上午")) {
+    return "上午";
+  }
+  if (schedule.service_time_slot.includes("下午")) {
+    return "下午";
+  }
+  const hour = new Date(schedule.scheduled_start_at).getHours();
+  return hour < 13 ? "上午" : "下午";
+}
+
+function resolveTrackingLocationLogs(input: {
+  doctorId: string;
+  routeDate: string;
+  routeScheduleIds: Set<string>;
+  repositories: ReturnType<typeof useAppContext>["repositories"];
+}) {
+  const sortedLogs = input.repositories.visitRepository
+    .getDoctorLocationLogs(input.doctorId)
+    .slice()
+    .sort((left, right) => new Date(right.recorded_at).getTime() - new Date(left.recorded_at).getTime());
+
+  const scheduleLinkedLogs = sortedLogs.filter(
+    (log) => log.linked_visit_schedule_id !== null && input.routeScheduleIds.has(log.linked_visit_schedule_id)
+  );
+  if (scheduleLinkedLogs.length) {
+    return scheduleLinkedLogs;
+  }
+
+  const sameDateLogs = sortedLogs.filter((log) => log.recorded_at.slice(0, 10) === input.routeDate);
+  if (sameDateLogs.length) {
+    return sameDateLogs;
+  }
+
+  return sortedLogs;
+}
+
 function buildDateInputValue(date = new Date()) {
   const year = date.getFullYear();
   const month = `${date.getMonth() + 1}`.padStart(2, "0");
@@ -242,7 +283,7 @@ export function AdminDashboardPage() {
                   className="block rounded-2xl border border-slate-200 bg-white p-4 text-sm"
                 >
                   <div className="flex items-center justify-between gap-3">
-                    <p className="font-semibold text-brand-ink">{patient?.name ?? schedule.patient_id}</p>
+                    <p className="font-semibold text-brand-ink">{patient ? maskPatientName(patient.name) : schedule.patient_id}</p>
                     <Badge value={schedule.status} compact />
                   </div>
                   <p className="mt-2 text-slate-600">{formatDateTimeFull(schedule.scheduled_start_at)}</p>
@@ -314,7 +355,7 @@ export function AdminDashboardPage() {
                 return (
                   <div key={action.id} className="rounded-2xl border border-slate-200 bg-white p-4 text-sm">
                     <div className="flex items-center justify-between gap-3">
-                      <p className="font-semibold text-brand-ink">{patient?.name ?? action.visit_schedule_id}</p>
+                      <p className="font-semibold text-brand-ink">{patient ? maskPatientName(patient.name) : action.visit_schedule_id}</p>
                       <Badge value={action.status} compact />
                     </div>
                     <p className="mt-2 text-slate-600">{formatDateTimeFull(action.new_start_at)}</p>
@@ -411,58 +452,173 @@ function buildTrackingRouteMapInput(
   };
 }
 
-function buildTrackingProjection(doctors: DoctorTrackingSummary[]) {
-  const points = doctors.flatMap((doctor) => [
+function clampTrackingLatitude(latitude: number) {
+  return Math.max(-85, Math.min(85, latitude));
+}
+
+function trackingLongitudeToWorld(longitude: number, zoom: number) {
+  const scale = trackingMapTileSize * 2 ** zoom;
+  return ((longitude + 180) / 360) * scale;
+}
+
+function trackingLatitudeToWorld(latitude: number, zoom: number) {
+  const scale = trackingMapTileSize * 2 ** zoom;
+  const sinLatitude = Math.sin((clampTrackingLatitude(latitude) * Math.PI) / 180);
+  return (0.5 - Math.log((1 + sinLatitude) / (1 - sinLatitude)) / (4 * Math.PI)) * scale;
+}
+
+function trackingWorldToLongitude(worldX: number, zoom: number) {
+  const scale = trackingMapTileSize * 2 ** zoom;
+  return (worldX / scale) * 360 - 180;
+}
+
+function trackingWorldToLatitude(worldY: number, zoom: number) {
+  const scale = trackingMapTileSize * 2 ** zoom;
+  const mercatorY = Math.PI - (2 * Math.PI * worldY) / scale;
+  return (180 / Math.PI) * Math.atan(0.5 * (Math.exp(mercatorY) - Math.exp(-mercatorY)));
+}
+
+function buildTrackingMapRoutePoints(doctor: DoctorTrackingSummary) {
+  return [
+    {
+      key: "origin",
+      kind: "origin" as const,
+      label: "院",
+      latitude: trackingMapOrigin.latitude,
+      longitude: trackingMapOrigin.longitude
+    },
     ...doctor.routeSchedules
+      .filter(
+        (schedule) =>
+          schedule.home_latitude_snapshot !== null && schedule.home_longitude_snapshot !== null
+      )
       .map((schedule) => ({
-        latitude: schedule.home_latitude_snapshot,
-        longitude: schedule.home_longitude_snapshot
-      }))
-      .filter((point) => point.latitude !== null && point.longitude !== null),
+        key: schedule.id,
+        kind: "stop" as const,
+        label: `${schedule.route_order ?? ""}`,
+        latitude: schedule.home_latitude_snapshot as number,
+        longitude: schedule.home_longitude_snapshot as number,
+        schedule
+      })),
+    {
+      key: "destination",
+      kind: "destination" as const,
+      label: "返",
+      latitude: trackingMapDestination.latitude,
+      longitude: trackingMapDestination.longitude
+    }
+  ];
+}
+
+function buildTrackingMapPointsForFit(doctor: DoctorTrackingSummary) {
+  return [
+    ...buildTrackingMapRoutePoints(doctor).map((point) => ({
+      latitude: point.latitude,
+      longitude: point.longitude
+    })),
     doctor.latestLocation
       ? {
           latitude: doctor.latestLocation.latitude,
           longitude: doctor.latestLocation.longitude
         }
       : null
-  ]).filter((point): point is { latitude: number; longitude: number } => Boolean(point));
+  ].filter((point): point is { latitude: number; longitude: number } => Boolean(point));
+}
 
-  if (!points.length) {
-    return null;
+function buildTrackingMapView(
+  doctor: DoctorTrackingSummary,
+  mapSize: { width: number; height: number }
+) {
+  const points = buildTrackingMapPointsForFit(doctor);
+  const focusPoint = doctor.latestLocation
+    ? {
+        latitude: doctor.latestLocation.latitude,
+        longitude: doctor.latestLocation.longitude
+      }
+    : doctor.activeSchedule &&
+        doctor.activeSchedule.home_latitude_snapshot !== null &&
+        doctor.activeSchedule.home_longitude_snapshot !== null
+      ? {
+          latitude: doctor.activeSchedule.home_latitude_snapshot,
+          longitude: doctor.activeSchedule.home_longitude_snapshot
+        }
+      : points[0] ?? {
+          latitude: trackingMapOrigin.latitude,
+          longitude: trackingMapOrigin.longitude
+        };
+
+  let zoom = 16;
+  if (points.length >= 2) {
+    for (let candidateZoom = 17; candidateZoom >= trackingMapMinZoom; candidateZoom -= 1) {
+      const worldPoints = points.map((point) => ({
+        x: trackingLongitudeToWorld(point.longitude, candidateZoom),
+        y: trackingLatitudeToWorld(point.latitude, candidateZoom)
+      }));
+      const widthSpan = Math.max(...worldPoints.map((point) => point.x)) - Math.min(...worldPoints.map((point) => point.x));
+      const heightSpan = Math.max(...worldPoints.map((point) => point.y)) - Math.min(...worldPoints.map((point) => point.y));
+      if (
+        widthSpan <= Math.max(mapSize.width - trackingMapPadding * 2, 120) &&
+        heightSpan <= Math.max(mapSize.height - trackingMapPadding * 2, 120)
+      ) {
+        zoom = candidateZoom;
+        break;
+      }
+    }
   }
 
-  const latitudes = points.map((point) => point.latitude);
-  const longitudes = points.map((point) => point.longitude);
-  const minLatitude = Math.min(...latitudes);
-  const maxLatitude = Math.max(...latitudes);
-  const minLongitude = Math.min(...longitudes);
-  const maxLongitude = Math.max(...longitudes);
-  const latitudeSpan = Math.max(maxLatitude - minLatitude, 0.01);
-  const longitudeSpan = Math.max(maxLongitude - minLongitude, 0.01);
+  return {
+    centerLatitude: focusPoint.latitude,
+    centerLongitude: focusPoint.longitude,
+    zoom
+  };
+}
+
+function projectTrackingPointToScreen(
+  latitude: number,
+  longitude: number,
+  mapView: { centerLatitude: number; centerLongitude: number; zoom: number },
+  mapSize: { width: number; height: number }
+) {
+  const centerWorldX = trackingLongitudeToWorld(mapView.centerLongitude, mapView.zoom);
+  const centerWorldY = trackingLatitudeToWorld(mapView.centerLatitude, mapView.zoom);
+  const pointWorldX = trackingLongitudeToWorld(longitude, mapView.zoom);
+  const pointWorldY = trackingLatitudeToWorld(latitude, mapView.zoom);
 
   return {
-    project(latitude: number, longitude: number) {
-      const x = ((longitude - minLongitude) / longitudeSpan) * 100;
-      const y = 100 - ((latitude - minLatitude) / latitudeSpan) * 100;
-      return { x, y };
-    }
+    x: pointWorldX - centerWorldX + mapSize.width / 2,
+    y: pointWorldY - centerWorldY + mapSize.height / 2
   };
 }
 
 export function AdminDoctorTrackingPage() {
-  const { repositories, db, services, session } = useAppContext();
+  const { repositories, db, services } = useAppContext();
   const [routeDate, setRouteDate] = useState<string>(buildDateInputValue());
   const [routeTimeSlot, setRouteTimeSlot] = useState<RouteTimeSlot>("上午");
   const [selectedDoctorId, setSelectedDoctorId] = useState<string>("");
-  const [isCommunicationOpen, setIsCommunicationOpen] = useState(false);
-  const selectedAdmin = db.admin_users.find((admin) => admin.id === session.activeAdminId) ?? db.admin_users[0];
+  const mapContainerRef = useRef<HTMLDivElement | null>(null);
+  const dragStateRef = useRef<{
+    pointerId: number;
+    startClientX: number;
+    startClientY: number;
+    startCenterWorldX: number;
+    startCenterWorldY: number;
+  } | null>(null);
+  const autoCenteredDoctorKeyRef = useRef<string>("");
+  const [trackingMapSize, setTrackingMapSize] = useState<{ width: number; height: number }>(
+    trackingMapDefaultSize
+  );
+  const [trackingMapView, setTrackingMapView] = useState<{
+    centerLatitude: number;
+    centerLongitude: number;
+    zoom: number;
+  } | null>(null);
   const trackingRouteOptions = useMemo<TrackingRouteOption[]>(() => {
     const doctorIdsByRoute = new Map<string, Set<string>>();
     repositories.visitRepository
       .getSchedules()
       .filter((schedule) => schedule.visit_type !== "回院病歷")
       .forEach((schedule) => {
-        const routeKey = `${schedule.scheduled_start_at.slice(0, 10)}|${schedule.service_time_slot}`;
+        const routeKey = `${schedule.scheduled_start_at.slice(0, 10)}|${resolveTrackingTimeSlot(schedule)}`;
         const doctorIds = doctorIdsByRoute.get(routeKey) ?? new Set<string>();
         doctorIds.add(schedule.assigned_doctor_id);
         doctorIdsByRoute.set(routeKey, doctorIds);
@@ -503,7 +659,7 @@ export function AdminDoctorTrackingPage() {
           .filter(
             (schedule) =>
               schedule.scheduled_start_at.slice(0, 10) === routeDate &&
-              schedule.service_time_slot === routeTimeSlot &&
+              resolveTrackingTimeSlot(schedule) === routeTimeSlot &&
               schedule.visit_type !== "回院病歷"
           )
           .sort(
@@ -516,18 +672,12 @@ export function AdminDoctorTrackingPage() {
         }
 
         const routeScheduleIds = new Set(routeSchedules.map((schedule) => schedule.id));
-        const locationLogs = repositories.visitRepository
-          .getDoctorLocationLogs(doctor.id)
-          .slice()
-          .sort(
-            (left, right) =>
-              new Date(right.recorded_at).getTime() - new Date(left.recorded_at).getTime()
-          )
-          .filter(
-            (log) =>
-              log.linked_visit_schedule_id !== null &&
-              routeScheduleIds.has(log.linked_visit_schedule_id)
-          );
+        const locationLogs = resolveTrackingLocationLogs({
+          doctorId: doctor.id,
+          routeDate,
+          routeScheduleIds,
+          repositories
+        });
         const latestLocation = locationLogs[0];
         const locationStatus = resolveLocationSyncStatus(latestLocation);
         const activeSchedule =
@@ -578,7 +728,7 @@ export function AdminDoctorTrackingPage() {
           locationStatus,
           routeSchedules,
           activeSchedule,
-          activePatientName: activePatient?.name ?? null,
+          activePatientName: activePatient ? maskPatientName(activePatient.name) : null,
           passedStops,
           upcomingStops,
           currentDistanceKilometers,
@@ -613,66 +763,128 @@ export function AdminDoctorTrackingPage() {
   }, [selectedDoctorId, trackedDoctors]);
 
   const selectedDoctor = trackedDoctors.find((doctor) => doctor.doctorId === selectedDoctorId) ?? trackedDoctors[0];
-  const projection = useMemo(() => buildTrackingProjection(trackedDoctors), [trackedDoctors]);
-  const selectedDoctorLogs = useMemo(
-    () =>
-      selectedDoctor
-        ? selectedDoctor.locationLogs
-        : [],
-    [selectedDoctor]
-  );
-  const selectedDoctorActivePatient = selectedDoctor?.activeSchedule
-    ? db.patients.find((patient) => patient.id === selectedDoctor.activeSchedule?.patient_id)
-    : undefined;
-  const staffConversationLogs = useMemo(
-    () =>
-      selectedDoctor
-        ? [...db.contact_logs]
-            .filter(
-              (log) =>
-                log.doctor_id === selectedDoctor.doctorId &&
-                log.admin_user_id === selectedAdmin?.id &&
-                ["phone", "web_notice"].includes(log.channel)
-            )
-            .sort(
-              (left, right) =>
-                new Date(right.contacted_at).getTime() - new Date(left.contacted_at).getTime()
-            )
-        : [],
-    [db.contact_logs, selectedAdmin?.id, selectedDoctor]
-  );
-
-  const createAdminDoctorContactLog = (input: {
-    channel: "phone" | "web_notice";
-    subject: string;
-    content: string;
-    outcome: string;
-  }) => {
-    if (!selectedDoctor || !selectedAdmin) {
+  const recenterTrackingMap = (doctor: DoctorTrackingSummary | undefined) => {
+    if (!doctor) {
       return;
     }
-    const now = new Date().toISOString();
-    repositories.contactRepository.createContactLog({
-      id: `staff-log-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      patient_id: selectedDoctorActivePatient?.id ?? null,
-      visit_schedule_id: selectedDoctor.activeSchedule?.id ?? null,
-      caregiver_id: null,
-      doctor_id: selectedDoctor.doctorId,
-      admin_user_id: selectedAdmin.id,
-      channel: input.channel,
-      subject: input.subject,
-      content: input.content,
-      outcome: input.outcome,
-      contacted_at: now,
-      created_at: now,
-      updated_at: now
+    setTrackingMapView(buildTrackingMapView(doctor, trackingMapSize));
+  };
+
+  const updateTrackingMapZoom = (delta: number) => {
+    setTrackingMapView((current) => {
+      if (!current) {
+        return current;
+      }
+      return {
+        ...current,
+        zoom: Math.max(trackingMapMinZoom, Math.min(trackingMapMaxZoom, current.zoom + delta))
+      };
     });
   };
 
+  useEffect(() => {
+    if (typeof ResizeObserver === "undefined" || !mapContainerRef.current) {
+      return;
+    }
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) {
+        return;
+      }
+      setTrackingMapSize({
+        width: Math.max(Math.round(entry.contentRect.width), trackingMapDefaultSize.width / 2),
+        height: Math.max(Math.round(entry.contentRect.height), trackingMapDefaultSize.height)
+      });
+    });
+    observer.observe(mapContainerRef.current);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    if (!selectedDoctor) {
+      setTrackingMapView(null);
+      autoCenteredDoctorKeyRef.current = "";
+      return;
+    }
+    const doctorKey = `${selectedDoctor.doctorId}|${routeDate}|${routeTimeSlot}`;
+    if (autoCenteredDoctorKeyRef.current === doctorKey) {
+      return;
+    }
+    setTrackingMapView(buildTrackingMapView(selectedDoctor, trackingMapSize));
+    autoCenteredDoctorKeyRef.current = doctorKey;
+  }, [routeDate, routeTimeSlot, selectedDoctor, trackingMapSize]);
+
+  const selectedDoctorRouteLayer = useMemo(
+    () => (selectedDoctor ? buildTrackingMapRoutePoints(selectedDoctor) : []),
+    [selectedDoctor]
+  );
+  const visibleMapTiles = useMemo(() => {
+    if (!trackingMapView) {
+      return [];
+    }
+    const zoom = trackingMapView.zoom;
+    const tileCount = 2 ** zoom;
+    const centerWorldX = trackingLongitudeToWorld(trackingMapView.centerLongitude, zoom);
+    const centerWorldY = trackingLatitudeToWorld(trackingMapView.centerLatitude, zoom);
+    const leftWorld = centerWorldX - trackingMapSize.width / 2;
+    const topWorld = centerWorldY - trackingMapSize.height / 2;
+    const startTileX = Math.floor(leftWorld / trackingMapTileSize);
+    const endTileX = Math.floor((leftWorld + trackingMapSize.width) / trackingMapTileSize);
+    const startTileY = Math.floor(topWorld / trackingMapTileSize);
+    const endTileY = Math.floor((topWorld + trackingMapSize.height) / trackingMapTileSize);
+
+    const tiles: Array<{ key: string; src: string; left: number; top: number }> = [];
+    for (let tileX = startTileX; tileX <= endTileX; tileX += 1) {
+      for (let tileY = startTileY; tileY <= endTileY; tileY += 1) {
+        if (tileY < 0 || tileY >= tileCount) {
+          continue;
+        }
+        const wrappedTileX = ((tileX % tileCount) + tileCount) % tileCount;
+        tiles.push({
+          key: `${zoom}-${wrappedTileX}-${tileY}-${tileX}`,
+          src: `https://tile.openstreetmap.org/${zoom}/${wrappedTileX}/${tileY}.png`,
+          left: tileX * trackingMapTileSize - leftWorld,
+          top: tileY * trackingMapTileSize - topWorld
+        });
+      }
+    }
+    return tiles;
+  }, [trackingMapSize, trackingMapView]);
+
+  const selectedDoctorScreenPoints = useMemo(() => {
+    if (!selectedDoctor || !trackingMapView) {
+      return null;
+    }
+    const routeStops = selectedDoctorRouteLayer.map((point) => ({
+      ...point,
+      ...projectTrackingPointToScreen(point.latitude, point.longitude, trackingMapView, trackingMapSize)
+    }));
+    const currentPoint = selectedDoctor.latestLocation
+      ? projectTrackingPointToScreen(
+          selectedDoctor.latestLocation.latitude,
+          selectedDoctor.latestLocation.longitude,
+          trackingMapView,
+          trackingMapSize
+        )
+      : null;
+
+    return {
+      routeStops,
+      currentPoint
+    };
+  }, [selectedDoctor, selectedDoctorRouteLayer, trackingMapSize, trackingMapView]);
+
+  const handleTrackingDoctorFocus = (doctorId: string) => {
+    const targetDoctor = trackedDoctors.find((doctor) => doctor.doctorId === doctorId);
+    setSelectedDoctorId(doctorId);
+    recenterTrackingMap(targetDoctor);
+    autoCenteredDoctorKeyRef.current = targetDoctor ? `${targetDoctor.doctorId}|${routeDate}|${routeTimeSlot}` : "";
+  };
+
   return (
-    <div className="space-y-6">
-      <Panel title="同時段醫師追蹤總覽">
-        <div className="space-y-4">
+    <div className="space-y-4">
+      <Panel title="同時段醫師追蹤總覽" className="p-3 lg:p-4">
+        <div className="space-y-3">
           <div className="grid gap-3 lg:grid-cols-[180px_140px_1fr]">
             <label className="block text-sm">
               <span className="mb-1 block font-medium text-brand-ink">路線日期</span>
@@ -698,19 +910,21 @@ export function AdminDoctorTrackingPage() {
                 ))}
               </select>
             </label>
-            <div className="rounded-2xl bg-slate-50 px-4 py-3 text-sm text-slate-600">
+            <div className="rounded-2xl bg-slate-50 px-4 py-2.5 text-sm text-slate-600">
               {trackedDoctors.length > 0
                 ? `${buildServiceSlotLabel(routeDate, routeTimeSlot)} 共 ${trackedDoctors.length} 位醫師有路線。`
                 : `${buildServiceSlotLabel(routeDate, routeTimeSlot)} 目前沒有可追蹤路線。`}
             </div>
           </div>
 
-          <div className="rounded-3xl border border-slate-200 bg-white p-4">
+          <div className="rounded-[1.6rem] border border-slate-200 bg-white p-3.5">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <p className="text-sm font-semibold text-brand-ink">站內多醫師追蹤總覽圖</p>
+                <p className="text-sm font-semibold text-brand-ink">
+                  {selectedDoctor ? `${selectedDoctor.doctorName} 追蹤地圖` : "醫師追蹤地圖"}
+                </p>
                 <p className="mt-1 text-xs text-slate-500">
-                  同一張圖上顯示多位醫師的最新位置、停留站點與簡化路線。
+                  點選下方醫師後，地圖只顯示該醫師的最新位置、停留站點與簡化路線。
                 </p>
               </div>
               <div className="flex flex-wrap gap-2 text-xs">
@@ -718,7 +932,7 @@ export function AdminDoctorTrackingPage() {
                   <button
                     key={doctor.doctorId}
                     type="button"
-                    onClick={() => setSelectedDoctorId(doctor.doctorId)}
+                    onClick={() => handleTrackingDoctorFocus(doctor.doctorId)}
                     className={`rounded-full px-3 py-1.5 font-semibold ${
                       selectedDoctor?.doctorId === doctor.doctorId
                         ? "text-white"
@@ -736,101 +950,229 @@ export function AdminDoctorTrackingPage() {
               </div>
             </div>
 
-            {projection ? (
+            {selectedDoctor && trackingMapView && selectedDoctorScreenPoints ? (
               <div
-                aria-label="多醫師追蹤總覽圖"
-                className="mt-4 h-[440px] overflow-hidden rounded-3xl border border-slate-200 bg-[radial-gradient(circle_at_top,#f8fafc,white_55%)]"
+                aria-label={selectedDoctor ? `${selectedDoctor.doctorName} 追蹤地圖` : "醫師追蹤地圖"}
+                title={selectedDoctor ? `${selectedDoctor.doctorName} Google Map 追蹤圖` : "Google Map 追蹤圖"}
+                ref={mapContainerRef}
+                onPointerDown={(event) => {
+                  if (!trackingMapView) {
+                    return;
+                  }
+                  const currentTarget = event.currentTarget;
+                  currentTarget.setPointerCapture(event.pointerId);
+                  dragStateRef.current = {
+                    pointerId: event.pointerId,
+                    startClientX: event.clientX,
+                    startClientY: event.clientY,
+                    startCenterWorldX: trackingLongitudeToWorld(trackingMapView.centerLongitude, trackingMapView.zoom),
+                    startCenterWorldY: trackingLatitudeToWorld(trackingMapView.centerLatitude, trackingMapView.zoom)
+                  };
+                }}
+                onPointerMove={(event) => {
+                  if (!dragStateRef.current || !trackingMapView) {
+                    return;
+                  }
+                  const dragState = dragStateRef.current;
+                  const nextCenterWorldX = dragState.startCenterWorldX - (event.clientX - dragState.startClientX);
+                  const nextCenterWorldY = dragState.startCenterWorldY - (event.clientY - dragState.startClientY);
+                  setTrackingMapView((current) =>
+                    current
+                      ? {
+                          ...current,
+                          centerLongitude: trackingWorldToLongitude(nextCenterWorldX, current.zoom),
+                          centerLatitude: trackingWorldToLatitude(nextCenterWorldY, current.zoom)
+                        }
+                      : current
+                  );
+                }}
+                onPointerUp={(event) => {
+                  if (dragStateRef.current?.pointerId === event.pointerId) {
+                    dragStateRef.current = null;
+                    event.currentTarget.releasePointerCapture(event.pointerId);
+                  }
+                }}
+                onPointerCancel={(event) => {
+                  if (dragStateRef.current?.pointerId === event.pointerId) {
+                    dragStateRef.current = null;
+                    event.currentTarget.releasePointerCapture(event.pointerId);
+                  }
+                }}
+                onWheel={(event) => {
+                  event.preventDefault();
+                  updateTrackingMapZoom(event.deltaY < 0 ? 1 : -1);
+                }}
+                className="relative mt-3 h-[400px] overflow-hidden rounded-[1.5rem] border border-slate-200 bg-slate-100 touch-none cursor-grab active:cursor-grabbing lg:h-[420px]"
               >
-                <svg viewBox="0 0 100 100" className="h-full w-full">
+                <div className="absolute inset-0 z-0 bg-[#eef3ee]">
+                  {visibleMapTiles.map((tile) => (
+                    <img
+                      key={tile.key}
+                      src={tile.src}
+                      alt=""
+                      draggable={false}
+                      className="pointer-events-none absolute select-none"
+                      style={{
+                        left: tile.left,
+                        top: tile.top,
+                        width: trackingMapTileSize,
+                        height: trackingMapTileSize
+                      }}
+                    />
+                  ))}
+                </div>
+                <div className="absolute right-3 top-3 z-20 flex flex-col gap-2">
+                  <button
+                    type="button"
+                    onClick={() => updateTrackingMapZoom(1)}
+                    className="rounded-full border border-white/80 bg-white/95 px-3 py-2 text-xs font-semibold text-brand-ink shadow-sm backdrop-blur"
+                  >
+                    放大地圖
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => updateTrackingMapZoom(-1)}
+                    className="rounded-full border border-white/80 bg-white/95 px-3 py-2 text-xs font-semibold text-brand-ink shadow-sm backdrop-blur"
+                  >
+                    縮小地圖
+                  </button>
+                </div>
+                <div className="pointer-events-none absolute inset-0 z-[1] bg-[radial-gradient(circle_at_top,_rgba(255,255,255,0.16),_transparent_40%),linear-gradient(180deg,rgba(255,255,255,0.06),rgba(15,23,42,0.03))]" />
+                <svg
+                  viewBox={`0 0 ${trackingMapSize.width} ${trackingMapSize.height}`}
+                  className="pointer-events-none absolute inset-0 z-10 h-full w-full select-none"
+                >
                   <defs>
-                    <pattern id="tracking-grid" width="10" height="10" patternUnits="userSpaceOnUse">
-                      <path d="M 10 0 L 0 0 0 10" fill="none" stroke="#e2e8f0" strokeWidth="0.25" />
-                    </pattern>
+                    <filter id="tracking-marker-shadow" x="-50%" y="-50%" width="200%" height="200%">
+                      <feDropShadow dx="0" dy="1.2" stdDeviation="1.8" floodColor="#0f172a" floodOpacity="0.28" />
+                    </filter>
                   </defs>
-                  <rect x="0" y="0" width="100" height="100" fill="url(#tracking-grid)" />
-                  {trackedDoctors.map((doctor) => {
-                    const stopPoints = doctor.routeSchedules
-                      .filter(
-                        (schedule) =>
-                          schedule.home_latitude_snapshot !== null && schedule.home_longitude_snapshot !== null
-                      )
-                      .map((schedule) => ({
-                        schedule,
-                        ...projection.project(
-                          schedule.home_latitude_snapshot as number,
-                          schedule.home_longitude_snapshot as number
-                        )
-                      }));
-                    const routePolyline = stopPoints.map((point) => `${point.x},${point.y}`).join(" ");
-                    const currentPoint = doctor.latestLocation
-                      ? projection.project(doctor.latestLocation.latitude, doctor.latestLocation.longitude)
-                      : null;
-
+                  <polyline
+                    points={selectedDoctorScreenPoints.routeStops.map((point) => `${point.x},${point.y}`).join(" ")}
+                    fill="none"
+                    stroke={selectedDoctor.color}
+                    strokeWidth="6"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    opacity="0.9"
+                  />
+                  {selectedDoctorScreenPoints.routeStops.map((point) => {
+                    const isActiveStop = point.kind === "stop" && point.schedule?.id === selectedDoctor.activeSchedule?.id;
+                    const isHospitalPoint = point.kind !== "stop";
                     return (
-                      <g key={doctor.doctorId}>
-                        {routePolyline ? (
-                          <polyline
-                            points={routePolyline}
+                      <g key={point.key}>
+                        <circle
+                          cx={point.x}
+                          cy={point.y}
+                          r={isHospitalPoint ? 13 : 11}
+                          fill={isHospitalPoint ? "#0f172a" : selectedDoctor.color}
+                          stroke="#ffffff"
+                          strokeWidth="3"
+                          opacity={point.kind === "stop" && point.schedule?.status === "completed" ? 0.7 : 1}
+                        />
+                        {isActiveStop ? (
+                          <circle
+                            cx={point.x}
+                            cy={point.y}
+                            r={18}
                             fill="none"
-                            stroke={doctor.color}
-                            strokeWidth="0.9"
-                            strokeDasharray="1.5 1.1"
-                            opacity="0.8"
+                            stroke={selectedDoctor.color}
+                            strokeWidth="3"
+                            opacity="0.35"
                           />
                         ) : null}
-                        {stopPoints.map((point) => (
-                          <g key={point.schedule.id}>
-                            <circle
-                              cx={point.x}
-                              cy={point.y}
-                              r={selectedDoctor?.doctorId === doctor.doctorId ? 1.4 : 1.1}
-                              fill={doctor.color}
-                              opacity={point.schedule.id === doctor.activeSchedule?.id ? 1 : 0.75}
-                            />
-                            {point.schedule.id === doctor.activeSchedule?.id ? (
-                              <circle
-                                cx={point.x}
-                                cy={point.y}
-                                r={2.2}
-                                fill="none"
-                                stroke={doctor.color}
-                                strokeWidth="0.45"
-                              />
-                            ) : null}
-                          </g>
-                        ))}
-                        {currentPoint ? (
-                          <>
-                            <circle cx={currentPoint.x} cy={currentPoint.y} r={2.4} fill={doctor.color} />
-                            <circle
-                              cx={currentPoint.x}
-                              cy={currentPoint.y}
-                              r={3.5}
-                              fill="none"
-                              stroke={doctor.color}
-                              strokeWidth="0.45"
-                              opacity="0.55"
-                            />
-                          </>
-                        ) : null}
+                        <text
+                          x={point.x}
+                          y={point.y + 4}
+                          textAnchor="middle"
+                          fontSize="11"
+                          fontWeight="700"
+                          fill="#ffffff"
+                        >
+                          {point.label}
+                        </text>
                       </g>
                     );
                   })}
+                  {selectedDoctorScreenPoints.currentPoint ? (
+                    <>
+                      <circle
+                        cx={selectedDoctorScreenPoints.currentPoint.x}
+                        cy={selectedDoctorScreenPoints.currentPoint.y}
+                        r={26}
+                        fill={selectedDoctor.color}
+                        opacity="0.16"
+                      />
+                      <circle
+                        cx={selectedDoctorScreenPoints.currentPoint.x}
+                        cy={selectedDoctorScreenPoints.currentPoint.y}
+                        r={18}
+                        fill="none"
+                        stroke={selectedDoctor.color}
+                        strokeWidth="3"
+                        opacity="0.45"
+                      />
+                      <circle
+                        cx={selectedDoctorScreenPoints.currentPoint.x}
+                        cy={selectedDoctorScreenPoints.currentPoint.y}
+                        r={11}
+                        fill="#ffffff"
+                        filter="url(#tracking-marker-shadow)"
+                      />
+                      <circle
+                        cx={selectedDoctorScreenPoints.currentPoint.x}
+                        cy={selectedDoctorScreenPoints.currentPoint.y}
+                        r={7}
+                        fill={selectedDoctor.color}
+                      />
+                      <g aria-label={`${selectedDoctor.doctorName} 目前位置標記`} filter="url(#tracking-marker-shadow)">
+                        <rect
+                          x={Math.min(
+                            Math.max(selectedDoctorScreenPoints.currentPoint.x - 54, 10),
+                            trackingMapSize.width - 140
+                          )}
+                          y={Math.max(selectedDoctorScreenPoints.currentPoint.y - 52, 10)}
+                          rx="12"
+                          ry="12"
+                          width="118"
+                          height="32"
+                          fill="#ffffff"
+                          opacity="0.98"
+                        />
+                        <text
+                          x={Math.min(
+                            Math.max(selectedDoctorScreenPoints.currentPoint.x + 5, 69),
+                            trackingMapSize.width - 81
+                          )}
+                          y={Math.max(selectedDoctorScreenPoints.currentPoint.y - 31, 31)}
+                          textAnchor="middle"
+                          fontSize="12"
+                          fontWeight="700"
+                          fill={selectedDoctor.color}
+                        >
+                          目前位置
+                        </text>
+                      </g>
+                    </>
+                  ) : null}
                 </svg>
+                <div className="absolute left-3 top-3 z-20 rounded-full bg-white/92 px-3 py-1 text-[11px] font-semibold text-brand-ink shadow-sm">
+                  重新點醫師姓名可回到醫師中心
+                </div>
               </div>
             ) : (
-              <div className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
-                目前這個日期與時段沒有可繪製的多醫師位置資料。
+              <div className="mt-3 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
+                目前這個日期與時段沒有可繪製的醫師位置資料。
               </div>
             )}
           </div>
 
-          <div className="grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">
-            <div className="grid gap-4 md:grid-cols-2">
+          <div className="grid gap-3 xl:grid-cols-[1.02fr_0.98fr]">
+            <div className="grid gap-3 md:grid-cols-2">
               {trackedDoctors.map((doctor) => (
                 <div
                   key={doctor.doctorId}
-                  className={`rounded-3xl border p-5 ${
+                  className={`rounded-[1.6rem] border p-4 ${
                     selectedDoctor?.doctorId === doctor.doctorId
                       ? "border-brand-forest bg-emerald-50/40"
                       : "border-slate-200 bg-white"
@@ -859,28 +1201,28 @@ export function AdminDoctorTrackingPage() {
                       </span>
                     </div>
                   </div>
-                  <div className="mt-4 grid gap-3 sm:grid-cols-3 text-sm">
-                    <div className="rounded-2xl bg-slate-50 px-3 py-3">
+                  <div className="mt-3 grid gap-2 sm:grid-cols-3 text-sm">
+                    <div className="rounded-2xl bg-slate-50 px-3 py-2.5">
                       <p className="text-xs text-slate-500">目前案件</p>
                       <p className="mt-2 font-semibold text-brand-ink">
                         {doctor.activePatientName ?? "待命中"}
                       </p>
                     </div>
-                    <div className="rounded-2xl bg-slate-50 px-3 py-3">
+                    <div className="rounded-2xl bg-slate-50 px-3 py-2.5">
                       <p className="text-xs text-slate-500">已過站點</p>
                       <p className="mt-2 font-semibold text-brand-ink">{doctor.passedStops.length}</p>
                     </div>
-                    <div className="rounded-2xl bg-slate-50 px-3 py-3">
+                    <div className="rounded-2xl bg-slate-50 px-3 py-2.5">
                       <p className="text-xs text-slate-500">未到站點</p>
                       <p className="mt-2 font-semibold text-brand-ink">{doctor.upcomingStops.length}</p>
                     </div>
                   </div>
-                  <p className="mt-3 text-sm text-slate-600">
+                  <p className="mt-2.5 text-sm text-slate-600">
                     {doctor.currentDistanceKilometers !== null
                       ? `距離目前案件約 ${doctor.currentDistanceKilometers.toFixed(1)} 公里`
                       : "等待定位或案件座標"}
                   </p>
-                  <div className="mt-4 flex flex-wrap gap-2">
+                  <div className="mt-3 flex flex-wrap gap-2">
                     {doctor.routeMapUrl ? (
                       <a
                         href={doctor.routeMapUrl}
@@ -893,7 +1235,7 @@ export function AdminDoctorTrackingPage() {
                     ) : null}
                     <button
                       type="button"
-                      onClick={() => setSelectedDoctorId(doctor.doctorId)}
+                      onClick={() => handleTrackingDoctorFocus(doctor.doctorId)}
                       className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-brand-ink"
                     >
                       查看細節
@@ -904,9 +1246,9 @@ export function AdminDoctorTrackingPage() {
             </div>
 
             {selectedDoctor ? (
-              <div className="space-y-4">
-                <div className="rounded-3xl border border-slate-200 bg-white p-5">
-                  <div className="flex items-center justify-between gap-3">
+              <div className="space-y-3">
+                <div className="rounded-[1.6rem] border border-slate-200 bg-white p-4">
+                  <div>
                     <div>
                       <p className="font-semibold text-brand-ink">{selectedDoctor.doctorName} 細節</p>
                       <p className="mt-1 text-sm text-slate-500">
@@ -916,16 +1258,9 @@ export function AdminDoctorTrackingPage() {
                           : " 尚無"}
                       </p>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => setIsCommunicationOpen(true)}
-                      className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-brand-ink ring-1 ring-slate-200"
-                    >
-                      聯絡此醫師
-                    </button>
                   </div>
-                  <div className="mt-4 grid gap-3 md:grid-cols-3">
-                    <div className="rounded-2xl bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                  <div className="mt-3 grid gap-2 md:grid-cols-3">
+                    <div className="rounded-2xl bg-slate-50 px-3 py-2.5 text-sm text-slate-600">
                       <p className="text-xs text-slate-500">目前座標</p>
                       <p className="mt-2 font-semibold text-brand-ink">
                         {selectedDoctor.latestLocation
@@ -936,7 +1271,7 @@ export function AdminDoctorTrackingPage() {
                           : "尚未收到定位"}
                       </p>
                     </div>
-                    <div className="rounded-2xl bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                    <div className="rounded-2xl bg-slate-50 px-3 py-2.5 text-sm text-slate-600">
                       <p className="text-xs text-slate-500">最新時間</p>
                       <p className="mt-2 font-semibold text-brand-ink">
                         {selectedDoctor.latestLocation
@@ -944,7 +1279,7 @@ export function AdminDoctorTrackingPage() {
                           : "尚未收到定位"}
                       </p>
                     </div>
-                    <div className="rounded-2xl bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                    <div className="rounded-2xl bg-slate-50 px-3 py-2.5 text-sm text-slate-600">
                       <p className="text-xs text-slate-500">定位狀態</p>
                       <p className="mt-2 font-semibold text-brand-ink">
                         {getLocationStatusLabel(selectedDoctor.locationStatus)}
@@ -953,41 +1288,20 @@ export function AdminDoctorTrackingPage() {
                   </div>
                 </div>
 
-                <div className="rounded-3xl border border-slate-200 bg-white p-5">
-                  <p className="font-semibold text-brand-ink">最近定位軌跡</p>
-                  <div className="mt-3 space-y-2">
-                    {selectedDoctorLogs.slice(0, 6).map((log) => (
-                      <div key={log.id} className="rounded-2xl bg-slate-50 px-4 py-3 text-sm">
-                        <div className="flex items-center justify-between gap-3">
-                          <p className="font-medium text-brand-ink">
-                            {log.latitude.toFixed(4)}, {log.longitude.toFixed(4)}
-                          </p>
-                          <p className="text-xs text-slate-500">{formatTimeOnly(log.recorded_at)}</p>
-                        </div>
-                      </div>
-                    ))}
-                    {selectedDoctorLogs.length === 0 ? (
-                      <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
-                        目前尚未收到這位醫師於此時段的定位軌跡。
-                      </p>
-                    ) : null}
-                  </div>
-                </div>
-
-                <div className="grid gap-4 md:grid-cols-2">
-                  <div className="rounded-3xl border border-slate-200 bg-white p-5 text-sm">
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="rounded-[1.6rem] border border-slate-200 bg-white p-4 text-sm">
                     <div className="flex items-center justify-between gap-3">
                       <p className="font-semibold text-brand-ink">已經過的地點</p>
                       <span className="text-xs text-slate-500">{selectedDoctor.passedStops.length} 筆</span>
                     </div>
-                    <div className="mt-3 space-y-2">
+                    <div className="mt-2.5 space-y-2">
                       {selectedDoctor.passedStops.length ? (
                         selectedDoctor.passedStops.map((schedule) => {
                           const patient = db.patients.find((item) => item.id === schedule.patient_id);
                           return (
-                            <div key={schedule.id} className="rounded-2xl bg-slate-50 px-4 py-3">
+                            <div key={schedule.id} className="rounded-2xl bg-slate-50 px-3 py-2.5">
                               <p className="font-medium text-brand-ink">
-                                第 {schedule.route_order} 站 {patient?.name ?? schedule.patient_id}
+                                第 {schedule.route_order} 站 {patient ? maskPatientName(patient.name) : schedule.patient_id}
                               </p>
                               <p className="mt-1 text-xs text-slate-500">
                                 {formatTimeOnly(schedule.scheduled_start_at)} / {schedule.area}
@@ -1003,19 +1317,19 @@ export function AdminDoctorTrackingPage() {
                     </div>
                   </div>
 
-                  <div className="rounded-3xl border border-slate-200 bg-white p-5 text-sm">
+                  <div className="rounded-[1.6rem] border border-slate-200 bg-white p-4 text-sm">
                     <div className="flex items-center justify-between gap-3">
                       <p className="font-semibold text-brand-ink">尚未到的地點</p>
                       <span className="text-xs text-slate-500">{selectedDoctor.upcomingStops.length} 筆</span>
                     </div>
-                    <div className="mt-3 space-y-2">
+                    <div className="mt-2.5 space-y-2">
                       {selectedDoctor.upcomingStops.length ? (
                         selectedDoctor.upcomingStops.map((schedule) => {
                           const patient = db.patients.find((item) => item.id === schedule.patient_id);
                           return (
-                            <div key={schedule.id} className="rounded-2xl bg-slate-50 px-4 py-3">
+                            <div key={schedule.id} className="rounded-2xl bg-slate-50 px-3 py-2.5">
                               <p className="font-medium text-brand-ink">
-                                第 {schedule.route_order} 站 {patient?.name ?? schedule.patient_id}
+                                第 {schedule.route_order} 站 {patient ? maskPatientName(patient.name) : schedule.patient_id}
                               </p>
                               <p className="mt-1 text-xs text-slate-500">
                                 {formatTimeOnly(schedule.scheduled_start_at)} / {schedule.area}
@@ -1037,26 +1351,6 @@ export function AdminDoctorTrackingPage() {
         </div>
       </Panel>
 
-      {isCommunicationOpen && selectedDoctor && selectedAdmin ? (
-        <StaffCommunicationDialog
-          title={`直接聯絡 ${selectedDoctor.doctorName}`}
-          counterpartLabel={selectedDoctor.doctorName}
-          counterpartPhone={selectedDoctor.doctorPhone}
-          currentUserLabel="行政人員"
-          contextLabel={
-            selectedDoctor.activeSchedule && selectedDoctorActivePatient
-              ? `第 ${selectedDoctor.activeSchedule.route_order} 站 ${selectedDoctorActivePatient.name}`
-              : `${selectedDoctor.doctorName} 院內協調`
-          }
-          doctorId={selectedDoctor.doctorId}
-          adminUserId={selectedAdmin.id}
-          patientId={selectedDoctorActivePatient?.id ?? null}
-          visitScheduleId={selectedDoctor.activeSchedule?.id ?? null}
-          logs={staffConversationLogs}
-          onClose={() => setIsCommunicationOpen(false)}
-          onCreateLog={createAdminDoctorContactLog}
-        />
-      ) : null}
     </div>
   );
 }
@@ -1292,9 +1586,9 @@ export function AdminPatientsPage() {
       return;
     }
 
-    const confirmed = window.confirm(
-      `確定要刪除 ${selectedPatient.name} 嗎？相關排程、訪視紀錄與流程資料也會一併移除。`
-    );
+      const confirmed = window.confirm(
+        `確定要刪除 ${maskPatientName(selectedPatient.name)} 嗎？相關排程、訪視紀錄與流程資料也會一併移除。`
+      );
     if (!confirmed) {
       return;
     }
@@ -1494,7 +1788,7 @@ export function AdminPatientsPage() {
                     type="checkbox"
                     checked={selectedPatientIds.includes(patient.id)}
                     onChange={(event) => togglePatientSelection(patient.id, event.target.checked)}
-                    aria-label={`${patient.name} 勾選`}
+                    aria-label={`${maskPatientName(patient.name)} 勾選`}
                   />
                   <p className={`font-semibold ${isClosedPatient ? "text-slate-500" : "text-brand-ink"}`}>
                     {maskPatientName(patient.name)}
@@ -1505,7 +1799,7 @@ export function AdminPatientsPage() {
                   <button
                     type="button"
                     onClick={() => openPatientEditor(patient)}
-                    aria-label={`編輯 ${patient.name}`}
+                    aria-label={`編輯 ${maskPatientName(patient.name)}`}
                     className={`rounded-full px-3 py-2 text-xs font-semibold ring-1 ${
                       isClosedPatient
                         ? "bg-slate-50 text-slate-500 ring-slate-300"
