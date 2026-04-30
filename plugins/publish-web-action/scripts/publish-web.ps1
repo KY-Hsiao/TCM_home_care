@@ -22,7 +22,7 @@ foreach ($candidateRoot in $candidateRoots) {
 }
 
 if ($null -eq $repoRoot) {
-  throw "找不到 TCM_home_care 專案根目錄。請在專案目錄內執行，或設定 TCM_HOME_CARE_REPO。"
+  throw "Cannot find TCM_home_care repo root. Run from the project folder or set TCM_HOME_CARE_REPO."
 }
 
 Set-Location $repoRoot
