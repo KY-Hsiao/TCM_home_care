@@ -1089,20 +1089,33 @@ export function AdminDoctorTrackingPage() {
   };
 
   useEffect(() => {
-    if (typeof ResizeObserver === "undefined" || !mapContainerRef.current) {
+    const mapElement = mapContainerRef.current;
+    if (!mapElement) {
       return;
     }
+
+    const syncMapSize = (rect: Pick<DOMRectReadOnly, "width" | "height">) => {
+      setTrackingMapSize({
+        width: Math.max(Math.round(rect.width), 1),
+        height: Math.max(Math.round(rect.height), 1)
+      });
+    };
+
+    syncMapSize(mapElement.getBoundingClientRect());
+
+    if (typeof ResizeObserver === "undefined") {
+      const handleResize = () => syncMapSize(mapElement.getBoundingClientRect());
+      window.addEventListener("resize", handleResize);
+      return () => window.removeEventListener("resize", handleResize);
+    }
+
     const observer = new ResizeObserver((entries) => {
       const entry = entries[0];
-      if (!entry) {
-        return;
+      if (entry) {
+        syncMapSize(entry.contentRect);
       }
-      setTrackingMapSize({
-        width: Math.max(Math.round(entry.contentRect.width), trackingMapDefaultSize.width / 2),
-        height: Math.max(Math.round(entry.contentRect.height), trackingMapDefaultSize.height)
-      });
     });
-    observer.observe(mapContainerRef.current);
+    observer.observe(mapElement);
     return () => observer.disconnect();
   }, []);
 
