@@ -286,6 +286,7 @@ export interface DoctorLocationSyncService {
     date: string;
     timeSlot: DoctorLocationTimeSlot;
   }): string;
+  buildAdminLatestFeedPath(): string;
   pushSample(sample: DoctorLocationSampleUpload): Promise<void> | void;
 }
 

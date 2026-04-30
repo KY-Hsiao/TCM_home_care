@@ -62,5 +62,6 @@ export interface TeamCommunicationRepository {
   listConversation(query: TeamCommunicationConversationQuery): Promise<TeamCommunicationMessage[]>;
   getUnreadCount(query: TeamCommunicationUnreadCountQuery): Promise<number>;
   createMessage(input: TeamCommunicationCreateInput): Promise<TeamCommunicationMessage>;
+  markConversationRead(query: TeamCommunicationConversationQuery): Promise<void>;
   markMessageRead(messageId: string, viewerRole: TeamCommunicationRole, viewerUserId: string): Promise<void>;
 }

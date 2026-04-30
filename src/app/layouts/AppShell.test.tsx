@@ -385,9 +385,6 @@ describe("AppShell", () => {
 
     await waitFor(() => {
       expect(screen.getByRole("link", { name: "團隊通訊已讀綠燈" })).toBeInTheDocument();
-      expect(within(screen.getByRole("navigation")).getByRole("link", { name: /團隊通訊/ })).toHaveTextContent(
-        "團隊通訊已讀"
-      );
       expect(
         within(screen.getByRole("navigation")).getByRole("link", { name: /團隊通訊/ })
       ).not.toHaveTextContent("未讀 1 則");

@@ -73,4 +73,33 @@ describe("httpTeamCommunicationRepository", () => {
       })
     });
   });
+
+  it("會用 PATCH 批次標記整個對話已讀", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true, updatedCount: 1 })
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const repository = createHttpTeamCommunicationRepository();
+
+    await repository.markConversationRead({
+      doctorId: "doc-001",
+      adminUserId: "admin-001",
+      viewerRole: "doctor",
+      viewerUserId: "doc-001"
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith("/api/team-communications/read", {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        doctorId: "doc-001",
+        adminUserId: "admin-001",
+        viewerRole: "doctor",
+        viewerUserId: "doc-001"
+      })
+    });
+  });
 });

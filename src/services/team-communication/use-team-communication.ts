@@ -14,9 +14,21 @@ import type {
 const POLLING_INTERVAL_MS = 8000;
 const TEAM_COMMUNICATION_SYNC_EVENT = "tcm:team-communication-sync";
 
-function emitTeamCommunicationSync() {
+type TeamCommunicationSyncEventDetail =
+  | {
+      type: "conversation_read";
+      role: TeamCommunicationRole;
+      userId: string;
+      doctorId: string;
+      adminUserId: string;
+    }
+  | {
+      type: "changed";
+    };
+
+function emitTeamCommunicationSync(detail: TeamCommunicationSyncEventDetail = { type: "changed" }) {
   if (typeof window !== "undefined") {
-    window.dispatchEvent(new CustomEvent(TEAM_COMMUNICATION_SYNC_EVENT));
+    window.dispatchEvent(new CustomEvent<TeamCommunicationSyncEventDetail>(TEAM_COMMUNICATION_SYNC_EVENT, { detail }));
   }
 }
 
@@ -123,6 +135,7 @@ export function useTeamCommunicationConversation(input: {
   }, [conversationQuery, enabled, input.db, input.repositories]);
 
   const markConversationRead = async () => {
+    await repositoryRef.current.markConversationRead(conversationQuery);
     const latestMessages =
       messages.length > 0
         ? messages
@@ -132,14 +145,15 @@ export function useTeamCommunicationConversation(input: {
       setMessages(latestMessages);
       setUnreadCount(0);
       await refresh({ silent: true });
-      emitTeamCommunicationSync();
+      emitTeamCommunicationSync({
+        type: "conversation_read",
+        role: input.viewerRole,
+        userId: input.viewerUserId,
+        doctorId: input.doctorId,
+        adminUserId: input.adminUserId
+      });
       return;
     }
-    await Promise.all(
-      unreadMessages.map((message) =>
-        repositoryRef.current.markMessageRead(message.id, input.viewerRole, input.viewerUserId)
-      )
-    );
     const readAt = new Date().toISOString();
     setMessages(
       latestMessages.map((message) =>
@@ -150,7 +164,13 @@ export function useTeamCommunicationConversation(input: {
     );
     setUnreadCount(0);
     await refresh({ silent: true });
-    emitTeamCommunicationSync();
+    emitTeamCommunicationSync({
+      type: "conversation_read",
+      role: input.viewerRole,
+      userId: input.viewerUserId,
+      doctorId: input.doctorId,
+      adminUserId: input.adminUserId
+    });
   };
 
   const createMessage = async (payload: TeamCommunicationCreateInput) => {
@@ -218,7 +238,17 @@ export function useTeamCommunicationUnreadCount(input: {
 
   useEffect(() => {
     void refresh();
-    const handleSync = () => {
+    const handleSync = (event: Event) => {
+      const detail = (event as CustomEvent<TeamCommunicationSyncEventDetail>).detail;
+      if (
+        detail?.type === "conversation_read" &&
+        detail.role === input.role &&
+        detail.userId === input.userId &&
+        (!input.doctorId || detail.doctorId === input.doctorId) &&
+        (!input.adminUserId || detail.adminUserId === input.adminUserId)
+      ) {
+        setCount((current) => (input.doctorId ? 0 : Math.max(0, current - 1)));
+      }
       void refresh();
     };
     window.addEventListener(TEAM_COMMUNICATION_SYNC_EVENT, handleSync);

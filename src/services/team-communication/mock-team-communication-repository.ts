@@ -232,6 +232,21 @@ export function createMockTeamCommunicationRepository(input: {
         read_at: null
       };
     },
+    async markConversationRead(query: TeamCommunicationConversationQuery) {
+      input.repositories.notificationRepository
+        .getNotificationCenterItems(query.viewerRole, query.viewerUserId)
+        .filter(
+          (item) =>
+            item.is_unread &&
+            item.role === query.viewerRole &&
+            item.owner_user_id === query.viewerUserId &&
+            item.linked_doctor_id === query.doctorId &&
+            isTeamCommunicationNotification(item)
+        )
+        .forEach((item) => {
+          input.repositories.notificationRepository.markNotificationCenterItemRead(item.id);
+        });
+    },
     async markMessageRead(messageId: string, viewerRole: TeamCommunicationRole, viewerUserId: string) {
       const message = findConversationMessage(viewerRole, viewerUserId, messageId);
       const target = input.repositories.notificationRepository

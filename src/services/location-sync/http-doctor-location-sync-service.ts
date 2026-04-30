@@ -23,6 +23,9 @@ export function createHttpDoctorLocationSyncService(baseUrl = ""): DoctorLocatio
       });
       return `${normalizeBaseUrl(baseUrl)}/api/admin/doctor-locations?${search.toString()}`;
     },
+    buildAdminLatestFeedPath() {
+      return `${normalizeBaseUrl(baseUrl)}/api/admin/doctor-locations`;
+    },
     async pushSample(sample: DoctorLocationSampleUpload) {
       await fetch(`${normalizeBaseUrl(baseUrl)}/api/doctor-location-samples`, {
         method: "POST",

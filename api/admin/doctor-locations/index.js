@@ -28,6 +28,23 @@ export default async function handler(request, response) {
   }
 
   const { date, time_slot: timeSlot } = request.query;
+  if (!validateRequiredString(date) && !validateRequiredString(timeSlot)) {
+    const result = await query(
+      `
+        SELECT *
+        FROM doctor_location_logs
+        WHERE recorded_at >= NOW() - INTERVAL '31 days'
+        ORDER BY recorded_at DESC
+        LIMIT 500
+      `
+    );
+
+    setJson(response, 200, {
+      items: result.rows.map(mapDoctorLocationRow)
+    });
+    return;
+  }
+
   if (!validateRequiredString(date) || !validateRequiredString(timeSlot)) {
     setJson(response, 400, { error: "缺少 date 或 time_slot。" });
     return;

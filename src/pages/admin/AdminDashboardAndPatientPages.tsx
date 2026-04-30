@@ -46,6 +46,7 @@ type TrackingRouteOption = {
   timeSlot: RouteTimeSlot;
   doctorCount: number;
   hasExecutingRoute: boolean;
+  hasRecentLocation: boolean;
 };
 
 function buildCsvTemplate() {
@@ -160,6 +161,21 @@ function resolveTrackingTimeSlot(schedule: Pick<VisitSchedule, "service_time_slo
   return hour < 13 ? "上午" : "下午";
 }
 
+function resolveTrackingLogDate(log: DoctorLocationLog) {
+  const recordedAt = new Date(log.recorded_at);
+  return Number.isNaN(recordedAt.getTime())
+    ? log.recorded_at.slice(0, 10)
+    : buildDateInputValue(recordedAt);
+}
+
+function resolveTrackingLogTimeSlot(log: DoctorLocationLog): RouteTimeSlot {
+  const recordedAt = new Date(log.recorded_at);
+  if (Number.isNaN(recordedAt.getTime())) {
+    return "上午";
+  }
+  return recordedAt.getHours() < 13 ? "上午" : "下午";
+}
+
 function buildTrackingReferencePoints(routeSchedules: VisitSchedule[]) {
   const routePoints = routeSchedules
     .filter(
@@ -232,18 +248,17 @@ function resolveTrackingLocationLogs(input: {
   }
 
   const timeSlotLogs = sortedLogs.filter((log) => {
-    if (log.recorded_at.slice(0, 10) !== input.routeDate) {
+    if (resolveTrackingLogDate(log) !== input.routeDate) {
       return false;
     }
-    const hour = new Date(log.recorded_at).getHours();
-    return input.routeTimeSlot === "上午" ? hour < 13 : hour >= 12;
+    return resolveTrackingLogTimeSlot(log) === input.routeTimeSlot;
   });
   const timeSlotNearLogs = nearRouteLogs(timeSlotLogs);
   if (timeSlotNearLogs.length) {
     return timeSlotNearLogs;
   }
 
-  const sameDateLogs = sortedLogs.filter((log) => log.recorded_at.slice(0, 10) === input.routeDate);
+  const sameDateLogs = sortedLogs.filter((log) => resolveTrackingLogDate(log) === input.routeDate);
   const sameDateNearLogs = nearRouteLogs(sameDateLogs);
   if (sameDateNearLogs.length) {
     return sameDateNearLogs;
@@ -735,6 +750,7 @@ export function AdminDoctorTrackingPage() {
   const [routeTimeSlot, setRouteTimeSlot] = useState<RouteTimeSlot>("上午");
   const [selectedDoctorId, setSelectedDoctorId] = useState<string>("");
   const [remoteLocationLogs, setRemoteLocationLogs] = useState<DoctorLocationLog[]>([]);
+  const [remoteRecentLocationLogs, setRemoteRecentLocationLogs] = useState<DoctorLocationLog[]>([]);
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const dragStateRef = useRef<{
     pointerId: number;
@@ -758,16 +774,20 @@ export function AdminDoctorTrackingPage() {
       {
         doctorIds: Set<string>;
         hasExecutingRoute: boolean;
+        hasRecentLocation: boolean;
       }
     >();
     const savedRoutePlans = repositories.visitRepository.getSavedRoutePlans();
+    const allSchedules = repositories.visitRepository.getSchedules();
+    const schedulesById = new Map(allSchedules.map((schedule) => [schedule.id, schedule]));
 
     if (savedRoutePlans.length) {
       savedRoutePlans.forEach((routePlan) => {
         const routeKey = `${routePlan.route_date}|${routePlan.service_time_slot}`;
         const current = routeOptionMap.get(routeKey) ?? {
           doctorIds: new Set<string>(),
-          hasExecutingRoute: false
+          hasExecutingRoute: false,
+          hasRecentLocation: false
         };
         current.doctorIds.add(routePlan.doctor_id);
         current.hasExecutingRoute =
@@ -775,18 +795,44 @@ export function AdminDoctorTrackingPage() {
         routeOptionMap.set(routeKey, current);
       });
     } else {
-      repositories.visitRepository
-        .getSchedules()
+      allSchedules
         .filter((schedule) => schedule.visit_type !== "回院病歷")
         .forEach((schedule) => {
           const routeKey = `${schedule.scheduled_start_at.slice(0, 10)}|${resolveTrackingTimeSlot(schedule)}`;
           const current = routeOptionMap.get(routeKey) ?? {
             doctorIds: new Set<string>(),
-            hasExecutingRoute: false
+            hasExecutingRoute: false,
+            hasRecentLocation: false
           };
           current.doctorIds.add(schedule.assigned_doctor_id);
           routeOptionMap.set(routeKey, current);
         });
+    }
+
+    if (services.doctorLocationSync.mode === "api_polling") {
+      remoteRecentLocationLogs.forEach((log) => {
+        const linkedSchedule = log.linked_visit_schedule_id
+          ? schedulesById.get(log.linked_visit_schedule_id)
+          : undefined;
+        if (linkedSchedule?.visit_type === "回院病歷") {
+          return;
+        }
+        const routeDateFromLog = linkedSchedule
+          ? linkedSchedule.scheduled_start_at.slice(0, 10)
+          : resolveTrackingLogDate(log);
+        const timeSlotFromLog = linkedSchedule
+          ? resolveTrackingTimeSlot(linkedSchedule)
+          : resolveTrackingLogTimeSlot(log);
+        const routeKey = `${routeDateFromLog}|${timeSlotFromLog}`;
+        const current = routeOptionMap.get(routeKey) ?? {
+          doctorIds: new Set<string>(),
+          hasExecutingRoute: false,
+          hasRecentLocation: false
+        };
+        current.doctorIds.add(linkedSchedule?.assigned_doctor_id ?? log.doctor_id);
+        current.hasRecentLocation = true;
+        routeOptionMap.set(routeKey, current);
+      });
     }
 
     const todayRouteDate = buildDateInputValue();
@@ -798,10 +844,16 @@ export function AdminDoctorTrackingPage() {
           date,
           timeSlot: timeSlot as RouteTimeSlot,
           doctorCount: summary.doctorIds.size,
-          hasExecutingRoute: summary.hasExecutingRoute
+          hasExecutingRoute: summary.hasExecutingRoute,
+          hasRecentLocation: summary.hasRecentLocation
         };
       })
       .sort((left, right) => {
+        const leftRecentLocation = left.hasRecentLocation ? 1 : 0;
+        const rightRecentLocation = right.hasRecentLocation ? 1 : 0;
+        if (leftRecentLocation !== rightRecentLocation) {
+          return rightRecentLocation - leftRecentLocation;
+        }
         const leftExecuting = left.hasExecutingRoute ? 1 : 0;
         const rightExecuting = right.hasExecutingRoute ? 1 : 0;
         if (leftExecuting !== rightExecuting) {
@@ -820,7 +872,41 @@ export function AdminDoctorTrackingPage() {
           routeTimeSlotOptions.indexOf(left.timeSlot) - routeTimeSlotOptions.indexOf(right.timeSlot)
         );
       });
-  }, [repositories.visitRepository]);
+  }, [remoteRecentLocationLogs, repositories.visitRepository, services.doctorLocationSync.mode]);
+
+  useEffect(() => {
+    if (services.doctorLocationSync.mode !== "api_polling") {
+      setRemoteRecentLocationLogs([]);
+      return;
+    }
+
+    let cancelled = false;
+    const feedPath = services.doctorLocationSync.buildAdminLatestFeedPath();
+
+    const syncRecentRemoteLocations = async () => {
+      try {
+        const response = await fetch(feedPath, { cache: "no-store" });
+        if (!response.ok) {
+          return;
+        }
+        const payload = (await response.json()) as { items?: DoctorLocationLog[] };
+        if (!cancelled) {
+          setRemoteRecentLocationLogs(Array.isArray(payload.items) ? payload.items : []);
+        }
+      } catch {
+        if (!cancelled) {
+          setRemoteRecentLocationLogs([]);
+        }
+      }
+    };
+
+    void syncRecentRemoteLocations();
+    const intervalId = window.setInterval(syncRecentRemoteLocations, services.doctorLocationSync.pollingIntervalMs);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [services.doctorLocationSync]);
 
   useEffect(() => {
     if (services.doctorLocationSync.mode !== "api_polling") {

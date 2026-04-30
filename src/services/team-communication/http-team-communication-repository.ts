@@ -58,6 +58,16 @@ export function createHttpTeamCommunicationRepository(): TeamCommunicationReposi
       const payload = (await readJsonOrThrow(response)) as { item: TeamCommunicationMessage };
       return payload.item;
     },
+    async markConversationRead(query: TeamCommunicationConversationQuery) {
+      const response = await fetch("/api/team-communications/read", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(query)
+      });
+      await readJsonOrThrow(response);
+    },
     async markMessageRead(messageId: string, viewerRole: TeamCommunicationRole, viewerUserId: string) {
       const response = await fetch(`/api/team-communications/${messageId}/read`, {
         method: "PATCH",

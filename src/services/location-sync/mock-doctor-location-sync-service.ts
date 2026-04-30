@@ -24,6 +24,9 @@ export function createMockDoctorLocationSyncService(
       return "/api/doctor-location-samples";
     },
     buildAdminFeedPath,
+    buildAdminLatestFeedPath() {
+      return "/api/admin/doctor-locations";
+    },
     pushSample(sample: DoctorLocationSampleUpload) {
       deps.getRepositories().visitRepository.appendDoctorLocationLog({
         id: `loc-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
