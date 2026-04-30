@@ -40,15 +40,22 @@ if ($WaitForGitHubActions) {
     Write-Warning "GitHub CLI (gh) was not found. git push completed, but GitHub Actions cannot be watched locally."
   } else {
     Write-Host "Waiting for GitHub Actions Deploy to Vercel..." -ForegroundColor Cyan
-    Start-Sleep -Seconds 3
-    $runJson = gh run list `
-      --workflow deploy-vercel.yml `
-      --branch $currentBranch `
-      --commit $currentHead `
-      --limit 1 `
-      --json databaseId,status,conclusion,displayTitle 2>$null
+    $runJson = $null
+    for ($attempt = 1; $attempt -le 12; $attempt += 1) {
+      Start-Sleep -Seconds 5
+      $runJson = gh run list `
+        --workflow deploy-vercel.yml `
+        --branch $currentBranch `
+        --commit $currentHead `
+        --limit 1 `
+        --json databaseId,status,conclusion,displayTitle 2>$null
+      if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($runJson) -and $runJson -ne "[]") {
+        break
+      }
+      Write-Host "Deploy workflow is not visible yet. Retry $attempt/12..." -ForegroundColor DarkYellow
+    }
 
-    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($runJson)) {
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($runJson) -or $runJson -eq "[]") {
       Write-Warning "No Deploy to Vercel workflow run was found for this commit. If no new commit was pushed, GitHub may not create a new run."
     } else {
       $runs = $runJson | ConvertFrom-Json
