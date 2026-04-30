@@ -28,3 +28,8 @@ name = "推送 GitHub"
 icon = "tool"
 command = "powershell -ExecutionPolicy Bypass -File .\\.codex\\scripts\\push_github.ps1"
 platform = "win32"
+
+[[actions]]
+name = "更新網頁"
+icon = "tool"
+command = "npm run publish:web"
