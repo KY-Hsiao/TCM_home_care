@@ -13,6 +13,7 @@ import type {
 
 const POLLING_INTERVAL_MS = 8000;
 const TEAM_COMMUNICATION_SYNC_EVENT = "tcm:team-communication-sync";
+const TEAM_COMMUNICATION_READ_WATERMARK_PREFIX = "tcm-team-communication-read-watermark";
 
 type TeamCommunicationSyncEventDetail =
   | {
@@ -25,6 +26,57 @@ type TeamCommunicationSyncEventDetail =
   | {
       type: "changed";
     };
+
+function buildReadWatermarkKey(input: {
+  role: TeamCommunicationRole;
+  userId: string;
+  doctorId?: string;
+  adminUserId?: string;
+}) {
+  if (!input.userId || !input.doctorId || !input.adminUserId) {
+    return null;
+  }
+  return [
+    TEAM_COMMUNICATION_READ_WATERMARK_PREFIX,
+    input.role,
+    input.userId,
+    input.doctorId,
+    input.adminUserId
+  ].join(":");
+}
+
+function readConversationWatermark(input: {
+  role: TeamCommunicationRole;
+  userId: string;
+  doctorId?: string;
+  adminUserId?: string;
+}) {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  const key = buildReadWatermarkKey(input);
+  if (!key) {
+    return null;
+  }
+  const value = window.localStorage.getItem(key);
+  return value && !Number.isNaN(new Date(value).getTime()) ? value : null;
+}
+
+function storeConversationWatermark(input: {
+  role: TeamCommunicationRole;
+  userId: string;
+  doctorId: string;
+  adminUserId: string;
+  readAt: string;
+}) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  const key = buildReadWatermarkKey(input);
+  if (key) {
+    window.localStorage.setItem(key, input.readAt);
+  }
+}
 
 function emitTeamCommunicationSync(detail: TeamCommunicationSyncEventDetail = { type: "changed" }) {
   if (typeof window !== "undefined") {
@@ -79,12 +131,20 @@ export function useTeamCommunicationConversation(input: {
   );
 
   const resolveUnreadMessages = (sourceMessages: TeamCommunicationMessage[]) =>
-    sourceMessages.filter(
-      (message) =>
+    sourceMessages.filter((message) => {
+      const readAfter = readConversationWatermark({
+        role: input.viewerRole,
+        userId: input.viewerUserId,
+        doctorId: input.doctorId,
+        adminUserId: input.adminUserId
+      });
+      return (
         !message.is_read &&
         message.receiver_role === input.viewerRole &&
-        message.receiver_user_id === input.viewerUserId
-    );
+        message.receiver_user_id === input.viewerUserId &&
+        (!readAfter || new Date(message.contacted_at).getTime() > new Date(readAfter).getTime())
+      );
+    });
 
   const refresh = async (options?: { silent?: boolean }) => {
     if (!enabled) {
@@ -135,6 +195,14 @@ export function useTeamCommunicationConversation(input: {
   }, [conversationQuery, enabled, input.db, input.repositories]);
 
   const markConversationRead = async () => {
+    const readAt = new Date().toISOString();
+    storeConversationWatermark({
+      role: input.viewerRole,
+      userId: input.viewerUserId,
+      doctorId: input.doctorId,
+      adminUserId: input.adminUserId,
+      readAt
+    });
     await repositoryRef.current.markConversationRead(conversationQuery);
     const latestMessages =
       messages.length > 0
@@ -154,7 +222,6 @@ export function useTeamCommunicationConversation(input: {
       });
       return;
     }
-    const readAt = new Date().toISOString();
     setMessages(
       latestMessages.map((message) =>
         unreadMessages.some((item) => item.id === message.id)
@@ -225,7 +292,13 @@ export function useTeamCommunicationUnreadCount(input: {
         role: input.role,
         userId: input.userId,
         doctorId: input.doctorId,
-        adminUserId: input.adminUserId
+        adminUserId: input.adminUserId,
+        readAfter: readConversationWatermark({
+          role: input.role,
+          userId: input.userId,
+          doctorId: input.doctorId,
+          adminUserId: input.adminUserId
+        }) ?? undefined
       });
       if (requestId !== refreshRequestIdRef.current) {
         return;

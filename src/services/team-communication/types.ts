@@ -56,6 +56,7 @@ export type TeamCommunicationUnreadCountQuery = {
   userId: string;
   doctorId?: string;
   adminUserId?: string;
+  readAfter?: string;
 };
 
 export interface TeamCommunicationRepository {

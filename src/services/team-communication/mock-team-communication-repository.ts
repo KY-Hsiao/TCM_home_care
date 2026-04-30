@@ -210,6 +210,9 @@ export function createMockTeamCommunicationRepository(input: {
           if (query.doctorId && item.linked_doctor_id !== query.doctorId) {
             return false;
           }
+          if (query.readAfter && new Date(item.created_at).getTime() <= new Date(query.readAfter).getTime()) {
+            return false;
+          }
           return true;
         }).length;
     },

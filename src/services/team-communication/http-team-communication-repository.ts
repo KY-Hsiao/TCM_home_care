@@ -41,6 +41,9 @@ export function createHttpTeamCommunicationRepository(): TeamCommunicationReposi
       if (query.adminUserId) {
         params.set("adminUserId", query.adminUserId);
       }
+      if (query.readAfter) {
+        params.set("readAfter", query.readAfter);
+      }
       const response = await fetch(`/api/team-communications/unread-count?${params.toString()}`, {
         cache: "no-store"
       });
