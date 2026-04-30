@@ -384,6 +384,13 @@ type DoctorTrackingSummary = {
   doctorPhone: string;
   color: string;
   latestLocation: ReturnType<typeof useAppContext>["db"]["doctor_location_logs"][number] | undefined;
+  displayLocation: {
+    latitude: number;
+    longitude: number;
+    addressLabel: string;
+    markerLabel: string;
+    isFallback: boolean;
+  } | null;
   locationLogs: ReturnType<typeof useAppContext>["db"]["doctor_location_logs"];
   locationStatus: "live" | "stale" | "missing";
   routeSchedules: VisitSchedule[];
@@ -417,7 +424,7 @@ function getLocationStatusLabel(status: "live" | "stale" | "missing") {
   if (status === "stale") {
     return "定位延遲";
   }
-  return "尚未收到定位";
+  return "未上線";
 }
 
 function getLocationStatusTone(status: "live" | "stale" | "missing") {
@@ -449,6 +456,70 @@ function buildTrackingRouteMapInput(
     })),
     travelMode: "driving",
     label
+  };
+}
+
+function buildTrackingFallbackLocation(schedules: VisitSchedule[]) {
+  const startSchedule =
+    schedules.find(
+      (schedule) =>
+        schedule.home_latitude_snapshot !== null && schedule.home_longitude_snapshot !== null
+    ) ?? null;
+
+  if (startSchedule) {
+    return {
+      latitude: (startSchedule.home_latitude_snapshot as number) + 0.00022,
+      longitude: (startSchedule.home_longitude_snapshot as number) + 0.00022,
+      addressLabel: `${startSchedule.address_snapshot}附近`,
+      markerLabel: "未上線",
+      isFallback: true
+    };
+  }
+
+  return {
+    latitude: trackingMapOrigin.latitude + 0.00018,
+    longitude: trackingMapOrigin.longitude + 0.00018,
+    addressLabel: `${trackingMapOrigin.address}附近`,
+    markerLabel: "未上線",
+    isFallback: true
+  };
+}
+
+function resolveTrackingDisplayLocation(input: {
+  latestLocation: ReturnType<typeof useAppContext>["db"]["doctor_location_logs"][number] | undefined;
+  routeSchedules: VisitSchedule[];
+  activeSchedule: VisitSchedule | undefined;
+}) {
+  if (!input.latestLocation) {
+    return buildTrackingFallbackLocation(input.routeSchedules);
+  }
+
+  const nearestSchedule =
+    input.routeSchedules
+      .filter(
+        (schedule) =>
+          schedule.home_latitude_snapshot !== null && schedule.home_longitude_snapshot !== null
+      )
+      .map((schedule) => ({
+        schedule,
+        distance: estimateDistanceKilometersBetween(
+          input.latestLocation?.latitude,
+          input.latestLocation?.longitude,
+          schedule.home_latitude_snapshot,
+          schedule.home_longitude_snapshot
+        )
+      }))
+      .sort((left, right) => left.distance - right.distance)[0]?.schedule ??
+    input.activeSchedule;
+
+  return {
+    latitude: input.latestLocation.latitude,
+    longitude: input.latestLocation.longitude,
+    addressLabel: nearestSchedule
+      ? `${nearestSchedule.address_snapshot}附近`
+      : "目前已上線，位置位於本次路線周圍",
+    markerLabel: "目前位置",
+    isFallback: false
   };
 }
 
@@ -516,10 +587,10 @@ function buildTrackingMapPointsForFit(doctor: DoctorTrackingSummary) {
       latitude: point.latitude,
       longitude: point.longitude
     })),
-    doctor.latestLocation
+    doctor.displayLocation
       ? {
-          latitude: doctor.latestLocation.latitude,
-          longitude: doctor.latestLocation.longitude
+          latitude: doctor.displayLocation.latitude,
+          longitude: doctor.displayLocation.longitude
         }
       : null
   ].filter((point): point is { latitude: number; longitude: number } => Boolean(point));
@@ -530,10 +601,10 @@ function buildTrackingMapView(
   mapSize: { width: number; height: number }
 ) {
   const points = buildTrackingMapPointsForFit(doctor);
-  const focusPoint = doctor.latestLocation
+  const focusPoint = doctor.displayLocation
     ? {
-        latitude: doctor.latestLocation.latitude,
-        longitude: doctor.latestLocation.longitude
+        latitude: doctor.displayLocation.latitude,
+        longitude: doctor.displayLocation.longitude
       }
     : doctor.activeSchedule &&
         doctor.activeSchedule.home_latitude_snapshot !== null &&
@@ -713,6 +784,11 @@ export function AdminDoctorTrackingPage() {
                 activeSchedule.home_longitude_snapshot
               )
             : null;
+        const displayLocation = resolveTrackingDisplayLocation({
+          latestLocation,
+          routeSchedules,
+          activeSchedule
+        });
         const routeMapInput = buildTrackingRouteMapInput(
           routeSchedules,
           `${doctor.name} ${routeDate} ${routeTimeSlot}`
@@ -724,6 +800,7 @@ export function AdminDoctorTrackingPage() {
           doctorPhone: doctor.phone,
           color: trackingPalette[index % trackingPalette.length],
           latestLocation,
+          displayLocation,
           locationLogs,
           locationStatus,
           routeSchedules,
@@ -859,10 +936,10 @@ export function AdminDoctorTrackingPage() {
       ...point,
       ...projectTrackingPointToScreen(point.latitude, point.longitude, trackingMapView, trackingMapSize)
     }));
-    const currentPoint = selectedDoctor.latestLocation
+    const currentPoint = selectedDoctor.displayLocation
       ? projectTrackingPointToScreen(
-          selectedDoctor.latestLocation.latitude,
-          selectedDoctor.latestLocation.longitude,
+          selectedDoctor.displayLocation.latitude,
+          selectedDoctor.displayLocation.longitude,
           trackingMapView,
           trackingMapSize
         )
@@ -1125,7 +1202,10 @@ export function AdminDoctorTrackingPage() {
                         r={7}
                         fill={selectedDoctor.color}
                       />
-                      <g aria-label={`${selectedDoctor.doctorName} 目前位置標記`} filter="url(#tracking-marker-shadow)">
+                      <g
+                        aria-label={`${selectedDoctor.doctorName} ${selectedDoctor.displayLocation?.markerLabel ?? "目前位置"}標記`}
+                        filter="url(#tracking-marker-shadow)"
+                      >
                         <rect
                           x={Math.min(
                             Math.max(selectedDoctorScreenPoints.currentPoint.x - 54, 10),
@@ -1150,7 +1230,7 @@ export function AdminDoctorTrackingPage() {
                           fontWeight="700"
                           fill={selectedDoctor.color}
                         >
-                          目前位置
+                          {selectedDoctor.displayLocation?.markerLabel ?? "目前位置"}
                         </text>
                       </g>
                     </>
@@ -1184,7 +1264,7 @@ export function AdminDoctorTrackingPage() {
                       <p className="mt-1 text-xs text-slate-500">
                         {doctor.latestLocation
                           ? `最後定位 ${formatDateTimeFull(doctor.latestLocation.recorded_at)}`
-                          : "尚未收到定位"}
+                          : "未上線，已用最近排程起點作為參考位置"}
                       </p>
                     </div>
                     <div className="flex items-center gap-2">
@@ -1220,7 +1300,9 @@ export function AdminDoctorTrackingPage() {
                   <p className="mt-2.5 text-sm text-slate-600">
                     {doctor.currentDistanceKilometers !== null
                       ? `距離目前案件約 ${doctor.currentDistanceKilometers.toFixed(1)} 公里`
-                      : "等待定位或案件座標"}
+                      : doctor.displayLocation?.isFallback
+                        ? "未上線，位置顯示在最近排程起點周圍"
+                        : "等待定位或案件座標"}
                   </p>
                   <div className="mt-3 flex flex-wrap gap-2">
                     {doctor.routeMapUrl ? (
@@ -1261,14 +1343,9 @@ export function AdminDoctorTrackingPage() {
                   </div>
                   <div className="mt-3 grid gap-2 md:grid-cols-3">
                     <div className="rounded-2xl bg-slate-50 px-3 py-2.5 text-sm text-slate-600">
-                      <p className="text-xs text-slate-500">目前座標</p>
+                      <p className="text-xs text-slate-500">目前位置</p>
                       <p className="mt-2 font-semibold text-brand-ink">
-                        {selectedDoctor.latestLocation
-                          ? services.maps.buildCoordinateLabel(
-                              selectedDoctor.latestLocation.latitude,
-                              selectedDoctor.latestLocation.longitude
-                            )
-                          : "尚未收到定位"}
+                        {selectedDoctor.displayLocation?.addressLabel ?? "未上線"}
                       </p>
                     </div>
                     <div className="rounded-2xl bg-slate-50 px-3 py-2.5 text-sm text-slate-600">
@@ -1276,7 +1353,7 @@ export function AdminDoctorTrackingPage() {
                       <p className="mt-2 font-semibold text-brand-ink">
                         {selectedDoctor.latestLocation
                           ? formatDateTimeFull(selectedDoctor.latestLocation.recorded_at)
-                          : "尚未收到定位"}
+                          : "未上線"}
                       </p>
                     </div>
                     <div className="rounded-2xl bg-slate-50 px-3 py-2.5 text-sm text-slate-600">

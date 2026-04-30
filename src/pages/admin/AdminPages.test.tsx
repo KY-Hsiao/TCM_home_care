@@ -106,6 +106,9 @@ describe("AdminPages", () => {
     expect(routeDateOptions.some((option) => option?.includes("2026/05/06"))).toBe(true);
     expect(routeDateOptions.some((option) => option?.includes("2026/05/07"))).toBe(true);
     expect(routeDateOptions.some((option) => option?.includes("2026/06/04"))).toBe(false);
+    expect(routeDateSelect).toHaveValue("2026-04-29");
+    expect(screen.getByRole("combobox", { name: "篩選星期" })).toHaveValue("星期三");
+    expect(screen.getByRole("combobox", { name: "篩選時段" })).toHaveValue("上午");
 
     fireEvent.change(routeDateSelect, {
       target: { value: "2026-05-06" }
@@ -128,6 +131,41 @@ describe("AdminPages", () => {
     expect(timeSlotSelect).toHaveValue("上午");
   });
 
+  it("AdminSchedulesPage 會依醫師可服務時段原始順序帶入同日預設時段", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-30T09:00:00+08:00"));
+
+    const customDb = createSeedDb();
+    customDb.doctors = customDb.doctors.map((doctor) =>
+      doctor.id === "doc-001"
+        ? {
+            ...doctor,
+            available_service_slots: ["星期三下午", "星期三上午", "星期四下午"]
+          }
+        : doctor
+    );
+    window.localStorage.setItem(MOCK_DB_STORAGE_KEY, JSON.stringify(customDb));
+
+    renderWithProviders(<AdminSchedulesPage />);
+
+    fireEvent.change(screen.getByRole("combobox", { name: "篩選醫師" }), {
+      target: { value: "doc-001" }
+    });
+
+    fireEvent.change(screen.getByLabelText("路線日期"), {
+      target: { value: "2026-05-06" }
+    });
+
+    expect(screen.getByLabelText("路線日期")).toHaveValue("2026-05-06");
+    expect(screen.getByRole("combobox", { name: "篩選星期" })).toHaveValue("星期三");
+    expect(screen.getByRole("combobox", { name: "篩選時段" })).toHaveValue("下午");
+
+    const timeSlotOptions = within(screen.getByRole("combobox", { name: "篩選時段" }))
+      .getAllByRole("option")
+      .map((option) => option.textContent);
+    expect(timeSlotOptions).toEqual(["請選擇時段", "下午", "上午"]);
+  });
+
   it("AdminSchedulesPage 可切換成突發出巡事件並手動選日期", () => {
     renderWithProviders(<AdminSchedulesPage />);
 
@@ -140,13 +178,41 @@ describe("AdminPages", () => {
     });
 
     expect(screen.getByLabelText("路線日期")).toHaveValue("2026-05-08");
-    expect(screen.getByRole("combobox", { name: "篩選星期" })).toHaveValue("星期六");
+    expect(screen.getByRole("combobox", { name: "篩選星期" })).toHaveValue("星期五");
     expect(screen.getByRole("combobox", { name: "篩選時段" })).toHaveValue("上午");
     expect(
       within(screen.getByRole("combobox", { name: "篩選時段" }))
         .getAllByRole("option")
         .map((option) => option.textContent)
     ).toEqual(["請選擇時段", "上午", "下午"]);
+  });
+
+  it("AdminSchedulesPage 突發出巡事件也會依醫師時段順序帶入預設時段", () => {
+    const customDb = createSeedDb();
+    customDb.doctors = customDb.doctors.map((doctor) =>
+      doctor.id === "doc-001"
+        ? {
+            ...doctor,
+            available_service_slots: ["星期三下午", "星期三上午", "星期五下午"]
+          }
+        : doctor
+    );
+    window.localStorage.setItem(MOCK_DB_STORAGE_KEY, JSON.stringify(customDb));
+
+    renderWithProviders(<AdminSchedulesPage />);
+
+    fireEvent.click(screen.getByRole("button", { name: "突發出巡事件" }));
+    fireEvent.change(screen.getByRole("combobox", { name: "篩選醫師" }), {
+      target: { value: "doc-001" }
+    });
+    fireEvent.change(screen.getByLabelText("路線日期"), {
+      target: { value: "2026-05-06" }
+    });
+
+    return waitFor(() => {
+      expect(screen.getByRole("combobox", { name: "篩選星期" })).toHaveValue("星期三");
+      expect(screen.getByRole("combobox", { name: "篩選時段" })).toHaveValue("下午");
+    });
   });
 
   it("AdminSchedulesPage 選完日期後會自動帶入星期與時段", () => {
@@ -508,7 +574,9 @@ describe("AdminPages", () => {
     expect(screen.getByTitle("蕭坤元醫師 Google Map 追蹤圖")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "放大地圖" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "縮小地圖" })).toBeInTheDocument();
-    expect(screen.getByText("目前位置")).toBeInTheDocument();
+    expect(screen.getAllByText("目前位置").length).toBeGreaterThan(0);
+    const locationSummaryLabel = screen.getAllByText("目前位置", { selector: "p" }).at(-1);
+    expect(locationSummaryLabel?.parentElement?.textContent).toContain("附近");
     expect(screen.getByRole("button", { name: "蕭坤元醫師" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "林若謙醫師" })).toBeInTheDocument();
     expect(screen.getAllByText("已經過的地點").length).toBeGreaterThan(0);
@@ -535,7 +603,9 @@ describe("AdminPages", () => {
 
     const missingView = renderWithProviders(<AdminDoctorTrackingPage />);
 
-    expect(screen.getAllByText("尚未收到定位").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("未上線").length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/已用最近排程起點作為參考位置/).length).toBeGreaterThan(0);
+    expect(screen.getByText("高雄市旗山區中華路 76 號附近")).toBeInTheDocument();
     missingView.unmount();
 
     window.localStorage.setItem(MOCK_DB_STORAGE_KEY, JSON.stringify(seededDb));
@@ -569,7 +639,7 @@ describe("AdminPages", () => {
 
     renderWithProviders(<AdminDoctorTrackingPage />);
 
-    expect(screen.getAllByText("尚未收到定位").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("未上線").length).toBeGreaterThan(0);
 
     const nextDb = {
       ...emptyLocationDb,
@@ -578,8 +648,8 @@ describe("AdminPages", () => {
           id: "loc-sync-001",
           doctor_id: "doc-001",
           recorded_at: seededLatestLog.recorded_at,
-          latitude: 24.9982,
-          longitude: 121.5499,
+          latitude: 22.8861,
+          longitude: 120.5012,
           accuracy: 8,
           source: "gps",
           linked_visit_schedule_id: "vs-003"
@@ -600,6 +670,7 @@ describe("AdminPages", () => {
     const locationStatusPanel = screen.getByText("定位狀態").parentElement;
     expect(locationStatusPanel?.textContent).toContain("定位正常");
     expect(screen.getByText(/最後定位/)).toBeInTheDocument();
+    expect(screen.getByText("高雄市旗山區大德路 52 號附近")).toBeInTheDocument();
   });
 
   it("AdminDoctorTrackingPage 即使定位 sample 尚未綁到當前排程，也會用同日最新定位顯示地圖", () => {

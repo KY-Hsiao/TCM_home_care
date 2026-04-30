@@ -56,6 +56,15 @@ const weekdayToIndex: Record<(typeof weekdayOptions)[number], number> = {
   星期六: 6,
   星期日: 0
 };
+const calendarDayToWeekday: Record<number, (typeof weekdayOptions)[number]> = {
+  0: "星期日",
+  1: "星期一",
+  2: "星期二",
+  3: "星期三",
+  4: "星期四",
+  5: "星期五",
+  6: "星期六"
+};
 
 function buildRoutePlanId(doctorId: string, routeDate: string, weekday: string, serviceTimeSlot: RouteTimeSlot) {
   return `route-${doctorId}-${routeDate}-${weekday}-${serviceTimeSlot}`;
@@ -112,13 +121,69 @@ function resolveWeekdayFromRouteDate(routeDate: string) {
   if (Number.isNaN(parsedDate.getTime())) {
     return null;
   }
-  return weekdayOptions[parsedDate.getDay()] ?? null;
+  return calendarDayToWeekday[parsedDate.getDay()] ?? null;
+}
+
+function getDoctorServiceSlotPreferences(availableServiceSlots: string[]) {
+  const preferences: Array<{
+    weekday: (typeof weekdayOptions)[number];
+    timeSlot: RouteTimeSlot;
+  }> = [];
+
+  availableServiceSlots.forEach((slot) => {
+    const parsedSlot = parseDoctorServiceSlot(slot);
+    if (!parsedSlot) {
+      return;
+    }
+    const hasDuplicate = preferences.some(
+      (preference) =>
+        preference.weekday === parsedSlot.weekday && preference.timeSlot === parsedSlot.timeSlot
+    );
+    if (!hasDuplicate) {
+      preferences.push(parsedSlot);
+    }
+  });
+
+  return preferences;
+}
+
+function getDoctorTimeSlotsByWeekday(
+  availableServiceSlots: string[],
+  weekday: (typeof weekdayOptions)[number]
+) {
+  return getDoctorServiceSlotPreferences(availableServiceSlots)
+    .filter((slot) => slot.weekday === weekday)
+    .map((slot) => slot.timeSlot);
+}
+
+function orderTimeSlotsByDoctorPreference(input: {
+  availableServiceSlots: string[];
+  weekday: (typeof weekdayOptions)[number];
+  candidateTimeSlots: RouteTimeSlot[];
+}) {
+  const orderedCandidates: RouteTimeSlot[] = [];
+  const preferredTimeSlots = getDoctorTimeSlotsByWeekday(input.availableServiceSlots, input.weekday);
+
+  preferredTimeSlots.forEach((timeSlot) => {
+    if (input.candidateTimeSlots.includes(timeSlot) && !orderedCandidates.includes(timeSlot)) {
+      orderedCandidates.push(timeSlot);
+    }
+  });
+
+  input.candidateTimeSlots.forEach((timeSlot) => {
+    if (!orderedCandidates.includes(timeSlot)) {
+      orderedCandidates.push(timeSlot);
+    }
+  });
+
+  return orderedCandidates;
 }
 
 function buildRouteDateOptions(input: {
   selectedDoctor?: { available_service_slots: string[] };
   savedRoutePlans: SavedRoutePlan[];
 }) {
+  const availableServiceSlots = input.selectedDoctor?.available_service_slots ?? [];
   const grouped = new Map<
     string,
     {
@@ -196,19 +261,35 @@ function buildRouteDateOptions(input: {
       const timeSlotOptionsByWeekday = weekdayOptions.reduce<
         Partial<Record<(typeof weekdayOptions)[number], RouteTimeSlot[]>>
       >((result, weekday) => {
-        result[weekday] = routeTimeSlotOptions.filter((timeSlot) =>
-          sortedPairs.some((pair) => pair.weekday === weekday && pair.timeSlot === timeSlot)
-        );
+        const candidateTimeSlots = [
+          ...new Set(
+            sortedPairs
+              .filter((pair) => pair.weekday === weekday)
+              .map((pair) => pair.timeSlot)
+          )
+        ];
+        result[weekday] = orderTimeSlotsByDoctorPreference({
+          availableServiceSlots,
+          weekday,
+          candidateTimeSlots
+        });
         return result;
       }, {});
       const allTimeSlots = [...new Set(sortedPairs.map((pair) => pair.timeSlot))];
+      const inferredWeekday = resolveWeekdayFromRouteDate(entry.routeDate);
+      const preferredWeekday =
+        inferredWeekday && weekdayOptions.includes(inferredWeekday)
+          ? inferredWeekday
+          : sortedPairs[0].weekday;
+      const preferredTimeSlot =
+        timeSlotOptionsByWeekday[preferredWeekday]?.[0] ?? sortedPairs[0].timeSlot;
 
       return {
         routeDate: entry.routeDate,
         weekdayOptions,
         timeSlotOptionsByWeekday,
-        preferredWeekday: sortedPairs[0].weekday,
-        preferredTimeSlot: sortedPairs[0].timeSlot,
+        preferredWeekday,
+        preferredTimeSlot,
         label: buildRouteDateOptionLabel(entry.routeDate, weekdayOptions, allTimeSlots)
       };
     });
@@ -419,16 +500,22 @@ export function AdminSchedulesPage() {
   const selectedSavedRoutePlan = selectedSavedRoutePlanId
     ? savedRoutePlans.find((routePlan) => routePlan.id === selectedSavedRoutePlanId)
     : undefined;
+  const derivedRouteWeekday = useMemo(
+    () => resolveWeekdayFromRouteDate(routeDate),
+    [routeDate]
+  );
+  const effectiveSelectedWeekday =
+    routeDateMode === "ad_hoc" ? derivedRouteWeekday ?? selectedWeekday : selectedWeekday;
   const slotPatients = useMemo(
     () =>
-      selectedDoctorId && selectedWeekday && selectedTimeSlot
+      selectedDoctorId && effectiveSelectedWeekday && selectedTimeSlot
         ? repositories.patientRepository.getPatientsByDoctorSlot({
             doctorId: selectedDoctorId,
-            weekday: selectedWeekday,
+            weekday: effectiveSelectedWeekday,
             serviceTimeSlot: selectedTimeSlot
           })
         : [],
-    [repositories, db.patients, selectedDoctorId, selectedTimeSlot, selectedWeekday]
+    [repositories, db.patients, effectiveSelectedWeekday, selectedDoctorId, selectedTimeSlot]
   );
   const sortedPlannerRows = useMemo(() => sortPlannerRows(plannerRows), [plannerRows]);
   const checkedRows = useMemo(
@@ -437,11 +524,11 @@ export function AdminSchedulesPage() {
   );
   const routePreview = useMemo(
     () =>
-      selectedWeekday && selectedTimeSlot
+      effectiveSelectedWeekday && selectedTimeSlot
         ? buildRoutePreviewInput({
             routeDate,
             doctorName: selectedDoctor?.name,
-            weekday: selectedWeekday,
+            weekday: effectiveSelectedWeekday,
             timeSlot: selectedTimeSlot,
             checkedRows,
             startAddress: routeStartAddress,
@@ -450,17 +537,13 @@ export function AdminSchedulesPage() {
         : null,
     [
       checkedRows,
+      effectiveSelectedWeekday,
       routeDate,
       routeEndAddress,
       routeStartAddress,
       selectedDoctor?.name,
-      selectedTimeSlot,
-      selectedWeekday
+      selectedTimeSlot
     ]
-  );
-  const derivedRouteWeekday = useMemo(
-    () => resolveWeekdayFromRouteDate(routeDate),
-    [routeDate]
   );
   const availableWeekdays = useMemo(() => {
     if (routeDateMode === "ad_hoc") {
@@ -489,35 +572,53 @@ export function AdminSchedulesPage() {
     [availableRouteDateOptions, routeDate]
   );
   const availableTimeSlots = useMemo(() => {
-    if (!selectedWeekday) {
+    if (!effectiveSelectedWeekday) {
       return [];
     }
     if (selectedRouteDateOption) {
       return selectedRouteDateOption.timeSlotOptionsByWeekday[
-        selectedWeekday as (typeof weekdayOptions)[number]
+        effectiveSelectedWeekday as (typeof weekdayOptions)[number]
       ] ?? [];
     }
     const serviceSlots = selectedDoctor?.available_service_slots ?? [];
-    const matchedTimeSlots = new Set(
-      serviceSlots
-        .map((slot) => parseDoctorServiceSlot(slot))
-        .filter((slot) => slot?.weekday === selectedWeekday)
-        .map((slot) => slot?.timeSlot)
-        .filter((timeSlot): timeSlot is RouteTimeSlot => Boolean(timeSlot))
+    const matchedOptions = getDoctorTimeSlotsByWeekday(
+      serviceSlots,
+      effectiveSelectedWeekday as (typeof weekdayOptions)[number]
     );
-    const matchedOptions = routeTimeSlotOptions.filter((timeSlot) => matchedTimeSlots.has(timeSlot));
     if (routeDateMode === "ad_hoc") {
       return matchedOptions.length ? matchedOptions : routeTimeSlotOptions;
     }
     return matchedOptions;
-  }, [routeDateMode, selectedDoctor, selectedRouteDateOption, selectedWeekday]);
+  }, [effectiveSelectedWeekday, routeDateMode, selectedDoctor, selectedRouteDateOption]);
 
   useEffect(() => {
+    if (selectedSavedRoutePlanId || routeDateMode !== "preset" || !selectedDoctorId || routeDate) {
+      return;
+    }
+    const defaultRouteDateOption = availableRouteDateOptions[0];
+    if (!defaultRouteDateOption) {
+      return;
+    }
+    setRouteDate(defaultRouteDateOption.routeDate);
+    setSelectedWeekday(defaultRouteDateOption.preferredWeekday);
+    setSelectedTimeSlot(defaultRouteDateOption.preferredTimeSlot);
+  }, [
+    availableRouteDateOptions,
+    routeDate,
+    routeDateMode,
+    selectedDoctorId,
+    selectedSavedRoutePlanId
+  ]);
+
+  useEffect(() => {
+    if (routeDateMode === "ad_hoc") {
+      return;
+    }
     if (selectedWeekday && !availableWeekdays.includes(selectedWeekday as (typeof weekdayOptions)[number])) {
       setSelectedWeekday("");
       setSelectedTimeSlot("");
     }
-  }, [availableWeekdays, selectedWeekday]);
+  }, [availableWeekdays, routeDateMode, selectedWeekday]);
 
   useEffect(() => {
     if (selectedSavedRoutePlanId) {
@@ -578,7 +679,7 @@ export function AdminSchedulesPage() {
   }, [availableTimeSlots, derivedRouteWeekday, routeDate, routeDateMode, selectedTimeSlot, selectedWeekday]);
 
   useEffect(() => {
-    if (!selectedDoctorId || !selectedWeekday || !selectedTimeSlot) {
+    if (!selectedDoctorId || !effectiveSelectedWeekday || !selectedTimeSlot) {
       setPlannerRows([]);
       return;
     }
@@ -586,7 +687,13 @@ export function AdminSchedulesPage() {
       return;
     }
     setPlannerRows(buildPlannerRowsFromSlotPatients(slotPatients));
-  }, [selectedDoctorId, selectedSavedRoutePlanId, selectedTimeSlot, selectedWeekday, slotPatients]);
+  }, [
+    effectiveSelectedWeekday,
+    selectedDoctorId,
+    selectedSavedRoutePlanId,
+    selectedTimeSlot,
+    slotPatients
+  ]);
 
   useEffect(() => {
     if (!selectedSavedRoutePlanId) {
@@ -690,7 +797,7 @@ export function AdminSchedulesPage() {
   };
 
   const buildRoutePlanDraft = () => {
-    if (!selectedDoctorId || !selectedWeekday || !selectedTimeSlot) {
+    if (!selectedDoctorId || !effectiveSelectedWeekday || !selectedTimeSlot) {
       setRecentAction("請先選擇醫師、星期與上午/下午。");
       return null;
     }
@@ -707,7 +814,7 @@ export function AdminSchedulesPage() {
     const routePlanId = buildRoutePlanId(
       selectedDoctorId,
       routeDate,
-      selectedWeekday,
+      effectiveSelectedWeekday,
       selectedTimeSlot
     );
     const normalizedStartAddress = routeStartAddress.trim() || routeStartLocation.address;
@@ -734,9 +841,9 @@ export function AdminSchedulesPage() {
       id: routePlanId,
       doctor_id: selectedDoctorId,
       route_group_id: routePlanId,
-      route_name: `${formatDateOnly(routeDate)} ${doctor?.name ?? selectedDoctorId} ${selectedWeekday}${selectedTimeSlot}`,
+      route_name: `${formatDateOnly(routeDate)} ${doctor?.name ?? selectedDoctorId} ${effectiveSelectedWeekday}${selectedTimeSlot}`,
       route_date: routeDate,
-      route_weekday: selectedWeekday,
+      route_weekday: effectiveSelectedWeekday,
       service_time_slot: selectedTimeSlot,
       optimize_by: "time",
       schedule_ids: routeItems
@@ -923,10 +1030,12 @@ export function AdminSchedulesPage() {
                     const nextWeekday = resolveWeekdayFromRouteDate(nextRouteDate);
                     setRouteDate(nextRouteDate);
                     setSelectedWeekday(nextWeekday ?? "");
-                    const serviceSlots = selectedDoctor?.available_service_slots ?? [];
-                    const matchedTimeSlots = routeTimeSlotOptions.filter((timeSlot) =>
-                      serviceSlots.some((slot) => slot === `${nextWeekday ?? ""}${timeSlot}`)
-                    );
+                    const matchedTimeSlots = nextWeekday
+                      ? getDoctorTimeSlotsByWeekday(
+                          selectedDoctor?.available_service_slots ?? [],
+                          nextWeekday
+                        )
+                      : [];
                     setSelectedTimeSlot(
                       matchedTimeSlots.includes(selectedTimeSlot as RouteTimeSlot)
                         ? selectedTimeSlot
@@ -972,7 +1081,7 @@ export function AdminSchedulesPage() {
                 aria-disabled={!routeDate}
                 title={!routeDate ? "請先選擇路線日期" : undefined}
                 aria-label="篩選星期"
-                value={selectedWeekday}
+                value={effectiveSelectedWeekday}
                 onChange={(event) => {
                   setSelectedSavedRoutePlanId("");
                   if (routeDateMode === "ad_hoc") {

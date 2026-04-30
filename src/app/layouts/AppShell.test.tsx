@@ -446,6 +446,47 @@ describe("AppShell", () => {
     ).toBe(true);
   });
 
+  it("醫師端送出站內訊息後，行政端重新打開團隊通訊頁可以看到內容", async () => {
+    window.localStorage.setItem(
+      SESSION_STORAGE_KEY,
+      JSON.stringify({
+        role: "doctor",
+        activeDoctorId: "doc-001",
+        activeAdminId: "admin-001",
+        authenticatedDoctorId: "doc-001",
+        authenticatedAdminId: null
+      })
+    );
+
+    const doctorView = renderShell("/doctor/team-communication", <DoctorTeamCommunicationPage />);
+
+    fireEvent.change(screen.getByLabelText("訊息內容"), {
+      target: { value: "醫師端回報：已完成第 2 站，準備返院。" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "送出站內訊息" }));
+
+    expect(screen.getByRole("status")).toHaveTextContent("站內訊息已送出");
+    doctorView.unmount();
+
+    window.localStorage.setItem(
+      SESSION_STORAGE_KEY,
+      JSON.stringify({
+        role: "admin",
+        activeDoctorId: "doc-001",
+        activeAdminId: "admin-001",
+        authenticatedDoctorId: null,
+        authenticatedAdminId: "admin-001"
+      })
+    );
+
+    renderShell("/admin/team-communication", <AdminTeamCommunicationPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText("醫師端回報：已完成第 2 站，準備返院。")).toBeInTheDocument();
+      expect(screen.getByText(/蕭坤元醫師 已送出站內訊息/)).toBeInTheDocument();
+    });
+  });
+
   it("醫師端發起語音通話時會同步通知行政回應", () => {
     window.localStorage.setItem(
       SESSION_STORAGE_KEY,
@@ -464,7 +505,7 @@ describe("AppShell", () => {
     fireEvent.click(screen.getByRole("button", { name: "語音通話" }));
     fireEvent.click(screen.getByRole("button", { name: "開始語音通話" }));
 
-    expect(screen.getByRole("status")).toHaveTextContent("並已同步通知");
+    expect(screen.getByRole("status")).toHaveTextContent("已送出語音通話邀請");
     const storedDb = JSON.parse(window.localStorage.getItem(MOCK_DB_STORAGE_KEY) ?? "{}");
     expect(
       (storedDb.notification_center_items ?? []).some(
