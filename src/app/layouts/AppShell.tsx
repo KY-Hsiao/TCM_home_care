@@ -230,9 +230,7 @@ export function AppShell() {
           routePlanId: session.activeRoutePlanId,
           repositories: repositoriesRef.current
         });
-
-        repositoriesRef.current.visitRepository.appendDoctorLocationLog({
-          id: `live-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        const locationSample = {
           doctor_id: session.activeDoctorId,
           recorded_at: recordedAt,
           latitude: position.coords.latitude,
@@ -240,7 +238,23 @@ export function AppShell() {
           accuracy: position.coords.accuracy,
           source: position.coords.accuracy <= 50 ? "gps" : "network",
           linked_visit_schedule_id: linkedScheduleId
-        });
+        } as const;
+
+        if (services.doctorLocationSync.mode === "api_polling") {
+          repositoriesRef.current.visitRepository.appendDoctorLocationLog({
+            id: `live-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+            ...locationSample
+          });
+          void services.doctorLocationSync.pushSample(locationSample).catch(() => {
+            setDoctorLocationSync({
+              status: "error",
+              message: "定位已取得，但同步到行政追蹤頁失敗，請確認網路或稍後重試。",
+              lastUpdatedAt: recordedAt
+            });
+          });
+        } else {
+          services.doctorLocationSync.pushSample(locationSample);
+        }
       },
       (error) => {
         if (error.code === 1) {

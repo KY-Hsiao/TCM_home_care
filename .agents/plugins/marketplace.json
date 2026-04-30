@@ -1,7 +1,7 @@
 {
-  "name": "[TODO: marketplace-name]",
+  "name": "tcm-home-care-local",
   "interface": {
-    "displayName": "[TODO: Marketplace Display Name]"
+    "displayName": "TCM Home Care Local Plugins"
   },
   "plugins": [
     {

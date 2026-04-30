@@ -192,15 +192,13 @@ function isTrackingLogNearRoute(
 }
 
 function resolveTrackingLocationLogs(input: {
-  doctorId: string;
   routeDate: string;
   routeTimeSlot: RouteTimeSlot;
   routeSchedules: VisitSchedule[];
   routeScheduleIds: Set<string>;
-  repositories: ReturnType<typeof useAppContext>["repositories"];
+  locationLogs: DoctorLocationLog[];
 }) {
-  const sortedLogs = input.repositories.visitRepository
-    .getDoctorLocationLogs(input.doctorId)
+  const sortedLogs = input.locationLogs
     .slice()
     .sort((left, right) => new Date(right.recorded_at).getTime() - new Date(left.recorded_at).getTime());
 
@@ -735,6 +733,7 @@ export function AdminDoctorTrackingPage() {
   const [routeDate, setRouteDate] = useState<string>(buildDateInputValue());
   const [routeTimeSlot, setRouteTimeSlot] = useState<RouteTimeSlot>("上午");
   const [selectedDoctorId, setSelectedDoctorId] = useState<string>("");
+  const [remoteLocationLogs, setRemoteLocationLogs] = useState<DoctorLocationLog[]>([]);
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const dragStateRef = useRef<{
     pointerId: number;
@@ -791,6 +790,43 @@ export function AdminDoctorTrackingPage() {
       });
   }, [repositories.visitRepository]);
 
+  useEffect(() => {
+    if (services.doctorLocationSync.mode !== "api_polling") {
+      setRemoteLocationLogs([]);
+      return;
+    }
+
+    let cancelled = false;
+    const feedPath = services.doctorLocationSync.buildAdminFeedPath({
+      date: routeDate,
+      timeSlot: routeTimeSlot
+    });
+
+    const syncRemoteLocations = async () => {
+      try {
+        const response = await fetch(feedPath, { cache: "no-store" });
+        if (!response.ok) {
+          return;
+        }
+        const payload = (await response.json()) as { items?: DoctorLocationLog[] };
+        if (!cancelled) {
+          setRemoteLocationLogs(Array.isArray(payload.items) ? payload.items : []);
+        }
+      } catch {
+        if (!cancelled) {
+          setRemoteLocationLogs([]);
+        }
+      }
+    };
+
+    void syncRemoteLocations();
+    const intervalId = window.setInterval(syncRemoteLocations, services.doctorLocationSync.pollingIntervalMs);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [routeDate, routeTimeSlot, services.doctorLocationSync]);
+
   const trackedDoctors = useMemo<DoctorTrackingSummary[]>(() => {
     return db.doctors
       .map<DoctorTrackingSummary | null>((doctor, index) => {
@@ -812,13 +848,16 @@ export function AdminDoctorTrackingPage() {
         }
 
         const routeScheduleIds = new Set(routeSchedules.map((schedule) => schedule.id));
+        const doctorLocationLogs =
+          services.doctorLocationSync.mode === "api_polling"
+            ? remoteLocationLogs.filter((log) => log.doctor_id === doctor.id)
+            : repositories.visitRepository.getDoctorLocationLogs(doctor.id);
         const locationLogs = resolveTrackingLocationLogs({
-          doctorId: doctor.id,
           routeDate,
           routeTimeSlot,
           routeSchedules,
           routeScheduleIds,
-          repositories
+          locationLogs: doctorLocationLogs
         });
         const latestLocation = locationLogs[0];
         const locationStatus = resolveLocationSyncStatus(latestLocation);
@@ -884,7 +923,7 @@ export function AdminDoctorTrackingPage() {
         } satisfies DoctorTrackingSummary;
       })
       .filter((doctor): doctor is DoctorTrackingSummary => doctor !== null);
-  }, [db.doctors, db.patients, repositories, routeDate, routeTimeSlot, services.maps]);
+  }, [db.doctors, db.patients, remoteLocationLogs, repositories, routeDate, routeTimeSlot, services.doctorLocationSync.mode, services.maps]);
 
   useEffect(() => {
     if (!trackingRouteOptions.length) {

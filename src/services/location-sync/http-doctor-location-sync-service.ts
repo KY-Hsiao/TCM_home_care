@@ -1,7 +1,6 @@
 import type {
   DoctorLocationSampleUpload,
-  DoctorLocationSyncService,
-  DoctorLocationTimeSlot
+  DoctorLocationSyncService
 } from "../types";
 
 const defaultPollingIntervalMs = 10_000;
@@ -10,26 +9,22 @@ function normalizeBaseUrl(baseUrl: string) {
   return baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
 }
 
-function buildAdminFeedPath(baseUrl: string, input: { date: string; timeSlot: DoctorLocationTimeSlot }) {
-  const search = new URLSearchParams({
-    date: input.date,
-    time_slot: input.timeSlot
-  });
-  return `${normalizeBaseUrl(baseUrl)}/admin/doctor-locations?${search.toString()}`;
-}
-
 export function createHttpDoctorLocationSyncService(baseUrl = ""): DoctorLocationSyncService {
   return {
     mode: "api_polling",
     pollingIntervalMs: defaultPollingIntervalMs,
     buildUploadPath() {
-      return `${normalizeBaseUrl(baseUrl)}/doctor-location-samples`;
+      return `${normalizeBaseUrl(baseUrl)}/api/doctor-location-samples`;
     },
     buildAdminFeedPath(input) {
-      return buildAdminFeedPath(baseUrl, input);
+      const search = new URLSearchParams({
+        date: input.date,
+        time_slot: input.timeSlot
+      });
+      return `${normalizeBaseUrl(baseUrl)}/api/admin/doctor-locations?${search.toString()}`;
     },
     async pushSample(sample: DoctorLocationSampleUpload) {
-      await fetch(`${normalizeBaseUrl(baseUrl)}/doctor-location-samples`, {
+      await fetch(`${normalizeBaseUrl(baseUrl)}/api/doctor-location-samples`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json"

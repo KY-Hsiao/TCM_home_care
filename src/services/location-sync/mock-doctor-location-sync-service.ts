@@ -11,7 +11,7 @@ function buildAdminFeedPath(input: { date: string; timeSlot: "上午" | "下午"
     date: input.date,
     time_slot: input.timeSlot
   });
-  return `/admin/doctor-locations?${search.toString()}`;
+  return `/api/admin/doctor-locations?${search.toString()}`;
 }
 
 export function createMockDoctorLocationSyncService(
@@ -21,7 +21,7 @@ export function createMockDoctorLocationSyncService(
     mode: "mock_local_storage",
     pollingIntervalMs: defaultPollingIntervalMs,
     buildUploadPath() {
-      return "/doctor-location-samples";
+      return "/api/doctor-location-samples";
     },
     buildAdminFeedPath,
     pushSample(sample: DoctorLocationSampleUpload) {
