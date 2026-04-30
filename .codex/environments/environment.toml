@@ -5,9 +5,6 @@ name = "TCM_home_care"
 [setup]
 script = ".\\.codex\\scripts\\setup.ps1"
 
-[cleanup]
-script = ""
-
 [[actions]]
 name = "啟動程式"
 icon = "run"
