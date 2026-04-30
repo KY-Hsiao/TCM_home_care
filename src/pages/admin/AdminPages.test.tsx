@@ -325,7 +325,7 @@ describe("AdminPages", () => {
     expect(screen.getByText("第 3 站 王○珠")).toBeInTheDocument();
   });
 
-  it("AdminSchedulesPage 可依站點直線距離自動排序本次路線", () => {
+  it("AdminSchedulesPage 可依相鄰直線距離總和自動排序本次路線", () => {
     renderWithProviders(<AdminSchedulesPage />);
 
     selectScheduleFilters();
@@ -337,7 +337,9 @@ describe("AdminPages", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "自動排序" }));
 
-    expect(screen.getByRole("status")).toHaveTextContent("已依站點直線距離自動排序，可再拖曳微調。");
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "已計算所有可行順序，採用相鄰直線距離總和最短的排序。"
+    );
     expect(routeLink.getAttribute("href")).not.toBe(initialHref);
   });
 

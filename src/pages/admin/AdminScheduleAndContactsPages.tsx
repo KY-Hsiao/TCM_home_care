@@ -47,6 +47,7 @@ const routeEndLocation = {
   longitude: 120.48341
 } as const;
 const routeDatePreviewWindowDays = 30;
+const exactRouteOptimizationLimit = 8;
 const weekdayToIndex: Record<(typeof weekdayOptions)[number], number> = {
   星期一: 1,
   星期二: 2,
@@ -556,45 +557,77 @@ function calculateRouteDistance(input: {
   return totalDistance;
 }
 
-// 這裡採最近鄰 + 2-opt 的近似法，目標是縮短站與站之間的直線距離總和，
-// 不是理論上的全域最佳解，因此仍保留人工拖曳微調。
-function optimizePlannerRowsByDistance(input: {
-  checkedRows: PlannerRow[];
-  startAddress: string;
-  endAddress: string;
+type RouteOptimizationStrategy = "exact" | "approximate" | "unchanged";
+
+function findExactShortestPlannerRows(input: {
+  rows: PlannerRow[];
+  startCoordinate: RouteCoordinate;
+  endCoordinate: RouteCoordinate | null;
 }) {
-  if (input.checkedRows.length < 2) {
-    return {
-      reorderedRows: input.checkedRows,
-      unresolvedCoordinateCount: 0
-    };
-  }
+  const coordinateByPatientId = new Map<string, RouteCoordinate>();
+  input.rows.forEach((row) => {
+    const coordinate = getPlannerRowCoordinate(row);
+    if (coordinate) {
+      coordinateByPatientId.set(row.patientId, coordinate);
+    }
+  });
 
-  const coordinateRows = input.checkedRows.filter((row) => Boolean(getPlannerRowCoordinate(row)));
-  const unresolvedCoordinateRows = input.checkedRows.filter((row) => !getPlannerRowCoordinate(row));
+  let bestRows = input.rows;
+  let bestDistance = Number.POSITIVE_INFINITY;
 
-  if (coordinateRows.length < 2) {
-    return {
-      reorderedRows: input.checkedRows,
-      unresolvedCoordinateCount: unresolvedCoordinateRows.length
-    };
-  }
+  const visit = (
+    currentCoordinate: RouteCoordinate,
+    remainingRows: PlannerRow[],
+    orderedRows: PlannerRow[],
+    distanceSoFar: number
+  ) => {
+    if (remainingRows.length === 0) {
+      const endDistance = input.endCoordinate
+        ? calculateStraightLineDistanceKilometers(currentCoordinate, input.endCoordinate)
+        : 0;
+      const totalDistance = distanceSoFar + endDistance;
+      if (totalDistance < bestDistance) {
+        bestDistance = totalDistance;
+        bestRows = orderedRows;
+      }
+      return;
+    }
 
-  const startCoordinate =
-    resolveRouteCoordinate(input.startAddress, routeStartLocation) ?? getPlannerRowCoordinate(coordinateRows[0]);
-  if (!startCoordinate) {
-    return {
-      reorderedRows: input.checkedRows,
-      unresolvedCoordinateCount: unresolvedCoordinateRows.length
-    };
-  }
+    remainingRows.forEach((row, index) => {
+      const coordinate = coordinateByPatientId.get(row.patientId);
+      if (!coordinate) {
+        return;
+      }
+      const nextDistance =
+        distanceSoFar + calculateStraightLineDistanceKilometers(currentCoordinate, coordinate);
+      if (nextDistance >= bestDistance) {
+        return;
+      }
+      visit(
+        coordinate,
+        [...remainingRows.slice(0, index), ...remainingRows.slice(index + 1)],
+        [...orderedRows, row],
+        nextDistance
+      );
+    });
+  };
 
-  const endCoordinate =
-    resolveRouteCoordinate(input.endAddress, routeEndLocation) ?? startCoordinate;
+  visit(input.startCoordinate, input.rows, [], 0);
 
-  const remainingRows = [...coordinateRows];
+  return {
+    rows: bestRows,
+    totalDistanceKilometers: bestDistance
+  };
+}
+
+function findApproximateShortestPlannerRows(input: {
+  rows: PlannerRow[];
+  startCoordinate: RouteCoordinate;
+  endCoordinate: RouteCoordinate | null;
+}) {
+  const remainingRows = [...input.rows];
   const nearestNeighborRows: PlannerRow[] = [];
-  let currentCoordinate = startCoordinate;
+  let currentCoordinate = input.startCoordinate;
 
   while (remainingRows.length > 0) {
     let nearestIndex = 0;
@@ -618,6 +651,11 @@ function optimizePlannerRowsByDistance(input: {
   }
 
   let optimizedRows = [...nearestNeighborRows];
+  let optimizedDistance = calculateRouteDistance({
+    rows: optimizedRows,
+    startCoordinate: input.startCoordinate,
+    endCoordinate: input.endCoordinate
+  });
   let improved = true;
 
   while (improved) {
@@ -629,18 +667,14 @@ function optimizePlannerRowsByDistance(input: {
           ...optimizedRows.slice(startIndex, endIndex + 1).reverse(),
           ...optimizedRows.slice(endIndex + 1)
         ];
-        const currentDistance = calculateRouteDistance({
-          rows: optimizedRows,
-          startCoordinate,
-          endCoordinate
-        });
         const candidateDistance = calculateRouteDistance({
           rows: candidateRows,
-          startCoordinate,
-          endCoordinate
+          startCoordinate: input.startCoordinate,
+          endCoordinate: input.endCoordinate
         });
-        if (candidateDistance + 0.01 < currentDistance) {
+        if (candidateDistance + 0.01 < optimizedDistance) {
           optimizedRows = candidateRows;
+          optimizedDistance = candidateDistance;
           improved = true;
         }
       }
@@ -648,8 +682,70 @@ function optimizePlannerRowsByDistance(input: {
   }
 
   return {
-    reorderedRows: [...optimizedRows, ...unresolvedCoordinateRows],
-    unresolvedCoordinateCount: unresolvedCoordinateRows.length
+    rows: optimizedRows,
+    totalDistanceKilometers: optimizedDistance
+  };
+}
+
+// 8 站內完整枚舉所有排列，確保起點、相鄰站點、終點的直線距離總和最短；
+// 超過 8 站時改用最近鄰 + 2-opt，避免在瀏覽器主執行緒造成明顯卡頓。
+function optimizePlannerRowsByDistance(input: {
+  checkedRows: PlannerRow[];
+  startAddress: string;
+  endAddress: string;
+}) {
+  if (input.checkedRows.length < 2) {
+    return {
+      reorderedRows: input.checkedRows,
+      unresolvedCoordinateCount: 0,
+      strategy: "unchanged" as RouteOptimizationStrategy
+    };
+  }
+
+  const coordinateRows = input.checkedRows.filter((row) => Boolean(getPlannerRowCoordinate(row)));
+  const unresolvedCoordinateRows = input.checkedRows.filter((row) => !getPlannerRowCoordinate(row));
+
+  if (coordinateRows.length < 2) {
+    return {
+      reorderedRows: input.checkedRows,
+      unresolvedCoordinateCount: unresolvedCoordinateRows.length,
+      strategy: "unchanged" as RouteOptimizationStrategy
+    };
+  }
+
+  const startCoordinate =
+    resolveRouteCoordinate(input.startAddress, routeStartLocation) ?? getPlannerRowCoordinate(coordinateRows[0]);
+  if (!startCoordinate) {
+    return {
+      reorderedRows: input.checkedRows,
+      unresolvedCoordinateCount: unresolvedCoordinateRows.length,
+      strategy: "unchanged" as RouteOptimizationStrategy
+    };
+  }
+
+  const endCoordinate =
+    resolveRouteCoordinate(input.endAddress, routeEndLocation) ?? startCoordinate;
+
+  const strategy: RouteOptimizationStrategy =
+    coordinateRows.length <= exactRouteOptimizationLimit ? "exact" : "approximate";
+  const optimizationResult =
+    strategy === "exact"
+      ? findExactShortestPlannerRows({
+          rows: coordinateRows,
+          startCoordinate,
+          endCoordinate
+        })
+      : findApproximateShortestPlannerRows({
+          rows: coordinateRows,
+          startCoordinate,
+          endCoordinate
+        });
+
+  return {
+    reorderedRows: [...optimizationResult.rows, ...unresolvedCoordinateRows],
+    unresolvedCoordinateCount: unresolvedCoordinateRows.length,
+    strategy,
+    totalDistanceKilometers: optimizationResult.totalDistanceKilometers
   };
 }
 
@@ -982,18 +1078,27 @@ export function AdminSchedulesPage() {
       return;
     }
 
-    const { reorderedRows, unresolvedCoordinateCount } = optimizePlannerRowsByDistance({
+    const { reorderedRows, unresolvedCoordinateCount, strategy, totalDistanceKilometers } =
+      optimizePlannerRowsByDistance({
       checkedRows,
       startAddress: routeStartAddress,
       endAddress: routeEndAddress
     });
     const uncheckedRows = sortPlannerRows(plannerRows).filter((row) => !row.checked);
     setPlannerRows(reindexPlannerRows([...reorderedRows, ...uncheckedRows]));
-    setRecentAction(
+    const distanceText =
+      typeof totalDistanceKilometers === "number" && Number.isFinite(totalDistanceKilometers)
+        ? `目前直線總距離約 ${totalDistanceKilometers.toFixed(1)} 公里。`
+        : "";
+    const strategyText =
+      strategy === "exact"
+        ? "已計算所有可行順序，採用相鄰直線距離總和最短的排序。"
+        : "站點超過 8 站，已用最近鄰與 2-opt 近似縮短相鄰直線距離總和。";
+    const unresolvedText =
       unresolvedCoordinateCount > 0
-        ? `已依站點直線距離自動排序；另有 ${unresolvedCoordinateCount} 站缺少座標，先保留在後段，可再拖曳微調。`
-        : "已依站點直線距離自動排序，可再拖曳微調。"
-    );
+        ? `另有 ${unresolvedCoordinateCount} 站缺少座標，先保留在後段，可再拖曳微調。`
+        : "可再拖曳微調。";
+    setRecentAction([strategyText, distanceText, unresolvedText].filter(Boolean).join(" "));
   };
 
   const handlePlannerRowDragStart = (patientId: string) => {
@@ -1483,7 +1588,7 @@ export function AdminSchedulesPage() {
                 <div>
                   <p className="text-sm font-semibold text-brand-ink">本次路線排序</p>
                   <p className="mt-1 text-xs text-slate-500">
-                    地圖固定在左側，這裡可先自動排序，再拖曳微調站序。
+                    自動排序會計算起點、相鄰兩站與終點的直線距離總和；8 站內保證最短，超過 8 站用近似法避免卡頓。
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center justify-end gap-2">
