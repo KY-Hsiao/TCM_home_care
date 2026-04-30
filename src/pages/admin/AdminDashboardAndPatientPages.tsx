@@ -45,6 +45,7 @@ type TrackingRouteOption = {
   date: string;
   timeSlot: RouteTimeSlot;
   doctorCount: number;
+  hasExecutingRoute: boolean;
 };
 
 function buildCsvTemplate() {
@@ -752,29 +753,60 @@ export function AdminDoctorTrackingPage() {
     zoom: number;
   } | null>(null);
   const trackingRouteOptions = useMemo<TrackingRouteOption[]>(() => {
-    const doctorIdsByRoute = new Map<string, Set<string>>();
-    repositories.visitRepository
-      .getSchedules()
-      .filter((schedule) => schedule.visit_type !== "回院病歷")
-      .forEach((schedule) => {
-        const routeKey = `${schedule.scheduled_start_at.slice(0, 10)}|${resolveTrackingTimeSlot(schedule)}`;
-        const doctorIds = doctorIdsByRoute.get(routeKey) ?? new Set<string>();
-        doctorIds.add(schedule.assigned_doctor_id);
-        doctorIdsByRoute.set(routeKey, doctorIds);
+    const routeOptionMap = new Map<
+      string,
+      {
+        doctorIds: Set<string>;
+        hasExecutingRoute: boolean;
+      }
+    >();
+    const savedRoutePlans = repositories.visitRepository.getSavedRoutePlans();
+
+    if (savedRoutePlans.length) {
+      savedRoutePlans.forEach((routePlan) => {
+        const routeKey = `${routePlan.route_date}|${routePlan.service_time_slot}`;
+        const current = routeOptionMap.get(routeKey) ?? {
+          doctorIds: new Set<string>(),
+          hasExecutingRoute: false
+        };
+        current.doctorIds.add(routePlan.doctor_id);
+        current.hasExecutingRoute =
+          current.hasExecutingRoute || routePlan.execution_status === "executing";
+        routeOptionMap.set(routeKey, current);
       });
+    } else {
+      repositories.visitRepository
+        .getSchedules()
+        .filter((schedule) => schedule.visit_type !== "回院病歷")
+        .forEach((schedule) => {
+          const routeKey = `${schedule.scheduled_start_at.slice(0, 10)}|${resolveTrackingTimeSlot(schedule)}`;
+          const current = routeOptionMap.get(routeKey) ?? {
+            doctorIds: new Set<string>(),
+            hasExecutingRoute: false
+          };
+          current.doctorIds.add(schedule.assigned_doctor_id);
+          routeOptionMap.set(routeKey, current);
+        });
+    }
 
     const todayRouteDate = buildDateInputValue();
 
-    return [...doctorIdsByRoute.entries()]
-      .map(([routeKey, doctorIds]) => {
+    return [...routeOptionMap.entries()]
+      .map(([routeKey, summary]) => {
         const [date, timeSlot] = routeKey.split("|");
         return {
           date,
           timeSlot: timeSlot as RouteTimeSlot,
-          doctorCount: doctorIds.size
+          doctorCount: summary.doctorIds.size,
+          hasExecutingRoute: summary.hasExecutingRoute
         };
       })
       .sort((left, right) => {
+        const leftExecuting = left.hasExecutingRoute ? 1 : 0;
+        const rightExecuting = right.hasExecutingRoute ? 1 : 0;
+        if (leftExecuting !== rightExecuting) {
+          return rightExecuting - leftExecuting;
+        }
         const leftIsToday = left.date === todayRouteDate ? 1 : 0;
         const rightIsToday = right.date === todayRouteDate ? 1 : 0;
         if (leftIsToday !== rightIsToday) {
@@ -784,7 +816,7 @@ export function AdminDoctorTrackingPage() {
           return right.doctorCount - left.doctorCount;
         }
         return (
-          left.date.localeCompare(right.date) ||
+          right.date.localeCompare(left.date) ||
           routeTimeSlotOptions.indexOf(left.timeSlot) - routeTimeSlotOptions.indexOf(right.timeSlot)
         );
       });
@@ -929,10 +961,11 @@ export function AdminDoctorTrackingPage() {
     if (!trackingRouteOptions.length) {
       return;
     }
-    const hasMatchedRoute = trackingRouteOptions.some(
-      (option) => option.date === routeDate && option.timeSlot === routeTimeSlot
-    );
-    if (hasMatchedRoute) {
+    const sameDateOptions = trackingRouteOptions.filter((option) => option.date === routeDate);
+    if (sameDateOptions.length > 0) {
+      if (!sameDateOptions.some((option) => option.timeSlot === routeTimeSlot)) {
+        setRouteTimeSlot(sameDateOptions[0].timeSlot);
+      }
       return;
     }
     setRouteDate(trackingRouteOptions[0].date);

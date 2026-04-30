@@ -328,6 +328,72 @@ describe("AppShell", () => {
     });
   });
 
+  it("醫師看過團隊通訊後再離開頁面，左側未讀標籤不會跳回未讀", async () => {
+    const seededDb = createSeedDb();
+    window.localStorage.setItem(
+      MOCK_DB_STORAGE_KEY,
+      JSON.stringify({
+        ...seededDb,
+        notification_center_items: [
+          {
+            id: "nc-team-doctor-unread-route-leave-001",
+            role: "doctor",
+            owner_user_id: "doc-001",
+            source_type: "manual_notice",
+            title: "院內對話｜第 2 站 王○珠",
+            content: "行政人員提醒：請回報目前出發狀態。",
+            linked_patient_id: "pat-001",
+            linked_visit_schedule_id: "vs-003",
+            linked_doctor_id: "doc-001",
+            linked_leave_request_id: null,
+            status: "pending",
+            is_unread: true,
+            reply_text: null,
+            reply_updated_at: null,
+            reply_updated_by_role: null,
+            created_at: "2026-04-30T09:25:00+08:00",
+            updated_at: "2026-04-30T09:25:00+08:00"
+          }
+        ]
+      })
+    );
+    window.localStorage.setItem(
+      SESSION_STORAGE_KEY,
+      JSON.stringify({
+        role: "doctor",
+        activeDoctorId: "doc-001",
+        activeAdminId: "admin-001",
+        authenticatedDoctorId: "doc-001",
+        authenticatedAdminId: null
+      })
+    );
+
+    renderShell("/doctor/navigation", <DoctorLocationPage />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("link", { name: "團隊通訊未讀紅燈" })).toBeInTheDocument();
+      expect(within(screen.getByRole("navigation")).getByRole("link", { name: /團隊通訊/ })).toHaveTextContent("1");
+    });
+
+    fireEvent.click(within(screen.getByRole("navigation")).getByRole("link", { name: /團隊通訊/ }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("link", { name: "團隊通訊已讀綠燈" })).toBeInTheDocument();
+    });
+
+    fireEvent.click(within(screen.getByRole("navigation")).getByRole("link", { name: /即時導航/ }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("link", { name: "團隊通訊已讀綠燈" })).toBeInTheDocument();
+      expect(within(screen.getByRole("navigation")).getByRole("link", { name: /團隊通訊/ })).toHaveTextContent(
+        "團隊通訊已讀"
+      );
+      expect(
+        within(screen.getByRole("navigation")).getByRole("link", { name: /團隊通訊/ })
+      ).not.toHaveTextContent("未讀 1 則");
+    });
+  });
+
   it("醫師端導航頁不再顯示舊的聯絡行政浮動卡，但可改用院內對話視窗", () => {
     window.localStorage.setItem(
       SESSION_STORAGE_KEY,

@@ -366,11 +366,7 @@ export function AppShell() {
     viewerUserId: currentDoctor?.id ?? "",
     enabled: Boolean(shellRole === "doctor" && currentDoctor && currentAdmin)
   });
-  const doctorTeamCommunicationUnreadCount = isTeamCommunicationRoute
-    ? 0
-    : shellRole === "doctor"
-      ? shellConversation.unreadCount
-      : teamCommunicationUnread.count;
+  const doctorTeamCommunicationUnreadCount = isTeamCommunicationRoute ? 0 : teamCommunicationUnread.count;
 
   useEffect(() => {
     if (!isTeamCommunicationRoute || !shellRole || !currentUserId) {
@@ -384,6 +380,16 @@ export function AppShell() {
 
     return () => window.clearTimeout(timeoutId);
   }, [currentUserId, isTeamCommunicationRoute, shellRole]);
+
+  useEffect(() => {
+    if (isTeamCommunicationRoute || !shellRole || !currentUserId) {
+      return;
+    }
+
+    // 離開團隊通訊頁後再補抓一次全域未讀數，避免頁內已讀同步完成較慢時，
+    // 左側標籤仍被舊的未讀值短暫蓋回去。
+    void teamCommunicationUnread.refresh();
+  }, [currentUserId, isTeamCommunicationRoute, location.pathname, shellRole]);
 
   const handleLogout = () => {
     if (!shellRole) {

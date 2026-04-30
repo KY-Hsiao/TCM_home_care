@@ -63,6 +63,10 @@ function openRouteEndpointsDialog() {
   return screen.getByRole("dialog", { name: "起終點設定視窗" });
 }
 
+function resolveTimeSlot(dateTime: string) {
+  return new Date(dateTime).getHours() < 12 ? "上午" : "下午";
+}
+
 describe("AdminPages", () => {
   beforeEach(() => {
     window.localStorage.clear();
@@ -613,6 +617,46 @@ describe("AdminPages", () => {
     expect(screen.getByRole("button", { name: "蕭坤元醫師" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "林若謙醫師" })).toBeInTheDocument();
     expect(screen.getAllByText("已經過的地點").length).toBeGreaterThan(0);
+  });
+
+  it("AdminDoctorTrackingPage 會優先帶入最近且可追蹤的路線日期，切換日期時不會跳錯天", () => {
+    const customDb = createSeedDb();
+    customDb.saved_route_plans = customDb.saved_route_plans.filter((routePlan) =>
+      ["2026-04-29", "2026-04-30"].includes(routePlan.route_date)
+    );
+    customDb.saved_route_plans = customDb.saved_route_plans.map((routePlan) =>
+      routePlan.route_date === "2026-04-30"
+        ? {
+            ...routePlan,
+            service_time_slot: "下午" as const,
+            execution_status: "archived" as const
+          }
+        : {
+            ...routePlan,
+            execution_status: "archived" as const
+          }
+    );
+    customDb.visit_schedules = customDb.visit_schedules.filter((schedule) => {
+      const routeDate = schedule.scheduled_start_at.slice(0, 10);
+      if (routeDate === "2026-04-29") {
+        return schedule.visit_type !== "回院病歷";
+      }
+      return routeDate === "2026-04-30" && resolveTimeSlot(schedule.scheduled_start_at) === "下午";
+    });
+
+    window.localStorage.setItem(MOCK_DB_STORAGE_KEY, JSON.stringify(customDb));
+
+    renderWithProviders(<AdminDoctorTrackingPage />);
+
+    expect(screen.getByLabelText("路線日期")).toHaveValue("2026-04-30");
+    expect(screen.getByRole("combobox", { name: "規劃時段" })).toHaveValue("下午");
+
+    fireEvent.change(screen.getByLabelText("路線日期"), {
+      target: { value: "2026-04-29" }
+    });
+
+    expect(screen.getByLabelText("路線日期")).toHaveValue("2026-04-29");
+    expect(screen.getByRole("combobox", { name: "規劃時段" })).toHaveValue("上午");
   });
 
   it("AdminDoctorTrackingPage 在桌機版會停止滾輪縮放，但保留拖曳與按鍵縮放", async () => {
