@@ -47,7 +47,6 @@ const routeEndLocation = {
   longitude: 120.48341
 } as const;
 const routeDatePreviewWindowDays = 30;
-const exactRouteOptimizationLimit = 8;
 const weekdayToIndex: Record<(typeof weekdayOptions)[number], number> = {
   星期一: 1,
   星期二: 2,
@@ -557,70 +556,9 @@ function calculateRouteDistance(input: {
   return totalDistance;
 }
 
-type RouteOptimizationStrategy = "exact" | "approximate" | "unchanged";
+type RouteOptimizationStrategy = "nearest_neighbor" | "unchanged";
 
-function findExactShortestPlannerRows(input: {
-  rows: PlannerRow[];
-  startCoordinate: RouteCoordinate;
-  endCoordinate: RouteCoordinate | null;
-}) {
-  const coordinateByPatientId = new Map<string, RouteCoordinate>();
-  input.rows.forEach((row) => {
-    const coordinate = getPlannerRowCoordinate(row);
-    if (coordinate) {
-      coordinateByPatientId.set(row.patientId, coordinate);
-    }
-  });
-
-  let bestRows = input.rows;
-  let bestDistance = Number.POSITIVE_INFINITY;
-
-  const visit = (
-    currentCoordinate: RouteCoordinate,
-    remainingRows: PlannerRow[],
-    orderedRows: PlannerRow[],
-    distanceSoFar: number
-  ) => {
-    if (remainingRows.length === 0) {
-      const endDistance = input.endCoordinate
-        ? calculateStraightLineDistanceKilometers(currentCoordinate, input.endCoordinate)
-        : 0;
-      const totalDistance = distanceSoFar + endDistance;
-      if (totalDistance < bestDistance) {
-        bestDistance = totalDistance;
-        bestRows = orderedRows;
-      }
-      return;
-    }
-
-    remainingRows.forEach((row, index) => {
-      const coordinate = coordinateByPatientId.get(row.patientId);
-      if (!coordinate) {
-        return;
-      }
-      const nextDistance =
-        distanceSoFar + calculateStraightLineDistanceKilometers(currentCoordinate, coordinate);
-      if (nextDistance >= bestDistance) {
-        return;
-      }
-      visit(
-        coordinate,
-        [...remainingRows.slice(0, index), ...remainingRows.slice(index + 1)],
-        [...orderedRows, row],
-        nextDistance
-      );
-    });
-  };
-
-  visit(input.startCoordinate, input.rows, [], 0);
-
-  return {
-    rows: bestRows,
-    totalDistanceKilometers: bestDistance
-  };
-}
-
-function findApproximateShortestPlannerRows(input: {
+function findNearestNeighborPlannerRows(input: {
   rows: PlannerRow[];
   startCoordinate: RouteCoordinate;
   endCoordinate: RouteCoordinate | null;
@@ -650,45 +588,18 @@ function findApproximateShortestPlannerRows(input: {
     currentCoordinate = getPlannerRowCoordinate(nearestRow) ?? currentCoordinate;
   }
 
-  let optimizedRows = [...nearestNeighborRows];
-  let optimizedDistance = calculateRouteDistance({
-    rows: optimizedRows,
-    startCoordinate: input.startCoordinate,
-    endCoordinate: input.endCoordinate
-  });
-  let improved = true;
-
-  while (improved) {
-    improved = false;
-    for (let startIndex = 0; startIndex < optimizedRows.length - 2; startIndex += 1) {
-      for (let endIndex = startIndex + 1; endIndex < optimizedRows.length - 1; endIndex += 1) {
-        const candidateRows = [
-          ...optimizedRows.slice(0, startIndex),
-          ...optimizedRows.slice(startIndex, endIndex + 1).reverse(),
-          ...optimizedRows.slice(endIndex + 1)
-        ];
-        const candidateDistance = calculateRouteDistance({
-          rows: candidateRows,
-          startCoordinate: input.startCoordinate,
-          endCoordinate: input.endCoordinate
-        });
-        if (candidateDistance + 0.01 < optimizedDistance) {
-          optimizedRows = candidateRows;
-          optimizedDistance = candidateDistance;
-          improved = true;
-        }
-      }
-    }
-  }
-
   return {
-    rows: optimizedRows,
-    totalDistanceKilometers: optimizedDistance
+    rows: nearestNeighborRows,
+    totalDistanceKilometers: calculateRouteDistance({
+      rows: nearestNeighborRows,
+      startCoordinate: input.startCoordinate,
+      endCoordinate: input.endCoordinate
+    })
   };
 }
 
-// 8 站內完整枚舉所有排列，確保起點、相鄰站點、終點的直線距離總和最短；
-// 超過 8 站時改用最近鄰 + 2-opt，避免在瀏覽器主執行緒造成明顯卡頓。
+// 依「目前點到下一站距離最短」逐站排序；這是最近鄰原則，
+// 重點是每一步都選最近的下一個停留點，而不是枚舉全路線總距離最佳解。
 function optimizePlannerRowsByDistance(input: {
   checkedRows: PlannerRow[];
   startAddress: string;
@@ -726,20 +637,12 @@ function optimizePlannerRowsByDistance(input: {
   const endCoordinate =
     resolveRouteCoordinate(input.endAddress, routeEndLocation) ?? startCoordinate;
 
-  const strategy: RouteOptimizationStrategy =
-    coordinateRows.length <= exactRouteOptimizationLimit ? "exact" : "approximate";
-  const optimizationResult =
-    strategy === "exact"
-      ? findExactShortestPlannerRows({
-          rows: coordinateRows,
-          startCoordinate,
-          endCoordinate
-        })
-      : findApproximateShortestPlannerRows({
-          rows: coordinateRows,
-          startCoordinate,
-          endCoordinate
-        });
+  const strategy: RouteOptimizationStrategy = "nearest_neighbor";
+  const optimizationResult = findNearestNeighborPlannerRows({
+    rows: coordinateRows,
+    startCoordinate,
+    endCoordinate
+  });
 
   return {
     reorderedRows: [...optimizationResult.rows, ...unresolvedCoordinateRows],
@@ -1091,9 +994,9 @@ export function AdminSchedulesPage() {
         ? `目前直線總距離約 ${totalDistanceKilometers.toFixed(1)} 公里。`
         : "";
     const strategyText =
-      strategy === "exact"
-        ? "已計算所有可行順序，採用相鄰直線距離總和最短的排序。"
-        : "站點超過 8 站，已用最近鄰與 2-opt 近似縮短相鄰直線距離總和。";
+      strategy === "nearest_neighbor"
+        ? "已依目前點到下一個停留點距離最短的原則完成自動排序。"
+        : "目前路線未重新排序。";
     const unresolvedText =
       unresolvedCoordinateCount > 0
         ? `另有 ${unresolvedCoordinateCount} 站缺少座標，先保留在後段，可再拖曳微調。`
@@ -1588,7 +1491,7 @@ export function AdminSchedulesPage() {
                 <div>
                   <p className="text-sm font-semibold text-brand-ink">本次路線排序</p>
                   <p className="mt-1 text-xs text-slate-500">
-                    自動排序會計算起點、相鄰兩站與終點的直線距離總和；8 站內保證最短，超過 8 站用近似法避免卡頓。
+                    自動排序會從起點開始，每一步都選距離目前點最近的下一個停留點；仍可拖曳微調站序。
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center justify-end gap-2">
