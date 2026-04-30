@@ -245,7 +245,7 @@ export function AppShell() {
             id: `live-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
             ...locationSample
           });
-          void services.doctorLocationSync.pushSample(locationSample).catch(() => {
+          Promise.resolve(services.doctorLocationSync.pushSample(locationSample)).catch(() => {
             setDoctorLocationSync({
               status: "error",
               message: "定位已取得，但同步到行政追蹤頁失敗，請確認網路或稍後重試。",
