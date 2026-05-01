@@ -134,6 +134,7 @@ export function DoctorRemindersPage() {
 export function DoctorLeaveRequestPage() {
   const { repositories, db, session } = useAppContext();
   const activeDoctor = db.doctors.find((doctor) => doctor.id === session.activeDoctorId) ?? db.doctors[0];
+  const [isLeaveDialogOpen, setIsLeaveDialogOpen] = useState(false);
   const [startDate, setStartDate] = useState<string>(new Date().toISOString().slice(0, 10));
   const [endDate, setEndDate] = useState<string>(new Date().toISOString().slice(0, 10));
   const [reason, setReason] = useState("請假登記");
@@ -185,6 +186,7 @@ export function DoctorLeaveRequestPage() {
       handoffNote: handoffNote.trim(),
       status: "pending"
     });
+    setIsLeaveDialogOpen(false);
     setStatusFeedback({
       tone: "success",
       message: "請假申請已送出，行政人員可在待處理請假查看。"
@@ -207,14 +209,121 @@ export function DoctorLeaveRequestPage() {
 
   return (
     <div className="space-y-6">
-      <Panel title="請假申請">
-        <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
-          <div className="space-y-4 text-sm">
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-slate-600">
-              <p className="font-medium text-brand-ink">目前登入醫師</p>
-              <p className="mt-1">{activeDoctor?.name ?? "未指定醫師"}</p>
+      <Panel
+        title="請假申請"
+        action={
+          <button
+            type="button"
+            onClick={() => {
+              setStatusFeedback(null);
+              setIsLeaveDialogOpen(true);
+            }}
+            className="rounded-full bg-brand-coral px-5 py-2.5 text-sm font-semibold text-white"
+          >
+            提出請假申請
+          </button>
+        }
+      >
+        <div className="space-y-4 text-sm">
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-slate-600">
+            <p className="font-medium text-brand-ink">目前登入醫師</p>
+            <p className="mt-1">{activeDoctor?.name ?? "未指定醫師"}</p>
+            <p className="mt-1 text-xs text-slate-500">按「提出請假申請」後，在視窗內填寫期間、原因與交班備註。</p>
+          </div>
+          {statusFeedback && !isLeaveDialogOpen ? (
+            <div
+              role="status"
+              className={`rounded-2xl border px-4 py-3 ${
+                statusFeedback.tone === "success"
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                  : "border-rose-200 bg-rose-50 text-rose-700"
+              }`}
+            >
+              {statusFeedback.message}
             </div>
-            <div className="grid gap-3 lg:grid-cols-2">
+          ) : null}
+
+          <div className="rounded-[1.5rem] border border-slate-200 bg-white p-4 lg:rounded-3xl lg:p-5">
+            <div className="flex items-center justify-between gap-3">
+              <p className="font-semibold text-brand-ink">請假申請紀錄</p>
+              <span className="text-xs text-slate-500">{leaveHistory.length} 筆</span>
+            </div>
+            <div className="mt-4 space-y-3">
+              {leaveHistory.length ? (
+                leaveHistory.map((leaveRequest) => (
+                  <div key={leaveRequest.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <p className="card-clamp-1 font-medium text-brand-ink">
+                          {leaveRequest.start_date} 至 {leaveRequest.end_date}
+                        </p>
+                        <Badge value={leaveRequest.status} compact />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteLeaveRequest(leaveRequest.id)}
+                        className="rounded-full border border-rose-200 bg-white px-3 py-1.5 text-xs font-semibold text-rose-600"
+                      >
+                        刪除請假單
+                      </button>
+                    </div>
+                    <p className="card-clamp-2 mt-2 text-slate-600">{leaveRequest.reason}</p>
+                    <p className="card-clamp-2 mt-1 text-xs text-slate-500">{leaveRequest.handoff_note}</p>
+                  </div>
+                ))
+              ) : (
+                <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
+                  目前還沒有請假申請紀錄。
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </Panel>
+
+      {isLeaveDialogOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="請假申請視窗"
+            className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-[28px] bg-white p-5 shadow-2xl lg:rounded-[32px] lg:p-6"
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-sm font-medium text-brand-coral">醫師請假</p>
+                <h2 className="mt-1 text-xl font-semibold text-brand-ink">提出請假申請</h2>
+                <p className="mt-2 text-sm text-slate-600">
+                  送出後會進入行政端待處理請假，並同步通知中心。
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsLeaveDialogOpen(false)}
+                className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-600 ring-1 ring-slate-200"
+              >
+                關閉視窗
+              </button>
+            </div>
+
+            <div className="mt-6 space-y-4 text-sm">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-slate-600">
+                <p className="font-medium text-brand-ink">目前登入醫師</p>
+                <p className="mt-1">{activeDoctor?.name ?? "未指定醫師"}</p>
+              </div>
+              {statusFeedback ? (
+                <div
+                  role="status"
+                  className={`rounded-2xl border px-4 py-3 ${
+                    statusFeedback.tone === "success"
+                      ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                      : "border-rose-200 bg-rose-50 text-rose-700"
+                  }`}
+                >
+                  {statusFeedback.message}
+                </div>
+              ) : null}
+              <div className="grid gap-3 lg:grid-cols-2">
               <label className="block">
                 <span className="mb-1 block font-medium text-brand-ink">開始日期</span>
                 <input
@@ -263,57 +372,10 @@ export function DoctorLeaveRequestPage() {
             >
               送出請假申請
             </button>
-            {statusFeedback ? (
-              <div
-                role="status"
-                className={`rounded-2xl border px-4 py-3 ${
-                  statusFeedback.tone === "success"
-                    ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-                    : "border-rose-200 bg-rose-50 text-rose-700"
-                }`}
-              >
-                {statusFeedback.message}
-              </div>
-            ) : null}
-          </div>
-
-            <div className="rounded-[1.5rem] border border-slate-200 bg-white p-4 lg:rounded-3xl lg:p-5">
-              <div className="flex items-center justify-between gap-3">
-                <p className="font-semibold text-brand-ink">請假申請紀錄</p>
-                <span className="text-xs text-slate-500">{leaveHistory.length} 筆</span>
-            </div>
-            <div className="mt-4 space-y-3">
-              {leaveHistory.length ? (
-                leaveHistory.map((leaveRequest) => (
-                  <div key={leaveRequest.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm">
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-3">
-                        <p className="card-clamp-1 font-medium text-brand-ink">
-                          {leaveRequest.start_date} 至 {leaveRequest.end_date}
-                        </p>
-                        <Badge value={leaveRequest.status} compact />
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteLeaveRequest(leaveRequest.id)}
-                        className="rounded-full border border-rose-200 bg-white px-3 py-1.5 text-xs font-semibold text-rose-600"
-                      >
-                        刪除請假單
-                      </button>
-                    </div>
-                    <p className="card-clamp-2 mt-2 text-slate-600">{leaveRequest.reason}</p>
-                    <p className="card-clamp-2 mt-1 text-xs text-slate-500">{leaveRequest.handoff_note}</p>
-                  </div>
-                ))
-              ) : (
-                <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
-                  目前還沒有請假申請紀錄。
-                </div>
-              )}
             </div>
           </div>
         </div>
-      </Panel>
+      ) : null}
     </div>
   );
 }

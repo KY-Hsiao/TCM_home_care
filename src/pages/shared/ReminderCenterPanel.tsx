@@ -109,6 +109,10 @@ export function ReminderCenterPanel({
     [items, repositories]
   );
   const selectedItemIdSet = useMemo(() => new Set(selectedItemIds), [selectedItemIds]);
+  const replyingCard = useMemo(
+    () => cards.find(({ item }) => item.id === replyingItemId) ?? null,
+    [cards, replyingItemId]
+  );
 
   useEffect(() => {
     const availableItemIds = new Set(items.map((item) => item.id));
@@ -183,6 +187,7 @@ export function ReminderCenterPanel({
   };
 
   return (
+    <>
     <Panel title={title} className="p-3 lg:p-4">
       <div className="space-y-3">
         <p className="card-clamp-2 text-xs leading-5 text-slate-600">
@@ -231,7 +236,8 @@ export function ReminderCenterPanel({
           </div>
         </div>
         <div className="rounded-[1.4rem] border border-dashed border-slate-200 bg-white px-4 py-2 text-[11px] leading-5 text-slate-500">
-          先按「選擇通知」才會進入勾選模式；雙擊通知標題可打開內容，按「回覆通知」後才會展開繕打區。
+          先按「選擇通知」才會進入勾選模式；雙擊通知標題可打開內容，按「回覆通知」後
+          {role === "doctor" ? "會開啟回覆視窗。" : "才會展開繕打區。"}
         </div>
 
         <div className="space-y-3">
@@ -352,7 +358,7 @@ export function ReminderCenterPanel({
                         ) : null}
                       </div>
 
-                      {isReplying ? (
+                      {isReplying && role === "admin" ? (
                         <>
                           <label className="mt-4 block text-sm">
                             <span className="mb-1 block font-medium text-brand-ink">回覆內容</span>
@@ -399,5 +405,68 @@ export function ReminderCenterPanel({
         </div>
       </div>
     </Panel>
+    {role === "doctor" && replyingCard ? (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4">
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="通知回覆視窗"
+          className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-[28px] bg-white p-5 shadow-2xl lg:rounded-[32px] lg:p-6"
+        >
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-sm font-medium text-brand-coral">通知中心</p>
+              <h2 className="mt-1 text-xl font-semibold text-brand-ink">回覆通知</h2>
+              <p className="mt-2 text-sm text-slate-600">{replyingCard.item.title}</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setReplyingItemId(null)}
+              className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-600 ring-1 ring-slate-200"
+            >
+              關閉視窗
+            </button>
+          </div>
+
+          <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 whitespace-pre-wrap">
+            {replyingCard.item.content}
+          </div>
+
+          <label className="mt-5 block text-sm">
+            <span className="mb-1 block font-medium text-brand-ink">回覆內容</span>
+            <textarea
+              value={replyDrafts[replyingCard.item.id] ?? replyingCard.item.reply_text ?? ""}
+              onChange={(event) =>
+                setReplyDrafts((current) => ({
+                  ...current,
+                  [replyingCard.item.id]: event.target.value
+                }))
+              }
+              rows={5}
+              className="w-full rounded-2xl border border-slate-200 px-4 py-3"
+              placeholder="輸入這筆通知的處理回覆"
+            />
+          </label>
+
+          <div className="mt-5 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => handleReplySaved(replyingCard.item.id)}
+              className="rounded-full bg-brand-forest px-5 py-3 text-sm font-semibold text-white"
+            >
+              儲存回覆
+            </button>
+            <button
+              type="button"
+              onClick={() => handleItemClosed(replyingCard.item.id)}
+              className="rounded-full border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-brand-ink"
+            >
+              標記完成
+            </button>
+          </div>
+        </div>
+      </div>
+    ) : null}
+    </>
   );
 }

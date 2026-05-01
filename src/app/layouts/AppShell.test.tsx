@@ -9,7 +9,12 @@ import {
   AdminRemindersPage,
   AdminTeamCommunicationPage
 } from "../../pages/admin/AdminPages";
-import { DoctorLeaveRequestPage, DoctorLocationPage, DoctorTeamCommunicationPage } from "../../pages/doctor/DoctorPages";
+import {
+  DoctorLeaveRequestPage,
+  DoctorLocationPage,
+  DoctorRemindersPage,
+  DoctorTeamCommunicationPage
+} from "../../pages/doctor/DoctorPages";
 import { RoleSelectPage } from "../../pages/role-select/RoleSelectPage";
 import { AppShell } from "./AppShell";
 import { SESSION_STORAGE_KEY } from "../auth-storage";
@@ -414,7 +419,7 @@ describe("AppShell", () => {
     expect(screen.getByRole("button", { name: "團隊通訊" })).toBeInTheDocument();
   });
 
-  it("醫師端左側導覽會新增請假申請入口，並可送出申請", () => {
+  it("醫師端請假申請會先開啟視窗再填寫送出", () => {
     window.localStorage.setItem(
       SESSION_STORAGE_KEY,
       JSON.stringify({
@@ -434,12 +439,92 @@ describe("AppShell", () => {
 
     expect(navLabels).toEqual(["即時導航", "回院病歷", "請假申請", "團隊通訊", "通知中心"]);
 
-    fireEvent.change(screen.getByLabelText("請假原因"), {
+    expect(screen.queryByLabelText("請假原因")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "提出請假申請" }));
+
+    let dialog = screen.getByRole("dialog", { name: "請假申請視窗" });
+    expect(within(dialog).getByRole("button", { name: "關閉視窗" })).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "關閉視窗" }));
+    expect(screen.queryByRole("dialog", { name: "請假申請視窗" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "提出請假申請" }));
+    dialog = screen.getByRole("dialog", { name: "請假申請視窗" });
+    fireEvent.change(within(dialog).getByLabelText("請假原因"), {
       target: { value: "上午院內會議" }
     });
-    fireEvent.click(screen.getByRole("button", { name: "送出請假申請" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "送出請假申請" }));
 
     expect(screen.getByRole("status")).toHaveTextContent("請假申請已送出");
+    expect(screen.queryByRole("dialog", { name: "請假申請視窗" })).not.toBeInTheDocument();
+  });
+
+  it("醫師端通知中心按回覆通知後會開啟回覆視窗", async () => {
+    const seededDb = createSeedDb();
+    window.localStorage.setItem(
+      MOCK_DB_STORAGE_KEY,
+      JSON.stringify({
+        ...seededDb,
+        notification_center_items: [
+          {
+            id: "nc-doctor-reply-modal-001",
+            role: "doctor",
+            owner_user_id: "doc-001",
+            source_type: "manual_notice",
+            title: "請回報返院時間",
+            content: "行政人員提醒：返院後請回覆目前狀態。",
+            linked_patient_id: null,
+            linked_visit_schedule_id: null,
+            linked_doctor_id: "doc-001",
+            linked_leave_request_id: null,
+            status: "pending",
+            is_unread: true,
+            reply_text: null,
+            reply_updated_at: null,
+            reply_updated_by_role: null,
+            created_at: "2026-04-30T09:20:00+08:00",
+            updated_at: "2026-04-30T09:20:00+08:00"
+          }
+        ]
+      })
+    );
+    window.localStorage.setItem(
+      SESSION_STORAGE_KEY,
+      JSON.stringify({
+        role: "doctor",
+        activeDoctorId: "doc-001",
+        activeAdminId: "admin-001",
+        authenticatedDoctorId: "doc-001",
+        authenticatedAdminId: null
+      })
+    );
+
+    renderShell("/doctor/reminders", <DoctorRemindersPage />);
+
+    fireEvent.doubleClick(screen.getByRole("button", { name: /請回報返院時間/ }));
+    fireEvent.click(screen.getByRole("button", { name: "回覆通知" }));
+
+    let dialog = screen.getByRole("dialog", { name: "通知回覆視窗" });
+    expect(within(dialog).getByLabelText("回覆內容")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "關閉視窗" })).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "關閉視窗" }));
+    expect(screen.queryByRole("dialog", { name: "通知回覆視窗" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "回覆通知" }));
+    dialog = screen.getByRole("dialog", { name: "通知回覆視窗" });
+    fireEvent.change(within(dialog).getByLabelText("回覆內容"), {
+      target: { value: "已返院，準備補病歷。" }
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "儲存回覆" }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "通知回覆視窗" })).not.toBeInTheDocument();
+    });
+    const storedDb = JSON.parse(window.localStorage.getItem(MOCK_DB_STORAGE_KEY) ?? "{}");
+    expect(storedDb.notification_center_items?.[0]).toMatchObject({
+      id: "nc-doctor-reply-modal-001",
+      reply_text: "已返院，準備補病歷。",
+      status: "replied"
+    });
   });
 
   it("醫師端可刪除自己的請假申請紀錄", () => {
