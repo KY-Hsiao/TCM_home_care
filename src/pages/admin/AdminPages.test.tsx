@@ -805,6 +805,27 @@ describe("AdminPages", () => {
       ).toBeInTheDocument();
     });
 
+    const zoomLabel = screen.getByLabelText("目前地圖縮放層級");
+    const initialZoomText = zoomLabel.textContent;
+    const zoomOutButton = screen.getByRole("button", { name: "縮小地圖" });
+
+    expect(zoomOutButton).toBeEnabled();
+    fireEvent.click(zoomOutButton);
+
+    await waitFor(() => {
+      expect(zoomLabel.textContent).not.toBe(initialZoomText);
+    });
+
+    const zoomAfterOutText = zoomLabel.textContent;
+    const zoomInButton = screen.getByRole("button", { name: "放大地圖" });
+
+    expect(zoomInButton).toBeEnabled();
+    fireEvent.click(zoomInButton);
+
+    await waitFor(() => {
+      expect(zoomLabel.textContent).not.toBe(zoomAfterOutText);
+    });
+
     window.matchMedia = originalMatchMedia;
   });
 

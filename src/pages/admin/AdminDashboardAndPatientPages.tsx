@@ -1202,9 +1202,13 @@ export function AdminDoctorTrackingPage() {
       if (!current) {
         return current;
       }
+      const nextZoom = Math.max(trackingMapMinZoom, Math.min(trackingMapMaxZoom, current.zoom + delta));
+      if (nextZoom === current.zoom) {
+        return current;
+      }
       return {
         ...current,
-        zoom: Math.max(trackingMapMinZoom, Math.min(trackingMapMaxZoom, current.zoom + delta))
+        zoom: nextZoom
       };
     });
   };
@@ -1357,6 +1361,8 @@ export function AdminDoctorTrackingPage() {
     recenterTrackingMap(targetDoctor);
     autoCenteredDoctorKeyRef.current = targetDoctor ? `${targetDoctor.doctorId}|${selectedDistributionRouteId}|${routeDate}|${routeTimeSlot}` : "";
   };
+  const isTrackingZoomInDisabled = !trackingMapView || trackingMapView.zoom >= trackingMapMaxZoom;
+  const isTrackingZoomOutDisabled = !trackingMapView || trackingMapView.zoom <= trackingMapMinZoom;
 
   return (
     <div className="space-y-4">
@@ -1518,18 +1524,35 @@ export function AdminDoctorTrackingPage() {
                     />
                   ))}
                 </div>
-                <div className="absolute right-3 top-3 z-20 flex flex-col gap-2">
+                <div
+                  className="absolute right-3 top-3 z-20 flex flex-col gap-2"
+                  onPointerDown={(event) => event.stopPropagation()}
+                >
+                  <span
+                    aria-label="目前地圖縮放層級"
+                    className="rounded-full border border-white/80 bg-white/95 px-3 py-1.5 text-center text-[11px] font-semibold text-slate-600 shadow-sm backdrop-blur"
+                  >
+                    縮放 {trackingMapView.zoom}
+                  </span>
                   <button
                     type="button"
-                    onClick={() => updateTrackingMapZoom(1)}
-                    className="rounded-full border border-white/80 bg-white/95 px-3 py-2 text-xs font-semibold text-brand-ink shadow-sm backdrop-blur"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      updateTrackingMapZoom(1);
+                    }}
+                    disabled={isTrackingZoomInDisabled}
+                    className="rounded-full border border-white/80 bg-white/95 px-3 py-2 text-xs font-semibold text-brand-ink shadow-sm backdrop-blur disabled:cursor-not-allowed disabled:opacity-45"
                   >
                     放大地圖
                   </button>
                   <button
                     type="button"
-                    onClick={() => updateTrackingMapZoom(-1)}
-                    className="rounded-full border border-white/80 bg-white/95 px-3 py-2 text-xs font-semibold text-brand-ink shadow-sm backdrop-blur"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      updateTrackingMapZoom(-1);
+                    }}
+                    disabled={isTrackingZoomOutDisabled}
+                    className="rounded-full border border-white/80 bg-white/95 px-3 py-2 text-xs font-semibold text-brand-ink shadow-sm backdrop-blur disabled:cursor-not-allowed disabled:opacity-45"
                   >
                     縮小地圖
                   </button>
