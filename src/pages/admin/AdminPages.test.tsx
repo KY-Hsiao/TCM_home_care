@@ -413,10 +413,12 @@ describe("AdminPages", () => {
 
     expect(screen.getByText("路線圖預覽")).toBeInTheDocument();
     expect(screen.getByText("頁內示意路線預覽")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "範圍放大" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "範圍縮小" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "範圍放大" }));
-    expect(screen.getByText("目前範圍：廣域")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "放大" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "縮小" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "醫師置中" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "回預設" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "放大" }));
+    expect(screen.getByText("目前視野：近距")).toBeInTheDocument();
     expect(screen.getByTitle(/頁內路線底圖/)).toBeInTheDocument();
     expect(screen.getByRole("img", { name: /頁內路線圖預覽/ })).toBeInTheDocument();
     const routeLink = screen.getByRole("link", { name: "用 Google 地圖開啟完整路線" });
