@@ -263,7 +263,7 @@ describe("AppShell", () => {
     renderShell("/doctor/team-communication", <DoctorTeamCommunicationPage />);
 
     expect(within(screen.getByRole("navigation")).getByRole("link", { name: /團隊通訊/ })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "團隊通訊" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "團隊通訊" })).not.toBeInTheDocument();
     expect(screen.getByLabelText("訊息內容")).toBeInTheDocument();
     expect(screen.getByPlaceholderText(/行政人員/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "開啟團隊通訊" })).not.toBeInTheDocument();

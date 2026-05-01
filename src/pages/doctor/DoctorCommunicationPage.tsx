@@ -99,33 +99,30 @@ export function DoctorTeamCommunicationPage() {
 
   return (
     <div className="min-w-0 space-y-4">
-      <Panel title="團隊通訊" className="p-3 lg:p-4">
-        <div className="h-[min(72dvh,820px)] min-h-[420px]">
-          <StaffCommunicationPanel
-            title="行政人員"
-            counterpartLabel="行政人員"
-            counterpartPhone={currentAdmin.phone}
-            currentUserLabel={currentDoctor.name}
-            contextLabel={
-              activeSchedule && activePatient
-                ? `第 ${activeSchedule.route_order} 站 ${maskPatientName(activePatient.name)}`
-                : "院內行政協調"
-            }
-            doctorId={currentDoctor.id}
-            adminUserId={currentAdmin.id}
-            patientId={activePatient?.id ?? null}
-            visitScheduleId={activeSchedule?.id ?? null}
-            logs={conversation.messages}
-            unreadConversationCount={conversation.unreadCount}
-            syncError={conversation.syncError}
-            lastSyncedAt={conversation.lastSyncedAt}
-            isRefreshing={conversation.isRefreshing}
-            onRefresh={() => void conversation.refresh()}
-            onConversationViewed={() => void conversation.markConversationRead()}
-            onCreateLog={createDoctorAdminContactLog}
-          />
-        </div>
-      </Panel>
+      <div className="h-[min(78dvh,860px)] min-h-[460px]">
+        <StaffCommunicationPanel
+          counterpartLabel="行政人員"
+          counterpartPhone={currentAdmin.phone}
+          currentUserLabel={currentDoctor.name}
+          contextLabel={
+            activeSchedule && activePatient
+              ? `第 ${activeSchedule.route_order} 站 ${maskPatientName(activePatient.name)}`
+              : "院內行政協調"
+          }
+          doctorId={currentDoctor.id}
+          adminUserId={currentAdmin.id}
+          patientId={activePatient?.id ?? null}
+          visitScheduleId={activeSchedule?.id ?? null}
+          logs={conversation.messages}
+          unreadConversationCount={conversation.unreadCount}
+          syncError={conversation.syncError}
+          lastSyncedAt={conversation.lastSyncedAt}
+          isRefreshing={conversation.isRefreshing}
+          onRefresh={() => void conversation.refresh()}
+          onConversationViewed={() => void conversation.markConversationRead()}
+          onCreateLog={createDoctorAdminContactLog}
+        />
+      </div>
     </div>
   );
 }

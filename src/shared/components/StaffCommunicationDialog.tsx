@@ -3,7 +3,6 @@ import { channelLabel, formatDateTimeFull, statusTone } from "../utils/format";
 import type { TeamCommunicationMessage } from "../../services/team-communication/types";
 
 type StaffCommunicationDialogProps = {
-  title: string;
   counterpartLabel: string;
   counterpartPhone: string;
   currentUserLabel: string;
@@ -29,7 +28,6 @@ type StaffCommunicationDialogProps = {
 };
 
 type StaffCommunicationPanelProps = {
-  title: string;
   counterpartLabel: string;
   counterpartPhone: string;
   currentUserLabel: string;
