@@ -13,11 +13,6 @@ type StaffDraft = {
   name: string;
   phone: string;
   jobTitle: string;
-  googleChatUserId: string;
-  googleAccountEmail: string;
-  googleAccountLoggedIn: boolean;
-  googleLocationShareUrl: string;
-  googleLocationShareEnabled: boolean;
   serviceSlotsText: string;
 };
 
@@ -137,11 +132,6 @@ function buildDoctorDraft(doctor?: Doctor): StaffDraft {
     name: doctor?.name ?? "",
     phone: doctor?.phone ?? "",
     jobTitle: "",
-    googleChatUserId: doctor?.google_chat_user_id ?? "",
-    googleAccountEmail: doctor?.google_account_email ?? "",
-    googleAccountLoggedIn: doctor?.google_account_logged_in ?? false,
-    googleLocationShareUrl: doctor?.google_location_share_url ?? "",
-    googleLocationShareEnabled: doctor?.google_location_share_enabled ?? false,
     serviceSlotsText: doctor?.available_service_slots.join("\n") ?? ""
   };
 }
@@ -154,11 +144,6 @@ function buildAdminDraft(admin?: AdminUser): StaffDraft {
     name: admin?.name ?? "",
     phone: admin?.phone ?? "",
     jobTitle: admin?.job_title ?? "",
-    googleChatUserId: admin?.google_chat_user_id ?? "",
-    googleAccountEmail: admin?.google_account_email ?? admin?.email ?? "",
-    googleAccountLoggedIn: admin?.google_account_logged_in ?? false,
-    googleLocationShareUrl: "",
-    googleLocationShareEnabled: false,
     serviceSlotsText: ""
   };
 }
@@ -187,7 +172,7 @@ export function AdminStaffPage() {
           role: "doctor" as const,
           name: doctor.name,
           phone: doctor.phone,
-          accountLabel: "密碼登入 / 站內通知 / 手機定位",
+          accountLabel: "站內通知 / 手機定位",
           secondaryLabel: doctor.available_service_slots.join("、") || "未設定可服務時段"
         }))
       ].sort((left, right) => left.name.localeCompare(right.name, "zh-Hant")),
@@ -262,9 +247,6 @@ export function AdminStaffPage() {
     const now = new Date().toISOString();
     const normalizedName = draft.name.trim();
     const normalizedPhone = draft.phone.trim();
-    const normalizedGoogleChatId = draft.googleChatUserId.trim();
-    const normalizedGoogleAccount = draft.googleAccountEmail.trim();
-    const normalizedGoogleLocationShareUrl = draft.googleLocationShareUrl.trim();
 
     if (!normalizedName || !normalizedPhone) {
       setRecentAction("請先填寫姓名與聯絡電話。");
@@ -286,6 +268,10 @@ export function AdminStaffPage() {
         draft.originalRole === "doctor" && draft.sourceId
           ? draft.sourceId
           : createId("doc");
+      const existingDoctor =
+        draft.originalRole === "doctor" && draft.sourceId
+          ? db.doctors.find((doctor) => doctor.id === draft.sourceId)
+          : null;
       const doctorToSave: Doctor = {
         id: doctorIdToSave,
         name: normalizedName,
@@ -293,11 +279,11 @@ export function AdminStaffPage() {
         phone: normalizedPhone,
         specialty: "",
         service_area: "",
-        google_chat_user_id: normalizedGoogleChatId,
-        google_account_email: normalizedGoogleAccount || null,
-        google_account_logged_in: draft.googleAccountLoggedIn,
-        google_location_share_url: normalizedGoogleLocationShareUrl || null,
-        google_location_share_enabled: Boolean(normalizedGoogleLocationShareUrl),
+        google_chat_user_id: existingDoctor?.google_chat_user_id ?? "",
+        google_account_email: existingDoctor?.google_account_email ?? null,
+        google_account_logged_in: existingDoctor?.google_account_logged_in ?? false,
+        google_location_share_url: existingDoctor?.google_location_share_url ?? null,
+        google_location_share_enabled: existingDoctor?.google_location_share_enabled ?? false,
         available_service_slots: selectedServiceSlots,
         status: "active",
         created_at: now,
@@ -322,14 +308,18 @@ export function AdminStaffPage() {
       draft.originalRole === "admin" && draft.sourceId
         ? draft.sourceId
         : createId("admin");
+    const existingAdmin =
+      draft.originalRole === "admin" && draft.sourceId
+        ? db.admin_users.find((admin) => admin.id === draft.sourceId)
+        : null;
     const adminToSave: AdminUser = {
       id: adminIdToSave,
       name: normalizedName,
       job_title: draft.jobTitle.trim() || "行政協作人員",
-      email: normalizedGoogleAccount || `${adminIdToSave}@example.local`,
-      google_chat_user_id: normalizedGoogleChatId,
-      google_account_email: normalizedGoogleAccount,
-      google_account_logged_in: draft.googleAccountLoggedIn,
+      email: existingAdmin?.email || `${adminIdToSave}@example.local`,
+      google_chat_user_id: existingAdmin?.google_chat_user_id ?? "",
+      google_account_email: existingAdmin?.google_account_email ?? "",
+      google_account_logged_in: existingAdmin?.google_account_logged_in ?? false,
       phone: normalizedPhone,
       created_at: now,
       updated_at: now
@@ -461,7 +451,7 @@ export function AdminStaffPage() {
                     : "新增醫師資料"}
                 </h2>
                 <p className="mt-2 text-sm text-slate-600">
-                  醫師端會在網頁內收到出發、抵達、緊急與追蹤通知；登入後請用手機允許位置分享。
+                  醫師端會在網頁內收到出發、抵達、緊急與追蹤通知；使用手機開啟後可允許位置分享。
                 </p>
               </div>
               <button
@@ -474,7 +464,7 @@ export function AdminStaffPage() {
             </div>
 
             <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-              醫師資料只維護姓名、電話與可服務時段。登入後使用手機網頁接收站內提示並回傳即時位置，行政端可同步查看路線與進度。
+              醫師資料只維護姓名、電話與可服務時段。醫師使用手機網頁接收站內提示並回傳即時位置，行政端可同步查看路線與進度。
             </div>
 
             {legacyServiceSlotWarnings.length > 0 ? (
@@ -507,7 +497,7 @@ export function AdminStaffPage() {
                 />
               </label>
               <div className="md:col-span-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-                醫師端改用手機網頁即時定位。醫師登入後若允許位置分享，行政端會直接看到最新位置、距離、軌跡與已過 / 未到站點。
+                醫師端使用手機網頁即時定位。醫師允許位置分享後，行政端會直接看到最新位置、路線與已過 / 未到站點。
               </div>
 
               {draft.role === "doctor" ? (

@@ -1834,18 +1834,19 @@ describe("AdminPages", () => {
     const dialog = screen.getByRole("dialog");
     expect(within(dialog).queryByLabelText("LINE 搜尋關鍵字")).not.toBeInTheDocument();
     expect(
-      within(dialog).getByText("醫師資料只維護姓名、電話與可服務時段。登入後使用手機網頁接收站內提示並回傳即時位置，行政端可同步查看路線與進度。")
+      within(dialog).getByText("醫師資料只維護姓名、電話與可服務時段。醫師使用手機網頁接收站內提示並回傳即時位置，行政端可同步查看路線與進度。")
     ).toBeInTheDocument();
   });
 
-  it("AdminStaffPage 醫師角色視窗不再顯示 Google 欄位，仍可直接儲存", () => {
+  it("AdminStaffPage 醫師角色視窗不再顯示 Google 帳號欄位，仍可直接儲存", () => {
     renderWithProviders(<AdminStaffPage />);
 
+    expect(screen.getByText("0912-110-001 / 站內通知 / 手機定位")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /蕭坤元醫師/ }));
 
     const dialog = screen.getByRole("dialog");
     expect(
-      within(dialog).getByText("醫師端改用手機網頁即時定位。醫師登入後若允許位置分享，行政端會直接看到最新位置、距離、軌跡與已過 / 未到站點。")
+      within(dialog).getByText("醫師端使用手機網頁即時定位。醫師允許位置分享後，行政端會直接看到最新位置、路線與已過 / 未到站點。")
     ).toBeInTheDocument();
     expect(within(dialog).queryByLabelText("Google 登入帳號")).not.toBeInTheDocument();
     expect(within(dialog).queryByLabelText("Google Chat userId")).not.toBeInTheDocument();
