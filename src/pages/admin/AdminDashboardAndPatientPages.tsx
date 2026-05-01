@@ -48,6 +48,15 @@ type TrackingRouteOption = {
   hasExecutingRoute: boolean;
   hasRecentLocation: boolean;
 };
+type TrackingRouteDistributionOption = {
+  id: string;
+  label: string;
+  doctorId: string;
+  doctorName: string;
+  routeDate: string;
+  timeSlot: RouteTimeSlot;
+  schedules: VisitSchedule[];
+};
 
 function buildCsvTemplate() {
   return [
@@ -188,6 +197,16 @@ function buildTrackingReferencePoints(routeSchedules: VisitSchedule[]) {
     }));
 
   return [{ latitude: trackingMapOrigin.latitude, longitude: trackingMapOrigin.longitude }, ...routePoints];
+}
+
+function sortTrackingSchedules(schedules: VisitSchedule[]) {
+  return schedules
+    .slice()
+    .sort(
+      (left, right) =>
+        (left.route_order ?? Number.MAX_SAFE_INTEGER) - (right.route_order ?? Number.MAX_SAFE_INTEGER) ||
+        new Date(left.scheduled_start_at).getTime() - new Date(right.scheduled_start_at).getTime()
+    );
 }
 
 function isTrackingLogNearRoute(
@@ -637,6 +656,10 @@ function trackingWorldToLatitude(worldY: number, zoom: number) {
 }
 
 function buildTrackingMapRoutePoints(doctor: DoctorTrackingSummary) {
+  return buildTrackingRouteLayerPoints(doctor.routeSchedules);
+}
+
+function buildTrackingRouteLayerPoints(schedules: VisitSchedule[]) {
   return [
     {
       key: "origin",
@@ -645,7 +668,7 @@ function buildTrackingMapRoutePoints(doctor: DoctorTrackingSummary) {
       latitude: trackingMapOrigin.latitude,
       longitude: trackingMapOrigin.longitude
     },
-    ...doctor.routeSchedules
+    ...schedules
       .filter(
         (schedule) =>
           schedule.home_latitude_snapshot !== null && schedule.home_longitude_snapshot !== null
@@ -668,37 +691,54 @@ function buildTrackingMapRoutePoints(doctor: DoctorTrackingSummary) {
   ];
 }
 
-function buildTrackingMapPointsForFit(doctor: DoctorTrackingSummary) {
+function buildTrackingMapPointsForFit(input: {
+  doctors: DoctorTrackingSummary[];
+  routeLayerPoints: Array<{ latitude: number; longitude: number }>;
+  selectedDoctor?: DoctorTrackingSummary;
+}) {
   return [
-    ...buildTrackingMapRoutePoints(doctor).map((point) => ({
+    ...input.routeLayerPoints.map((point) => ({
       latitude: point.latitude,
       longitude: point.longitude
     })),
-    doctor.displayLocation
+    ...input.doctors
+      .map((doctor) =>
+        doctor.displayLocation
+          ? {
+              latitude: doctor.displayLocation.latitude,
+              longitude: doctor.displayLocation.longitude
+            }
+          : null
+      )
+      .filter((point): point is { latitude: number; longitude: number } => Boolean(point)),
+    input.selectedDoctor?.displayLocation
       ? {
-          latitude: doctor.displayLocation.latitude,
-          longitude: doctor.displayLocation.longitude
+          latitude: input.selectedDoctor.displayLocation.latitude,
+          longitude: input.selectedDoctor.displayLocation.longitude
         }
       : null
   ].filter((point): point is { latitude: number; longitude: number } => Boolean(point));
 }
 
-function buildTrackingMapView(
-  doctor: DoctorTrackingSummary,
+function buildTrackingMapView(input: {
+  doctors: DoctorTrackingSummary[];
+  routeLayerPoints: Array<{ latitude: number; longitude: number }>;
+  selectedDoctor?: DoctorTrackingSummary;
+},
   mapSize: { width: number; height: number }
 ) {
-  const points = buildTrackingMapPointsForFit(doctor);
-  const focusPoint = doctor.displayLocation
+  const points = buildTrackingMapPointsForFit(input);
+  const focusPoint = input.selectedDoctor?.displayLocation
     ? {
-        latitude: doctor.displayLocation.latitude,
-        longitude: doctor.displayLocation.longitude
+        latitude: input.selectedDoctor.displayLocation.latitude,
+        longitude: input.selectedDoctor.displayLocation.longitude
       }
-    : doctor.activeSchedule &&
-        doctor.activeSchedule.home_latitude_snapshot !== null &&
-        doctor.activeSchedule.home_longitude_snapshot !== null
+    : input.selectedDoctor?.activeSchedule &&
+        input.selectedDoctor.activeSchedule.home_latitude_snapshot !== null &&
+        input.selectedDoctor.activeSchedule.home_longitude_snapshot !== null
       ? {
-          latitude: doctor.activeSchedule.home_latitude_snapshot,
-          longitude: doctor.activeSchedule.home_longitude_snapshot
+          latitude: input.selectedDoctor.activeSchedule.home_latitude_snapshot,
+          longitude: input.selectedDoctor.activeSchedule.home_longitude_snapshot
         }
       : points[0] ?? {
           latitude: trackingMapOrigin.latitude,
@@ -753,6 +793,7 @@ export function AdminDoctorTrackingPage() {
   const [routeDate, setRouteDate] = useState<string>(buildDateInputValue());
   const [routeTimeSlot, setRouteTimeSlot] = useState<RouteTimeSlot>("上午");
   const [selectedDoctorId, setSelectedDoctorId] = useState<string>("");
+  const [selectedDistributionRouteId, setSelectedDistributionRouteId] = useState<string>("");
   const [remoteLocationLogs, setRemoteLocationLogs] = useState<DoctorLocationLog[]>([]);
   const [remoteRecentLocationLogs, setRemoteRecentLocationLogs] = useState<DoctorLocationLog[]>([]);
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
@@ -949,43 +990,105 @@ export function AdminDoctorTrackingPage() {
     };
   }, [routeDate, routeTimeSlot, services.doctorLocationSync]);
 
-  const trackedDoctors = useMemo<DoctorTrackingSummary[]>(() => {
-    return db.doctors
-      .map<DoctorTrackingSummary | null>((doctor, index) => {
-        const routeSchedules = repositories.visitRepository
-          .getSchedules({ doctorId: doctor.id })
-          .filter(
-            (schedule) =>
-              schedule.scheduled_start_at.slice(0, 10) === routeDate &&
-              resolveTrackingTimeSlot(schedule) === routeTimeSlot &&
-              schedule.visit_type !== "回院病歷"
-          )
-          .sort(
-            (left, right) =>
-              (left.route_order ?? Number.MAX_SAFE_INTEGER) - (right.route_order ?? Number.MAX_SAFE_INTEGER) ||
-              new Date(left.scheduled_start_at).getTime() - new Date(right.scheduled_start_at).getTime()
-          );
+  const routeDistributionOptions = useMemo<TrackingRouteDistributionOption[]>(() => {
+    const allSchedules = repositories.visitRepository
+      .getSchedules()
+      .filter((schedule) => schedule.visit_type !== "回院病歷");
+    const schedulesById = new Map(allSchedules.map((schedule) => [schedule.id, schedule]));
+    const savedRoutePlans = repositories.visitRepository.getSavedRoutePlans();
+
+    const savedRouteOptions = savedRoutePlans
+      .map((routePlan) => {
+        const doctor = db.doctors.find((item) => item.id === routePlan.doctor_id);
+        const schedules = routePlan.schedule_ids
+          .map((scheduleId) => schedulesById.get(scheduleId))
+          .filter((schedule): schedule is VisitSchedule => Boolean(schedule));
+        const fallbackSchedules = allSchedules.filter(
+          (schedule) =>
+            schedule.assigned_doctor_id === routePlan.doctor_id &&
+            schedule.scheduled_start_at.slice(0, 10) === routePlan.route_date &&
+            resolveTrackingTimeSlot(schedule) === routePlan.service_time_slot
+        );
+        const routeSchedules = sortTrackingSchedules(schedules.length ? schedules : fallbackSchedules);
         if (!routeSchedules.length) {
           return null;
         }
 
+        return {
+          id: routePlan.id,
+          label: `${routePlan.route_name}｜${doctor?.name ?? routePlan.doctor_id}`,
+          doctorId: routePlan.doctor_id,
+          doctorName: doctor?.name ?? routePlan.doctor_id,
+          routeDate: routePlan.route_date,
+          timeSlot: routePlan.service_time_slot,
+          schedules: routeSchedules
+        } satisfies TrackingRouteDistributionOption;
+      })
+      .filter((option): option is TrackingRouteDistributionOption => Boolean(option));
+
+    return savedRouteOptions.sort(
+      (left, right) =>
+        right.routeDate.localeCompare(left.routeDate) ||
+        routeTimeSlotOptions.indexOf(left.timeSlot) - routeTimeSlotOptions.indexOf(right.timeSlot) ||
+        left.doctorName.localeCompare(right.doctorName, "zh-Hant")
+    );
+  }, [db.doctors, repositories.visitRepository]);
+
+  useEffect(() => {
+    if (!routeDistributionOptions.length) {
+      setSelectedDistributionRouteId("");
+      return;
+    }
+    if (routeDistributionOptions.some((option) => option.id === selectedDistributionRouteId)) {
+      return;
+    }
+    const matchedOption =
+      routeDistributionOptions.find(
+        (option) => option.routeDate === routeDate && option.timeSlot === routeTimeSlot
+      ) ?? routeDistributionOptions[0];
+    setSelectedDistributionRouteId(matchedOption.id);
+  }, [routeDate, routeDistributionOptions, routeTimeSlot, selectedDistributionRouteId]);
+
+  const selectedDistributionRoute = routeDistributionOptions.find(
+    (option) => option.id === selectedDistributionRouteId
+  );
+
+  const trackedDoctors = useMemo<DoctorTrackingSummary[]>(() => {
+    return db.doctors
+      .map<DoctorTrackingSummary>((doctor, index) => {
+        const allDoctorSchedules = repositories.visitRepository
+          .getSchedules({ doctorId: doctor.id })
+          .filter((schedule) => schedule.visit_type !== "回院病歷");
+        const routeSchedules = sortTrackingSchedules(
+          allDoctorSchedules.filter(
+            (schedule) =>
+              schedule.scheduled_start_at.slice(0, 10) === routeDate &&
+              resolveTrackingTimeSlot(schedule) === routeTimeSlot
+          )
+        );
+
         const routeScheduleIds = new Set(routeSchedules.map((schedule) => schedule.id));
-        const doctorLocationLogs =
+        const doctorLocationLogs = (
           services.doctorLocationSync.mode === "api_polling"
-            ? remoteLocationLogs.filter((log) => log.doctor_id === doctor.id)
-            : repositories.visitRepository.getDoctorLocationLogs(doctor.id);
-        const locationLogs = resolveTrackingLocationLogs({
-          routeDate,
-          routeTimeSlot,
-          routeSchedules,
-          routeScheduleIds,
-          locationLogs: doctorLocationLogs
-        });
+            ? [...remoteRecentLocationLogs, ...remoteLocationLogs].filter((log) => log.doctor_id === doctor.id)
+            : repositories.visitRepository.getDoctorLocationLogs(doctor.id)
+        )
+          .slice()
+          .sort((left, right) => new Date(right.recorded_at).getTime() - new Date(left.recorded_at).getTime());
+        const locationLogs = routeSchedules.length
+          ? resolveTrackingLocationLogs({
+              routeDate,
+              routeTimeSlot,
+              routeSchedules,
+              routeScheduleIds,
+              locationLogs: doctorLocationLogs
+            })
+          : doctorLocationLogs;
         const latestLocation = locationLogs[0];
         const locationStatus = resolveLocationSyncStatus(latestLocation);
         const activeSchedule =
           (latestLocation?.linked_visit_schedule_id
-            ? routeSchedules.find((schedule) => schedule.id === latestLocation.linked_visit_schedule_id)
+            ? allDoctorSchedules.find((schedule) => schedule.id === latestLocation.linked_visit_schedule_id)
             : undefined) ??
           routeSchedules.find((schedule) =>
             ["tracking", "on_the_way", "proximity_pending", "arrived", "in_treatment", "issue_pending"].includes(
@@ -993,7 +1096,9 @@ export function AdminDoctorTrackingPage() {
             )
           ) ??
           routeSchedules.find((schedule) => !["completed", "cancelled", "paused"].includes(schedule.status)) ??
-          routeSchedules[0];
+          routeSchedules[0] ??
+          sortTrackingSchedules(allDoctorSchedules.filter((schedule) => !["completed", "cancelled", "paused"].includes(schedule.status)))[0] ??
+          sortTrackingSchedules(allDoctorSchedules)[0];
         const activePatient = activeSchedule
           ? db.patients.find((patient) => patient.id === activeSchedule.patient_id)
           : undefined;
@@ -1018,7 +1123,7 @@ export function AdminDoctorTrackingPage() {
             : null;
         const displayLocation = resolveTrackingDisplayLocation({
           latestLocation,
-          routeSchedules,
+          routeSchedules: routeSchedules.length ? routeSchedules : sortTrackingSchedules(allDoctorSchedules),
           activeSchedule
         });
         const routeMapInput = buildTrackingRouteMapInput(
@@ -1043,9 +1148,8 @@ export function AdminDoctorTrackingPage() {
           currentDistanceKilometers,
           routeMapUrl: routeMapInput ? services.maps.buildRouteDirectionsUrl(routeMapInput) : null
         } satisfies DoctorTrackingSummary;
-      })
-      .filter((doctor): doctor is DoctorTrackingSummary => doctor !== null);
-  }, [db.doctors, db.patients, remoteLocationLogs, repositories, routeDate, routeTimeSlot, services.doctorLocationSync.mode, services.maps]);
+      });
+  }, [db.doctors, db.patients, remoteLocationLogs, remoteRecentLocationLogs, repositories, routeDate, routeTimeSlot, services.doctorLocationSync.mode, services.maps]);
 
   useEffect(() => {
     if (!trackingRouteOptions.length) {
@@ -1073,11 +1177,24 @@ export function AdminDoctorTrackingPage() {
   }, [selectedDoctorId, trackedDoctors]);
 
   const selectedDoctor = trackedDoctors.find((doctor) => doctor.doctorId === selectedDoctorId) ?? trackedDoctors[0];
+  const selectedRouteLayer = useMemo(
+    () => (selectedDistributionRoute ? buildTrackingRouteLayerPoints(selectedDistributionRoute.schedules) : []),
+    [selectedDistributionRoute]
+  );
   const recenterTrackingMap = (doctor: DoctorTrackingSummary | undefined) => {
-    if (!doctor) {
+    if (!doctor && !trackedDoctors.length) {
       return;
     }
-    setTrackingMapView(buildTrackingMapView(doctor, trackingMapSize));
+    setTrackingMapView(
+      buildTrackingMapView(
+        {
+          doctors: trackedDoctors,
+          routeLayerPoints: selectedRouteLayer,
+          selectedDoctor: doctor
+        },
+        trackingMapSize
+      )
+    );
   };
 
   const updateTrackingMapZoom = (delta: number) => {
@@ -1141,23 +1258,28 @@ export function AdminDoctorTrackingPage() {
   }, [selectedDoctor?.doctorId]);
 
   useEffect(() => {
-    if (!selectedDoctor) {
+    if (!trackedDoctors.length) {
       setTrackingMapView(null);
       autoCenteredDoctorKeyRef.current = "";
       return;
     }
-    const doctorKey = `${selectedDoctor.doctorId}|${routeDate}|${routeTimeSlot}`;
+    const doctorKey = `${selectedDoctor?.doctorId ?? "all"}|${selectedDistributionRouteId}|${routeDate}|${routeTimeSlot}`;
     if (autoCenteredDoctorKeyRef.current === doctorKey) {
       return;
     }
-    setTrackingMapView(buildTrackingMapView(selectedDoctor, trackingMapSize));
+    setTrackingMapView(
+      buildTrackingMapView(
+        {
+          doctors: trackedDoctors,
+          routeLayerPoints: selectedRouteLayer,
+          selectedDoctor
+        },
+        trackingMapSize
+      )
+    );
     autoCenteredDoctorKeyRef.current = doctorKey;
-  }, [routeDate, routeTimeSlot, selectedDoctor, trackingMapSize]);
+  }, [routeDate, routeTimeSlot, selectedDistributionRouteId, selectedDoctor, selectedRouteLayer, trackedDoctors, trackingMapSize]);
 
-  const selectedDoctorRouteLayer = useMemo(
-    () => (selectedDoctor ? buildTrackingMapRoutePoints(selectedDoctor) : []),
-    [selectedDoctor]
-  );
   const visibleMapTiles = useMemo(() => {
     if (!trackingMapView) {
       return [];
@@ -1191,41 +1313,56 @@ export function AdminDoctorTrackingPage() {
     return tiles;
   }, [trackingMapSize, trackingMapView]);
 
-  const selectedDoctorScreenPoints = useMemo(() => {
-    if (!selectedDoctor || !trackingMapView) {
+  const trackingMapScreenPoints = useMemo(() => {
+    if (!trackingMapView) {
       return null;
     }
-    const routeStops = selectedDoctorRouteLayer.map((point) => ({
+    const routeStops = selectedRouteLayer.map((point) => ({
       ...point,
       ...projectTrackingPointToScreen(point.latitude, point.longitude, trackingMapView, trackingMapSize)
     }));
-    const currentPoint = selectedDoctor.displayLocation
-      ? projectTrackingPointToScreen(
-          selectedDoctor.displayLocation.latitude,
-          selectedDoctor.displayLocation.longitude,
-          trackingMapView,
-          trackingMapSize
-        )
-      : null;
+    const doctorPoints = trackedDoctors
+      .map((doctor) =>
+        doctor.displayLocation
+          ? {
+              doctor,
+              ...projectTrackingPointToScreen(
+                doctor.displayLocation.latitude,
+                doctor.displayLocation.longitude,
+                trackingMapView,
+                trackingMapSize
+              )
+            }
+          : null
+      )
+      .filter(
+        (
+          point
+        ): point is {
+          doctor: DoctorTrackingSummary;
+          x: number;
+          y: number;
+        } => Boolean(point)
+      );
 
     return {
       routeStops,
-      currentPoint
+      doctorPoints
     };
-  }, [selectedDoctor, selectedDoctorRouteLayer, trackingMapSize, trackingMapView]);
+  }, [selectedRouteLayer, trackedDoctors, trackingMapSize, trackingMapView]);
 
   const handleTrackingDoctorFocus = (doctorId: string) => {
     const targetDoctor = trackedDoctors.find((doctor) => doctor.doctorId === doctorId);
     setSelectedDoctorId(doctorId);
     recenterTrackingMap(targetDoctor);
-    autoCenteredDoctorKeyRef.current = targetDoctor ? `${targetDoctor.doctorId}|${routeDate}|${routeTimeSlot}` : "";
+    autoCenteredDoctorKeyRef.current = targetDoctor ? `${targetDoctor.doctorId}|${selectedDistributionRouteId}|${routeDate}|${routeTimeSlot}` : "";
   };
 
   return (
     <div className="space-y-4">
       <Panel title="同時段醫師追蹤總覽" className="p-2.5 lg:p-3.5">
         <div className="space-y-2.5">
-          <div className="grid gap-2.5 lg:grid-cols-[180px_140px_1fr]">
+          <div className="grid gap-2.5 lg:grid-cols-[170px_130px_minmax(260px,1fr)_1fr]">
             <label className="block text-sm">
               <span className="mb-1 block font-medium text-brand-ink">路線日期</span>
               <input
@@ -1250,10 +1387,34 @@ export function AdminDoctorTrackingPage() {
                 ))}
               </select>
             </label>
+            <label className="block text-sm">
+              <span className="mb-1 block font-medium text-brand-ink">個案分布排程</span>
+              <select
+                aria-label="個案分布排程"
+                value={selectedDistributionRouteId}
+                onChange={(event) => {
+                  const nextRouteId = event.target.value;
+                  setSelectedDistributionRouteId(nextRouteId);
+                  const nextRoute = routeDistributionOptions.find((option) => option.id === nextRouteId);
+                  if (nextRoute) {
+                    setRouteDate(nextRoute.routeDate);
+                    setRouteTimeSlot(nextRoute.timeSlot);
+                  }
+                }}
+                className="w-full rounded-2xl border border-slate-200 px-4 py-2.5"
+              >
+                <option value="">不疊個案分布點</option>
+                {routeDistributionOptions.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
             <div className="rounded-2xl bg-slate-50 px-4 py-2 text-sm text-slate-600">
               {trackedDoctors.length > 0
-                ? `${buildServiceSlotLabel(routeDate, routeTimeSlot)} 共 ${trackedDoctors.length} 位醫師有路線。`
-                : `${buildServiceSlotLabel(routeDate, routeTimeSlot)} 目前沒有可追蹤路線。`}
+                ? `目前已載入 ${trackedDoctors.length} 位醫師位置；個案分布：${selectedDistributionRoute ? selectedDistributionRoute.label : "未選擇"}。`
+                : "目前沒有醫師可顯示。"}
             </div>
           </div>
 
@@ -1261,10 +1422,10 @@ export function AdminDoctorTrackingPage() {
             <div className="flex flex-wrap items-center justify-between gap-2.5">
               <div>
                 <p className="text-sm font-semibold text-brand-ink">
-                  {selectedDoctor ? `${selectedDoctor.doctorName} 追蹤地圖` : "醫師追蹤地圖"}
+                  {selectedDoctor ? `${selectedDoctor.doctorName} 追蹤地圖` : "全部醫師追蹤地圖"}
                 </p>
                 <p className="mt-1 text-xs text-slate-500">
-                  點選下方醫師後，地圖只顯示該醫師的最新位置、停留站點與簡化路線。
+                  地圖會同時顯示所有醫師最新位置；個案分布點依上方選擇的排程疊加。
                 </p>
               </div>
               <div className="flex flex-wrap gap-1.5 text-xs">
@@ -1290,9 +1451,9 @@ export function AdminDoctorTrackingPage() {
               </div>
             </div>
 
-            {selectedDoctor && trackingMapView && selectedDoctorScreenPoints ? (
+            {trackingMapView && trackingMapScreenPoints ? (
               <div
-                aria-label={selectedDoctor ? `${selectedDoctor.doctorName} 追蹤地圖` : "醫師追蹤地圖"}
+                aria-label={selectedDoctor ? `${selectedDoctor.doctorName} 追蹤地圖` : "全部醫師追蹤地圖"}
                 title={selectedDoctor ? `${selectedDoctor.doctorName} Google Map 追蹤圖` : "Google Map 追蹤圖"}
                 ref={mapContainerRef}
                 onPointerDown={(event) => {
@@ -1384,24 +1545,25 @@ export function AdminDoctorTrackingPage() {
                     </filter>
                   </defs>
                   <polyline
-                    points={selectedDoctorScreenPoints.routeStops.map((point) => `${point.x},${point.y}`).join(" ")}
+                    points={trackingMapScreenPoints.routeStops.map((point) => `${point.x},${point.y}`).join(" ")}
                     fill="none"
-                    stroke={selectedDoctor.color}
+                    stroke={trackedDoctors.find((doctor) => doctor.doctorId === selectedDistributionRoute?.doctorId)?.color ?? "#0f766e"}
                     strokeWidth="6"
                     strokeLinecap="round"
                     strokeLinejoin="round"
                     opacity="0.9"
                   />
-                  {selectedDoctorScreenPoints.routeStops.map((point) => {
-                    const isActiveStop = point.kind === "stop" && point.schedule?.id === selectedDoctor.activeSchedule?.id;
+                  {trackingMapScreenPoints.routeStops.map((point) => {
+                    const isActiveStop = point.kind === "stop" && point.schedule?.id === selectedDoctor?.activeSchedule?.id;
                     const isHospitalPoint = point.kind !== "stop";
+                    const routeColor = trackedDoctors.find((doctor) => doctor.doctorId === selectedDistributionRoute?.doctorId)?.color ?? "#0f766e";
                     return (
                       <g key={point.key}>
                         <circle
                           cx={point.x}
                           cy={point.y}
                           r={isHospitalPoint ? 13 : 11}
-                          fill={isHospitalPoint ? "#0f172a" : selectedDoctor.color}
+                          fill={isHospitalPoint ? "#0f172a" : routeColor}
                           stroke="#ffffff"
                           strokeWidth="3"
                           opacity={point.kind === "stop" && point.schedule?.status === "completed" ? 0.7 : 1}
@@ -1412,7 +1574,7 @@ export function AdminDoctorTrackingPage() {
                             cy={point.y}
                             r={18}
                             fill="none"
-                            stroke={selectedDoctor.color}
+                            stroke={routeColor}
                             strokeWidth="3"
                             opacity="0.35"
                           />
@@ -1430,47 +1592,49 @@ export function AdminDoctorTrackingPage() {
                       </g>
                     );
                   })}
-                  {selectedDoctorScreenPoints.currentPoint ? (
-                    <>
+                  {trackingMapScreenPoints.doctorPoints.map(({ doctor, x, y }) => {
+                    const isSelectedDoctor = doctor.doctorId === selectedDoctor?.doctorId;
+                    return (
+                    <g key={doctor.doctorId}>
                       <circle
-                        cx={selectedDoctorScreenPoints.currentPoint.x}
-                        cy={selectedDoctorScreenPoints.currentPoint.y}
-                        r={26}
-                        fill={selectedDoctor.color}
-                        opacity="0.16"
+                        cx={x}
+                        cy={y}
+                        r={isSelectedDoctor ? 28 : 22}
+                        fill={doctor.color}
+                        opacity={isSelectedDoctor ? "0.18" : "0.1"}
                       />
                       <circle
-                        cx={selectedDoctorScreenPoints.currentPoint.x}
-                        cy={selectedDoctorScreenPoints.currentPoint.y}
-                        r={18}
+                        cx={x}
+                        cy={y}
+                        r={isSelectedDoctor ? 18 : 14}
                         fill="none"
-                        stroke={selectedDoctor.color}
+                        stroke={doctor.color}
                         strokeWidth="3"
-                        opacity="0.45"
+                        opacity={isSelectedDoctor ? "0.5" : "0.32"}
                       />
                       <circle
-                        cx={selectedDoctorScreenPoints.currentPoint.x}
-                        cy={selectedDoctorScreenPoints.currentPoint.y}
+                        cx={x}
+                        cy={y}
                         r={11}
                         fill="#ffffff"
                         filter="url(#tracking-marker-shadow)"
                       />
                       <circle
-                        cx={selectedDoctorScreenPoints.currentPoint.x}
-                        cy={selectedDoctorScreenPoints.currentPoint.y}
+                        cx={x}
+                        cy={y}
                         r={7}
-                        fill={selectedDoctor.color}
+                        fill={doctor.color}
                       />
                       <g
-                        aria-label={`${selectedDoctor.doctorName} ${selectedDoctor.displayLocation?.markerLabel ?? "目前位置"}標記`}
+                        aria-label={`${doctor.doctorName} ${doctor.displayLocation?.markerLabel ?? "目前位置"}標記`}
                         filter="url(#tracking-marker-shadow)"
                       >
                         <rect
                           x={Math.min(
-                            Math.max(selectedDoctorScreenPoints.currentPoint.x - 54, 10),
+                            Math.max(x - 54, 10),
                             trackingMapSize.width - 140
                           )}
-                          y={Math.max(selectedDoctorScreenPoints.currentPoint.y - 52, 10)}
+                          y={Math.max(y - 52, 10)}
                           rx="12"
                           ry="12"
                           width="118"
@@ -1480,20 +1644,21 @@ export function AdminDoctorTrackingPage() {
                         />
                         <text
                           x={Math.min(
-                            Math.max(selectedDoctorScreenPoints.currentPoint.x + 5, 69),
+                            Math.max(x + 5, 69),
                             trackingMapSize.width - 81
                           )}
-                          y={Math.max(selectedDoctorScreenPoints.currentPoint.y - 31, 31)}
+                          y={Math.max(y - 31, 31)}
                           textAnchor="middle"
                           fontSize="12"
                           fontWeight="700"
-                          fill={selectedDoctor.color}
+                          fill={doctor.color}
                         >
-                          {selectedDoctor.displayLocation?.markerLabel ?? "目前位置"}
+                          {doctor.displayLocation?.markerLabel ?? "目前位置"}
                         </text>
                       </g>
-                    </>
-                  ) : null}
+                    </g>
+                    );
+                  })}
                 </svg>
                 <div className="absolute left-3 top-3 z-20 rounded-full bg-white/92 px-3 py-1 text-[11px] font-semibold text-brand-ink shadow-sm">
                   可拖曳移動地圖，請改用右上角按鍵放大或縮小，重新點醫師姓名可回到醫師中心

@@ -730,12 +730,14 @@ describe("AdminPages", () => {
     renderWithProviders(<AdminDoctorTrackingPage />);
 
     expect(screen.getByText("同時段醫師追蹤總覽")).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "個案分布排程" })).toBeInTheDocument();
     expect(screen.getByLabelText("蕭坤元醫師 追蹤地圖")).toBeInTheDocument();
     expect(screen.getByTitle("蕭坤元醫師 Google Map 追蹤圖")).toBeInTheDocument();
     expect(screen.getAllByText("目前位置").length).toBeGreaterThan(0);
     const locationSummaryLabel = screen.getAllByText("目前位置", { selector: "p" }).at(-1);
     expect(locationSummaryLabel?.parentElement?.textContent).toContain("附近");
     expect(screen.getByRole("button", { name: "蕭坤元醫師" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "支援醫師" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "林若謙醫師" })).not.toBeInTheDocument();
     expect(screen.getAllByText("已經過的地點").length).toBeGreaterThan(0);
   });
