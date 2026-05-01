@@ -382,7 +382,15 @@ function isReturnRecordSchedule(schedule: VisitSchedule) {
   );
 }
 
-export function DoctorReturnRecordPage() {
+type DoctorReturnRecordPageProps = {
+  embeddedWindow?: boolean;
+  onCloseWindow?: () => void;
+};
+
+export function DoctorReturnRecordPage({
+  embeddedWindow = false,
+  onCloseWindow
+}: DoctorReturnRecordPageProps = {}) {
   const { repositories, session } = useAppContext();
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -730,6 +738,10 @@ export function DoctorReturnRecordPage() {
 
   const watchedValues = useWatch({ control });
   const closeReturnRecordWindow = () => {
+    if (onCloseWindow) {
+      onCloseWindow();
+      return;
+    }
     if (typeof window !== "undefined") {
       window.close();
       window.setTimeout(() => {
@@ -1328,25 +1340,27 @@ export function DoctorReturnRecordPage() {
 
   return (
     <div className="space-y-4">
-      <Panel
-        title="醫師回院產生病歷"
-        action={
-          <button
-            type="button"
-            onClick={closeReturnRecordWindow}
-            className="rounded-full bg-white px-5 py-2.5 text-sm font-semibold text-slate-600 ring-1 ring-slate-200"
-          >
-            關閉視窗
-          </button>
-        }
-      >
-        <div className="rounded-[1.5rem] border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-600">
-          <p className="font-semibold text-brand-ink">目前作業</p>
-          <p className="mt-1">
-            回院病歷登打、路線與個案選擇、CSV 匯出都會在本頁直接進行。
-          </p>
-        </div>
-      </Panel>
+      {embeddedWindow ? null : (
+        <Panel
+          title="醫師回院產生病歷"
+          action={
+            <button
+              type="button"
+              onClick={closeReturnRecordWindow}
+              className="rounded-full bg-white px-5 py-2.5 text-sm font-semibold text-slate-600 ring-1 ring-slate-200"
+            >
+              關閉視窗
+            </button>
+          }
+        >
+          <div className="rounded-[1.5rem] border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-600">
+            <p className="font-semibold text-brand-ink">目前作業</p>
+            <p className="mt-1">
+              回院病歷登打、路線與個案選擇、CSV 匯出都會在本頁直接進行。
+            </p>
+          </div>
+        </Panel>
+      )}
 
       <Panel title="回院病歷登打">{returnRecordForm}</Panel>
     </div>

@@ -6,6 +6,8 @@ import { formatDateTimeFull } from "../../shared/utils/format";
 import { isVisitFinished, isVisitUnlocked } from "../../modules/doctor/doctor-page-helpers";
 import { StaffCommunicationDialog } from "../../shared/components/StaffCommunicationDialog";
 import { maskPatientName } from "../../shared/utils/patient-name";
+import { DoctorLocationPage } from "../../pages/doctor/DoctorDashboardAndSchedulePages";
+import { DoctorReturnRecordPage } from "../../pages/doctor/DoctorReturnRecordPage";
 import {
   useTeamCommunicationConversation,
   useTeamCommunicationUnreadCount
@@ -16,6 +18,8 @@ type DoctorLocationSyncState = {
   message: string;
   lastUpdatedAt: string | null;
 };
+
+type DoctorEmbeddedWindow = "navigation" | "return-records";
 
 function resolveDoctorLocationBannerTone(status: DoctorLocationSyncState["status"]) {
   if (status === "sharing") {
@@ -175,6 +179,7 @@ export function AppShell() {
   const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
   const [isDoctorQuickSummaryOpen, setIsDoctorQuickSummaryOpen] = useState(false);
   const [isStaffCommunicationOpen, setIsStaffCommunicationOpen] = useState(false);
+  const [doctorEmbeddedWindow, setDoctorEmbeddedWindow] = useState<DoctorEmbeddedWindow | null>(null);
   const [passwordForm, setPasswordForm] = useState({
     currentPassword: "",
     nextPassword: "",
@@ -475,21 +480,26 @@ export function AppShell() {
               <NavLink
                 key={item.to}
                 to={item.to}
-                target={
-                  shellRole === "doctor" &&
-                  ["/doctor/navigation", "/doctor/return-records"].includes(item.to)
-                    ? "_blank"
-                    : undefined
-                }
-                rel={
-                  shellRole === "doctor" &&
-                  ["/doctor/navigation", "/doctor/return-records"].includes(item.to)
-                    ? "noreferrer"
-                    : undefined
-                }
+                onClick={(event) => {
+                  if (shellRole !== "doctor") {
+                    return;
+                  }
+                  if (item.to === "/doctor/navigation") {
+                    event.preventDefault();
+                    setDoctorEmbeddedWindow("navigation");
+                  }
+                  if (item.to === "/doctor/return-records") {
+                    event.preventDefault();
+                    setDoctorEmbeddedWindow("return-records");
+                  }
+                }}
                 className={({ isActive }) =>
                   `${isDoctorShell ? "block min-w-0 rounded-2xl px-3 py-2 text-sm lg:rounded-3xl lg:px-4 lg:py-3" : "block rounded-3xl px-4 py-3"} transition ${
-                    isActive ? "bg-white text-brand-ink" : "bg-white/5 hover:bg-white/10"
+                    isActive ||
+                    (doctorEmbeddedWindow === "navigation" && item.to === "/doctor/navigation") ||
+                    (doctorEmbeddedWindow === "return-records" && item.to === "/doctor/return-records")
+                      ? "bg-white text-brand-ink"
+                      : "bg-white/5 hover:bg-white/10"
                   }`
                 }
               >
@@ -658,6 +668,41 @@ export function AppShell() {
               {doctorNavigationSummaryItems.map((item) => (
                 <p key={item}>{item}</p>
               ))}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {shellRole === "doctor" && doctorEmbeddedWindow ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-2 sm:p-4">
+          <div
+            role="dialog"
+            aria-label={doctorEmbeddedWindow === "navigation" ? "即時導航視窗" : "回院病歷視窗"}
+            className="flex max-h-[calc(100dvh-1rem)] w-full max-w-6xl flex-col overflow-hidden rounded-[1.5rem] bg-brand-sand shadow-2xl lg:max-h-[calc(100dvh-2rem)] lg:rounded-[2rem]"
+          >
+            <div className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-200 bg-white px-4 py-3 lg:px-5 lg:py-4">
+              <div>
+                <p className="text-xs font-semibold tracking-[0.18em] text-brand-coral">
+                  醫師端視窗
+                </p>
+                <h2 className="mt-1 text-lg font-semibold text-brand-ink lg:text-xl">
+                  {doctorEmbeddedWindow === "navigation" ? "即時導航" : "回院病歷"}
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDoctorEmbeddedWindow(null)}
+                className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-600 ring-1 ring-slate-200"
+              >
+                關閉視窗
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto p-3 lg:p-5">
+              {doctorEmbeddedWindow === "navigation" ? (
+                <DoctorLocationPage />
+              ) : (
+                <DoctorReturnRecordPage embeddedWindow onCloseWindow={() => setDoctorEmbeddedWindow(null)} />
+              )}
             </div>
           </div>
         </div>

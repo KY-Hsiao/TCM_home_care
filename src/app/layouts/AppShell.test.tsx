@@ -726,6 +726,42 @@ describe("AppShell", () => {
     expect(screen.getAllByRole("button", { name: "登出" }).length).toBeGreaterThan(0);
   });
 
+  it("醫師端左側即時導航與回院病歷會在同頁開啟內嵌視窗", () => {
+    window.localStorage.setItem(
+      SESSION_STORAGE_KEY,
+      JSON.stringify({
+        role: "doctor",
+        activeDoctorId: "doc-001",
+        activeAdminId: "admin-001",
+        authenticatedDoctorId: "doc-001",
+        authenticatedAdminId: null
+      })
+    );
+
+    renderShell("/doctor/leave-requests", <DoctorLeaveRequestPage />);
+
+    const navigationLink = within(screen.getByRole("navigation")).getByRole("link", { name: /即時導航/ });
+    const returnRecordLink = within(screen.getByRole("navigation")).getByRole("link", { name: /回院病歷/ });
+
+    expect(navigationLink).not.toHaveAttribute("target", "_blank");
+    expect(returnRecordLink).not.toHaveAttribute("target", "_blank");
+
+    fireEvent.click(navigationLink);
+    let embeddedWindow = screen.getByRole("dialog", { name: "即時導航視窗" });
+    expect(within(embeddedWindow).getAllByRole("heading", { name: "即時導航" }).length).toBeGreaterThan(0);
+    expect(within(embeddedWindow).getByText("目前狀態")).toBeInTheDocument();
+    expect(within(embeddedWindow).queryByRole("button", { name: "開啟即時導航" })).not.toBeInTheDocument();
+    fireEvent.click(within(embeddedWindow).getByRole("button", { name: "關閉視窗" }));
+    expect(screen.queryByRole("dialog", { name: "即時導航視窗" })).not.toBeInTheDocument();
+
+    fireEvent.click(returnRecordLink);
+    embeddedWindow = screen.getByRole("dialog", { name: "回院病歷視窗" });
+    expect(within(embeddedWindow).getByLabelText("選擇路線")).toBeInTheDocument();
+    expect(within(embeddedWindow).queryByRole("button", { name: "開啟回院病歷視窗" })).not.toBeInTheDocument();
+    fireEvent.click(within(embeddedWindow).getByRole("button", { name: "關閉視窗" }));
+    expect(screen.queryByRole("dialog", { name: "回院病歷視窗" })).not.toBeInTheDocument();
+  });
+
   it("醫師登入後若未取得定位分享會明確顯示提醒", () => {
     Object.defineProperty(window.navigator, "geolocation", {
       configurable: true,
