@@ -5,12 +5,6 @@ import {
   upsertFamilyLineContact
 } from "../_lib/family-line-contacts.js";
 
-export const config = {
-  api: {
-    bodyParser: false
-  }
-};
-
 function setJson(response, statusCode, payload) {
   response.status(statusCode).setHeader("Content-Type", "application/json");
   response.send(JSON.stringify(payload));
