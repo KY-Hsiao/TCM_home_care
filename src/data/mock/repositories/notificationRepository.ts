@@ -174,7 +174,7 @@ export function createNotificationRepository(
       const items = [...getDb().notification_center_items]
         .filter((item) => {
           if (role === "admin") {
-            return item.role === "admin" || (item.role === "doctor" && item.source_type === "manual_notice");
+            return item.role === "admin";
           }
           if (item.role !== role) {
             return false;

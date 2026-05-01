@@ -2382,16 +2382,22 @@ export function AdminRemindersPage() {
     }
 
     const now = new Date().toISOString();
-    repositories.notificationRepository.createNotificationCenterItem({
-      id: `nc-manual-${Date.now()}`,
-      role: noticeAudience === "admin" ? "admin" : "doctor",
-      owner_user_id: noticeAudience === "doctor" ? doctorId : null,
+    const baseId = `nc-manual-${Date.now()}`;
+    const buildManualNoticeItem = (
+      id: string,
+      role: NotificationCenterItem["role"],
+      ownerUserId: string | null,
+      linkedDoctorId: string | null
+    ): NotificationCenterItem => ({
+      id,
+      role,
+      owner_user_id: ownerUserId,
       source_type: "manual_notice",
       title: normalizedTitle,
       content: normalizedContent,
       linked_patient_id: null,
       linked_visit_schedule_id: null,
-      linked_doctor_id: noticeAudience === "doctor" ? doctorId : null,
+      linked_doctor_id: linkedDoctorId,
       linked_leave_request_id: null,
       status: "pending",
       is_unread: true,
@@ -2401,12 +2407,38 @@ export function AdminRemindersPage() {
       created_at: now,
       updated_at: now
     });
+
+    if (noticeAudience === "admin") {
+      repositories.notificationRepository.createNotificationCenterItem(
+        buildManualNoticeItem(`${baseId}-admin`, "admin", null, null)
+      );
+      db.doctors.forEach((doctor) => {
+        repositories.notificationRepository.createNotificationCenterItem(
+          buildManualNoticeItem(`${baseId}-doctor-${doctor.id}`, "doctor", doctor.id, null)
+        );
+      });
+    } else {
+      const targetDoctor = db.doctors.find((doctor) => doctor.id === doctorId);
+      if (!targetDoctor) {
+        setStatusFeedback({
+          tone: "error",
+          message: "請先選擇要通知的醫師。"
+        });
+        return;
+      }
+      repositories.notificationRepository.createNotificationCenterItem(
+        buildManualNoticeItem(`${baseId}-doctor-${targetDoctor.id}`, "doctor", targetDoctor.id, targetDoctor.id)
+      );
+      repositories.notificationRepository.createNotificationCenterItem(
+        buildManualNoticeItem(`${baseId}-admin-copy`, "admin", null, targetDoctor.id)
+      );
+    }
     setNoticeTitle("");
     setNoticeContent("");
     setIsNoticeDialogOpen(false);
     setStatusFeedback({
       tone: "success",
-      message: noticeAudience === "admin" ? "行政內部公告已建立。" : "指定醫師通知已建立。"
+      message: noticeAudience === "admin" ? "行政公告已建立並送給全部角色。" : "指定醫師通知已建立，行政端已保留副本。"
     });
   };
 
@@ -2479,7 +2511,7 @@ export function AdminRemindersPage() {
                     onChange={(event) => setNoticeAudience(event.target.value as "admin" | "doctor")}
                     className="w-full rounded-2xl border border-slate-200 px-4 py-3"
                   >
-                    <option value="admin">行政內部公告</option>
+                    <option value="admin">行政公告</option>
                     <option value="doctor">指定醫師通知</option>
                   </select>
                 </label>
@@ -2500,7 +2532,7 @@ export function AdminRemindersPage() {
                   </label>
                 ) : (
                   <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-slate-600">
-                    行政內部公告只會顯示在行政人員的通知中心。
+                    行政公告會顯示在行政端與所有醫師的通知中心。
                   </div>
                 )}
               </div>

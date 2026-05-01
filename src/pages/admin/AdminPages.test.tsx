@@ -1052,9 +1052,17 @@ describe("AdminPages", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "送出站內通知" }));
 
     await waitFor(() => {
-      expect(screen.getByRole("status")).toHaveTextContent("行政內部公告已建立");
+      expect(screen.getByRole("status")).toHaveTextContent("行政公告已建立並送給全部角色");
       expect(screen.getByText("今日交班提醒")).toBeInTheDocument();
     });
+    let storedDb = JSON.parse(window.localStorage.getItem(MOCK_DB_STORAGE_KEY) ?? "{}");
+    const announcementItems = (storedDb.notification_center_items ?? []).filter(
+      (item: { title: string }) => item.title === "今日交班提醒"
+    );
+    expect(announcementItems.some((item: { role: string }) => item.role === "admin")).toBe(true);
+    expect(
+      announcementItems.filter((item: { role: string }) => item.role === "doctor")
+    ).toHaveLength(createSeedDb().doctors.length);
 
     fireEvent.click(screen.getByRole("button", { name: "建立站內通知" }));
 
@@ -1074,9 +1082,25 @@ describe("AdminPages", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "送出站內通知" }));
 
     await waitFor(() => {
-      expect(screen.getByRole("status")).toHaveTextContent("指定醫師通知已建立");
+      expect(screen.getByRole("status")).toHaveTextContent("指定醫師通知已建立，行政端已保留副本");
       expect(screen.getByText("請補回院病歷")).toBeInTheDocument();
     });
+    storedDb = JSON.parse(window.localStorage.getItem(MOCK_DB_STORAGE_KEY) ?? "{}");
+    const doctorNoticeItems = (storedDb.notification_center_items ?? []).filter(
+      (item: { title: string }) => item.title === "請補回院病歷"
+    );
+    expect(
+      doctorNoticeItems.some(
+        (item: { role: string; owner_user_id: string | null; linked_doctor_id: string | null }) =>
+          item.role === "doctor" && item.owner_user_id === "doc-001" && item.linked_doctor_id === "doc-001"
+      )
+    ).toBe(true);
+    expect(
+      doctorNoticeItems.some(
+        (item: { role: string; owner_user_id: string | null; linked_doctor_id: string | null }) =>
+          item.role === "admin" && item.owner_user_id === null && item.linked_doctor_id === "doc-001"
+      )
+    ).toBe(true);
   });
 
   it("AdminRemindersPage 進入選擇模式後可選取刪除指定通知", async () => {
