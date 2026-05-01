@@ -383,10 +383,64 @@ export function createPatientRepository(
       });
     },
     removeDoctor(doctorId: string) {
-      updateDb((db) => ({
-        ...db,
-        doctors: db.doctors.filter((doctor) => doctor.id !== doctorId)
-      }));
+      updateDb((db) => {
+        const removedScheduleIds = new Set(
+          db.visit_schedules
+            .filter((schedule) => schedule.assigned_doctor_id === doctorId)
+            .map((schedule) => schedule.id)
+        );
+        const removedLeaveRequestIds = new Set(
+          db.leave_requests
+            .filter((leaveRequest) => leaveRequest.doctor_id === doctorId)
+            .map((leaveRequest) => leaveRequest.id)
+        );
+
+        return {
+          ...db,
+          doctors: db.doctors.filter((doctor) => doctor.id !== doctorId),
+          visit_schedules: db.visit_schedules.filter(
+            (schedule) => schedule.assigned_doctor_id !== doctorId
+          ),
+          saved_route_plans: db.saved_route_plans.filter(
+            (routePlan) =>
+              routePlan.doctor_id !== doctorId &&
+              !routePlan.schedule_ids.some((scheduleId) => removedScheduleIds.has(scheduleId))
+          ),
+          visit_records: db.visit_records.filter(
+            (record) => !removedScheduleIds.has(record.visit_schedule_id)
+          ),
+          contact_logs: db.contact_logs.filter(
+            (log) =>
+              log.doctor_id !== doctorId &&
+              (!log.visit_schedule_id || !removedScheduleIds.has(log.visit_schedule_id))
+          ),
+          notification_tasks: db.notification_tasks.filter(
+            (task) => !task.visit_schedule_id || !removedScheduleIds.has(task.visit_schedule_id)
+          ),
+          leave_requests: db.leave_requests.filter((leaveRequest) => leaveRequest.doctor_id !== doctorId),
+          reschedule_actions: db.reschedule_actions.filter(
+            (action) =>
+              !removedScheduleIds.has(action.visit_schedule_id) &&
+              action.new_doctor_id !== doctorId
+          ),
+          reminders: db.reminders.filter(
+            (reminder) =>
+              !reminder.related_visit_schedule_id ||
+              !removedScheduleIds.has(reminder.related_visit_schedule_id)
+          ),
+          notification_center_items: db.notification_center_items.filter(
+            (item) =>
+              item.linked_doctor_id !== doctorId &&
+              (!item.linked_visit_schedule_id || !removedScheduleIds.has(item.linked_visit_schedule_id)) &&
+              (!item.linked_leave_request_id || !removedLeaveRequestIds.has(item.linked_leave_request_id))
+          ),
+          doctor_location_logs: db.doctor_location_logs.filter(
+            (log) =>
+              log.doctor_id !== doctorId &&
+              (!log.linked_visit_schedule_id || !removedScheduleIds.has(log.linked_visit_schedule_id))
+          )
+        };
+      });
     },
     upsertAdmin(admin: AdminUser) {
       updateDb((db) => {

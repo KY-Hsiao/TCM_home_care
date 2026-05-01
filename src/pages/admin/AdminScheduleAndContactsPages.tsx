@@ -925,6 +925,10 @@ export function AdminSchedulesPage() {
     () => new Map(db.patients.map((patient) => [patient.id, patient])),
     [db.patients]
   );
+  const doctorsById = useMemo(
+    () => new Map(doctors.map((doctor) => [doctor.id, doctor])),
+    [doctors]
+  );
   const savedRoutePlans = useMemo(
     () => repositories.visitRepository.getSavedRoutePlans(),
     [repositories, db.saved_route_plans]
@@ -932,6 +936,18 @@ export function AdminSchedulesPage() {
   const allSchedules = useMemo(
     () => repositories.visitRepository.getSchedules(),
     [repositories, db.visit_schedules]
+  );
+  const allScheduleRows = useMemo(
+    () =>
+      allSchedules
+        .slice()
+        .sort(
+          (left, right) =>
+            new Date(left.scheduled_start_at).getTime() - new Date(right.scheduled_start_at).getTime() ||
+            left.assigned_doctor_id.localeCompare(right.assigned_doctor_id) ||
+            left.route_order - right.route_order
+        ),
+    [allSchedules]
   );
   const autoScheduleCarryoverCandidates = useMemo(
     () =>
@@ -2027,6 +2043,64 @@ export function AdminSchedulesPage() {
                 ) : null}
               </div>
             </div>
+          </div>
+        </div>
+      </Panel>
+
+      <Panel title="全部排程清單">
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+            <div>
+              <p className="text-sm font-semibold text-brand-ink">目前系統內共有 {allScheduleRows.length} 筆排程</p>
+              <p className="mt-1 text-xs text-slate-500">
+                這裡直接列出所有排程，不受上方醫師、日期、已儲存路線篩選影響；若醫師已被移除，也會顯示原本的醫師代碼。
+              </p>
+            </div>
+          </div>
+
+          <div className="grid max-h-[520px] gap-2 overflow-y-auto pr-1">
+            {allScheduleRows.map((schedule) => {
+              const doctor = doctorsById.get(schedule.assigned_doctor_id);
+              const patient = patientsById.get(schedule.patient_id);
+              return (
+                <div
+                  key={schedule.id}
+                  data-schedule-id={schedule.id}
+                  className="grid gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,1fr)_auto]"
+                >
+                  <div>
+                    <p className="text-xs font-semibold text-brand-coral">排程 {schedule.id}</p>
+                    <p className="mt-1 font-semibold text-brand-ink">
+                      {formatDateTimeFull(schedule.scheduled_start_at)}
+                    </p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      路線：{schedule.route_group_id}｜第 {schedule.route_order} 站
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-500">醫師</p>
+                    <p className="mt-1 font-semibold text-brand-ink">
+                      {doctor?.name ?? `已移除醫師 ${schedule.assigned_doctor_id}`}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-500">個案</p>
+                    <p className="mt-1 font-semibold text-brand-ink">
+                      {patient ? maskPatientName(patient.name) : schedule.patient_id}
+                    </p>
+                    <p className="mt-1 text-xs text-slate-500">{schedule.address_snapshot}</p>
+                  </div>
+                  <div className="flex items-start justify-start lg:justify-end">
+                    <Badge value={schedule.status} compact />
+                  </div>
+                </div>
+              );
+            })}
+            {allScheduleRows.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
+                目前沒有任何排程。
+              </div>
+            ) : null}
           </div>
         </div>
       </Panel>

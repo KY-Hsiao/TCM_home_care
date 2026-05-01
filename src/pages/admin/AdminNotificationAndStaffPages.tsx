@@ -346,8 +346,13 @@ export function AdminStaffPage() {
         return;
       }
       if (currentDoctorAssignments > 0) {
-        setRecentAction(`${draft.name || "此醫師"} 目前仍有排程案件，暫不允許移除。`);
-        return;
+        const confirmed = window.confirm(
+          `${draft.name || "此醫師"} 目前仍有 ${currentDoctorAssignments} 筆排程案件。確定移除此角色嗎？相關排程、已儲存路線、定位紀錄與請假通知也會一併清除。`
+        );
+        if (!confirmed) {
+          setRecentAction("已取消移除此角色。");
+          return;
+        }
       }
 
       repositories.patientRepository.removeDoctor(draft.sourceId);
@@ -571,7 +576,7 @@ export function AdminStaffPage() {
 
             {currentDoctorAssignments > 0 ? (
               <p className="mt-4 text-xs text-rose-600">
-                此醫師目前仍有 {currentDoctorAssignments} 筆排程案件，暫不允許直接移除。
+                此醫師目前仍有 {currentDoctorAssignments} 筆排程案件；若移除此角色，相關排程、已儲存路線、定位紀錄與請假通知會一併清除。
               </p>
             ) : null}
 

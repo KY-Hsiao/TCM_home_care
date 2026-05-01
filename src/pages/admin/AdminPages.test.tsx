@@ -78,6 +78,10 @@ describe("AdminPages", () => {
     renderWithProviders(<AdminSchedulesPage />);
 
     expect(screen.getByText("起點：旗山醫院｜終點：旗山醫院")).toBeInTheDocument();
+    expect(screen.getByText("全部排程清單")).toBeInTheDocument();
+    expect(screen.getByText("排程 vs-002")).toBeInTheDocument();
+    expect(screen.getAllByText("蕭坤元醫師").length).toBeGreaterThan(0);
+    expect(screen.queryByText("林若謙醫師")).not.toBeInTheDocument();
 
     selectScheduleFilters();
     const slotPatientDialog = openSlotPatientDialog();
@@ -732,7 +736,7 @@ describe("AdminPages", () => {
     const locationSummaryLabel = screen.getAllByText("目前位置", { selector: "p" }).at(-1);
     expect(locationSummaryLabel?.parentElement?.textContent).toContain("附近");
     expect(screen.getByRole("button", { name: "蕭坤元醫師" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "林若謙醫師" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "林若謙醫師" })).not.toBeInTheDocument();
     expect(screen.getAllByText("已經過的地點").length).toBeGreaterThan(0);
   });
 
@@ -959,6 +963,15 @@ describe("AdminPages", () => {
   });
 
   it("AdminTeamCommunicationPage 可雙擊醫師名單直接切換對話對象", () => {
+    const customDb = createSeedDb();
+    customDb.doctors.push({
+      ...customDb.doctors[0],
+      id: "doc-extra",
+      name: "林若謙醫師",
+      phone: "0912-110-002",
+      available_service_slots: ["星期三上午"]
+    });
+    window.localStorage.setItem(MOCK_DB_STORAGE_KEY, JSON.stringify(customDb));
     window.localStorage.setItem(
       SESSION_STORAGE_KEY,
       JSON.stringify({
@@ -1642,6 +1655,55 @@ describe("AdminPages", () => {
 
     expect(screen.getByRole("status")).toHaveTextContent("已將 新加入醫師 設為醫師");
     expect(screen.getAllByText("醫師").length).toBeGreaterThan(0);
+  });
+
+  it("AdminStaffPage 可移除仍有排程的醫師，並同步清除關聯排程與路線", () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const customDb = createSeedDb();
+    customDb.doctors.push({
+      ...customDb.doctors[0],
+      id: "doc-extra",
+      name: "測試醫師",
+      phone: "0912-000-999",
+      available_service_slots: ["星期三上午"]
+    });
+    customDb.visit_schedules.push({
+      ...customDb.visit_schedules[0],
+      id: "vs-extra",
+      assigned_doctor_id: "doc-extra",
+      route_group_id: "route-doc-extra-2026-04-30-上午"
+    });
+    customDb.saved_route_plans.push({
+      ...customDb.saved_route_plans[0],
+      id: "route-doc-extra-2026-04-30-上午",
+      doctor_id: "doc-extra",
+      route_group_id: "route-doc-extra-2026-04-30-上午",
+      schedule_ids: ["vs-extra"],
+      route_items: [
+        {
+          ...customDb.saved_route_plans[0].route_items[0],
+          schedule_id: "vs-extra"
+        }
+      ]
+    });
+    window.localStorage.setItem(MOCK_DB_STORAGE_KEY, JSON.stringify(customDb));
+
+    renderWithProviders(<AdminStaffPage />);
+
+    fireEvent.click(screen.getByRole("button", { name: /測試醫師/ }));
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByText(/仍有 1 筆排程案件/)).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "移除此角色" }));
+
+    expect(screen.getByRole("status")).toHaveTextContent("已移除 測試醫師");
+    expect(screen.queryByRole("button", { name: /測試醫師/ })).not.toBeInTheDocument();
+
+    const storedDb = JSON.parse(window.localStorage.getItem(MOCK_DB_STORAGE_KEY) ?? "{}");
+    expect(storedDb.doctors.some((doctor: { id: string }) => doctor.id === "doc-extra")).toBe(false);
+    expect(storedDb.visit_schedules.some((schedule: { id: string }) => schedule.id === "vs-extra")).toBe(false);
+    expect(
+      storedDb.saved_route_plans.some((routePlan: { doctor_id: string }) => routePlan.doctor_id === "doc-extra")
+    ).toBe(false);
   });
 
   it("AdminStaffPage 醫師資料視窗不再顯示 LINE 搜尋欄位", () => {
