@@ -87,7 +87,14 @@ function resetRouteProgress() {
   });
 }
 
+function openNavigationModal() {
+  fireEvent.click(screen.getByRole("button", { name: "開啟即時導航" }));
+  expect(screen.getByRole("dialog", { name: "即時導航全頁視窗" })).toBeInTheDocument();
+}
+
 function openCurrentPatientDetail(patientName: string) {
+  openNavigationModal();
+
   const routeButton = screen
     .getAllByRole("button")
     .find((button) => button.textContent?.includes("點這裡查看受試者名單與單人紀錄"));

@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SESSION_STORAGE_KEY } from "../../app/auth-storage";
@@ -38,76 +38,6 @@ function renderDashboard() {
   );
 }
 
-function prepareLastStopForReturnNavigation() {
-  if (!capturedContext) {
-    throw new Error("找不到 AppContext。");
-  }
-
-  const activeRoutePlan =
-    capturedContext.session.activeRoutePlanId
-      ? capturedContext.repositories.visitRepository.getSavedRoutePlanById(
-          capturedContext.session.activeRoutePlanId
-        )
-      : capturedContext.repositories.visitRepository.getActiveRoutePlan("doc-001");
-
-  if (!activeRoutePlan) {
-    throw new Error("找不到目前執行中的路線。");
-  }
-
-  act(() => {
-    capturedContext?.setActiveRoutePlanId(activeRoutePlan.id);
-  });
-
-  const routeSchedules = capturedContext.repositories.visitRepository.getDoctorRouteSchedules(
-    "doc-001",
-    activeRoutePlan.id
-  );
-  const lastSchedule = routeSchedules.at(-1);
-
-  if (!lastSchedule) {
-    throw new Error("找不到最後一站排程。");
-  }
-
-  routeSchedules.slice(0, -1).forEach((schedule, index) => {
-    const baseHour = String(8 + Math.floor(index / 2)).padStart(2, "0");
-    const departureAt = `2026-04-24T${baseHour}:${index % 2 === 0 ? "00" : "30"}:00.000Z`;
-    const arrivalAt = `2026-04-24T${baseHour}:${index % 2 === 0 ? "15" : "45"}:00.000Z`;
-    const completeAt = `2026-04-24T${baseHour}:${index % 2 === 0 ? "25" : "55"}:00.000Z`;
-
-    act(() => {
-      capturedContext?.repositories.visitRepository.startVisitTravel(schedule.id, departureAt);
-    });
-    act(() => {
-      capturedContext?.repositories.visitRepository.confirmArrival(schedule.id, "doctor", arrivalAt);
-    });
-    act(() => {
-      capturedContext?.repositories.visitRepository.confirmDeparture(schedule.id, "doctor", completeAt);
-    });
-  });
-
-  act(() => {
-    capturedContext?.repositories.visitRepository.startVisitTravel(
-      lastSchedule.id,
-      "2026-04-24T12:00:00.000Z"
-    );
-  });
-  act(() => {
-    capturedContext?.repositories.visitRepository.confirmArrival(
-      lastSchedule.id,
-      "doctor",
-      "2026-04-24T12:20:00.000Z"
-    );
-  });
-
-  const destinationQuery = encodeURIComponent(
-    `${activeRoutePlan.end_latitude},${activeRoutePlan.end_longitude}`
-  );
-
-  return {
-    destinationQuery
-  };
-}
-
 describe("DoctorReturnNavigation", () => {
   beforeEach(() => {
     window.localStorage.clear();
@@ -119,10 +49,38 @@ describe("DoctorReturnNavigation", () => {
 
     renderDashboard();
 
-    const { destinationQuery } = prepareLastStopForReturnNavigation();
+    fireEvent.click(screen.getByRole("button", { name: "開啟即時導航" }));
+    expect(screen.getByRole("dialog", { name: "即時導航全頁視窗" })).toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole("button", { name: "重置路線" })[0]);
 
-    fireEvent.click(screen.getByRole("button", { name: "完成治療，返回醫院" }));
+    const activeRoutePlan =
+      capturedContext?.repositories.visitRepository.getActiveRoutePlan("doc-001") ?? null;
 
+    if (!activeRoutePlan) {
+      throw new Error("找不到目前執行中的路線。");
+    }
+
+    const destinationQuery = encodeURIComponent(
+      `${activeRoutePlan.end_latitude},${activeRoutePlan.end_longitude}`
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "開始出發" }));
+
+    let returned = false;
+    for (let index = 0; index < 20; index += 1) {
+      fireEvent.click(screen.getByRole("button", { name: "已抵達，開始治療" }));
+
+      const returnButton = screen.queryByRole("button", { name: "完成治療，返回醫院" });
+      if (returnButton) {
+        fireEvent.click(returnButton);
+        returned = true;
+        break;
+      }
+
+      fireEvent.click(screen.getByRole("button", { name: "完成治療，前往下一家" }));
+    }
+
+    expect(returned).toBe(true);
     expect(openSpy).toHaveBeenCalled();
     expect(String(openSpy.mock.lastCall?.[0] ?? "")).toContain(`destination=${destinationQuery}`);
   });

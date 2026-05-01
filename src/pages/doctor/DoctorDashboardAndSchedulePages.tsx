@@ -870,6 +870,7 @@ export function DoctorDashboardPage() {
 
 export function DoctorLocationPage() {
   const { repositories, services, session } = useAppContext();
+  const [isNavigationModalOpen, setIsNavigationModalOpen] = useState(false);
   const currentDoctor =
     repositories.patientRepository.getDoctors().find((doctor) => doctor.id === session.activeDoctorId) ??
     repositories.patientRepository.getDoctors()[0];
@@ -1051,167 +1052,231 @@ export function DoctorLocationPage() {
       })
     );
   };
+  const navigationSummary = currentRouteContext
+    ? navigatingContext
+      ? `導航進行中：第 ${getRouteDisplayOrder(routeSchedules, navigatingContext.schedule.id) ?? navigatingContext.schedule.route_order} 站 ${maskPatientName(navigatingContext.detail.patient.name)}`
+      : treatmentContext
+        ? `治療進行中：${maskPatientName(treatmentContext.detail.patient.name)}`
+        : readyContext
+          ? `待出發：第 ${getRouteDisplayOrder(routeSchedules, readyContext.schedule.id) ?? readyContext.schedule.route_order} 站 ${maskPatientName(readyContext.detail.patient.name)}`
+          : "目前路線待確認。"
+    : shouldShowHospitalReturn && activeRoutePlan
+      ? "今日患者已完成，可開啟返院導航。"
+      : "目前沒有可即時導航的路線。";
+  const navigationModalContent = (
+    <div className="space-y-4 lg:space-y-6">
+      <DoctorRouteSelector embedded />
+      {navigatingContext ? (
+        <section className="overflow-hidden rounded-[1.15rem] border border-brand-moss/30 bg-gradient-to-br from-brand-forest via-brand-forest to-brand-moss text-white lg:rounded-[1.75rem]">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 px-3 py-2.5 lg:gap-3 lg:px-5 lg:py-4">
+            <div>
+              <p className="text-xs font-semibold tracking-[0.2em] text-white/70">導航進行中</p>
+              <h3 className="mt-1 text-base font-semibold leading-tight lg:text-xl">前往 {maskPatientName(navigatingContext.detail.patient.name)} 的停留點</h3>
+            </div>
+            <div className="rounded-xl bg-white/10 px-3 py-2 text-xs lg:rounded-2xl lg:px-4 lg:py-3 lg:text-sm">
+              第 {getRouteDisplayOrder(routeSchedules, navigatingContext.schedule.id) ?? navigatingContext.schedule.route_order} 站 / 下一位 {nextRouteContext ? maskPatientName(nextRouteContext.detail.patient.name) : "返院"}
+            </div>
+          </div>
+          <div className="space-y-3 p-3 xl:p-5">
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <button
+                type="button"
+                onClick={() => openExternalNavigation(currentMapUrl)}
+                className="inline-flex min-h-[44px] flex-1 items-center justify-center rounded-full bg-brand-coral px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90"
+              >
+                用 Google 地圖開啟本站導航
+              </button>
+              <Link
+                to={`/doctor/schedules/${navigatingContext.schedule.id}`}
+                className="inline-flex min-h-[44px] items-center justify-center rounded-full border border-white/20 bg-white/10 px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/20"
+              >
+                查看本站詳情
+              </Link>
+            </div>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              {nextMapUrl ? (
+                <button
+                  type="button"
+                  onClick={() => openExternalNavigation(nextMapUrl)}
+                  className="inline-flex min-h-[44px] flex-1 items-center justify-center rounded-full border border-white/20 bg-white/10 px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/20"
+                >
+                  開啟下一站導航：{nextRouteContext ? maskPatientName(nextRouteContext.detail.patient.name) : ""}
+                </button>
+              ) : hospitalMapUrl ? (
+                <button
+                  type="button"
+                  onClick={() => openExternalNavigation(hospitalMapUrl)}
+                  className="inline-flex min-h-[44px] flex-1 items-center justify-center rounded-full border border-white/20 bg-white/10 px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/20"
+                >
+                  開啟返院導航
+                </button>
+              ) : null}
+            </div>
+            <button
+              type="button"
+              onClick={handleConfirmArrival}
+              className="inline-flex min-h-[44px] w-full items-center justify-center rounded-full bg-white px-4 py-2 text-sm font-semibold text-brand-ink transition hover:bg-brand-sand"
+            >
+              已抵達，開始治療
+            </button>
+          </div>
+        </section>
+      ) : null}
+
+      {!navigatingContext && treatmentContext ? (
+        <section className="rounded-[1.15rem] border border-emerald-200 bg-emerald-50 p-3 lg:rounded-[1.75rem] lg:p-6">
+          <p className="text-sm font-semibold text-emerald-800">治療進行中</p>
+          <h3 className="mt-1.5 text-lg font-bold leading-tight text-brand-ink lg:mt-2 lg:text-2xl">
+            {maskPatientName(treatmentContext.detail.patient.name)} 已到站，完成治療後即可接續下一段
+          </h3>
+          <p className="mt-1.5 text-sm text-slate-600">
+            {nextRouteContext
+              ? `按下後會直接開啟下一家 ${maskPatientName(nextRouteContext.detail.patient.name)} 的 Google 地圖導航。`
+              : "按下後可接續最後一段返院導航。"}
+          </p>
+          <button
+            type="button"
+            onClick={handleCompleteTreatment}
+            className="mt-3 inline-flex min-h-[52px] w-full items-center justify-center rounded-[1.1rem] bg-brand-forest px-4 py-3 text-base font-bold text-white transition hover:opacity-90 lg:mt-5 lg:min-h-[88px] lg:rounded-[1.5rem] lg:px-6 lg:py-5 lg:text-xl"
+          >
+            {nextRouteContext ? "完成治療，前往下一家" : "完成治療，返回醫院"}
+          </button>
+        </section>
+      ) : null}
+
+      {!navigatingContext && !treatmentContext && readyContext ? (
+        <section className="rounded-[1.15rem] border border-slate-200 bg-white p-3 lg:rounded-[1.75rem] lg:p-6">
+          <p className="text-sm font-semibold text-brand-moss">待出發</p>
+          <h3 className="mt-1.5 text-lg font-bold leading-tight text-brand-ink lg:mt-2 lg:text-2xl">
+            即將前往第 {getRouteDisplayOrder(routeSchedules, readyContext.schedule.id) ?? readyContext.schedule.route_order} 站 {maskPatientName(readyContext.detail.patient.name)}
+          </h3>
+          <p className="mt-1.5 text-sm text-slate-600">
+            請在全頁即時導航視窗中開始出發，避免手機版操作被原頁面框住。
+          </p>
+          <button
+            type="button"
+            onClick={() => handleStartRouteStop(readyContext)}
+            className="mt-3 inline-flex min-h-[52px] w-full items-center justify-center rounded-[1.1rem] bg-brand-coral px-4 py-3 text-base font-bold text-white transition hover:opacity-90 lg:mt-5 lg:min-h-[88px] lg:rounded-[1.5rem] lg:px-6 lg:py-5 lg:text-xl"
+          >
+            開始出發
+          </button>
+        </section>
+      ) : null}
+
+      {!currentRouteContext && shouldShowHospitalReturn && activeRoutePlan ? (
+        <section className="overflow-hidden rounded-[1.35rem] border border-brand-moss/30 bg-gradient-to-br from-slate-900 via-slate-800 to-brand-ink text-white lg:rounded-[1.75rem]">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-4 py-3 lg:px-5 lg:py-4">
+            <div>
+              <p className="text-xs font-semibold tracking-[0.2em] text-white/70">返院導航</p>
+              <h3 className="mt-1 text-lg font-semibold lg:text-xl">所有患者已完成，最後一站返回醫院</h3>
+              <p className="mt-1 text-sm text-white/80">
+                今日患者都已結束，接下來可手動開啟最後一段返院導航。
+              </p>
+            </div>
+            <div className="rounded-2xl bg-white/10 px-4 py-3 text-sm">
+              終點 {activeRoutePlan.end_address}
+            </div>
+          </div>
+          <div className="grid gap-3 p-4 xl:grid-cols-[minmax(0,1.25fr)_300px] xl:gap-4 xl:p-5">
+            <div className="space-y-4">
+              <div className="rounded-[1.5rem] border border-white/10 bg-white/10 px-4 py-4 text-sm text-white/90">
+                返院階段不再顯示內嵌地圖，請直接用按鍵開啟返院導航。
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (hospitalMapUrl) {
+                    openExternalNavigation(hospitalMapUrl);
+                  }
+                }}
+                className="inline-flex w-full items-center justify-center rounded-full bg-brand-coral px-4 py-2.5 text-sm font-semibold text-white transition hover:opacity-90"
+              >
+                用 Google 地圖開啟返院導航
+              </button>
+              <p className="text-xs text-white/70">
+                返院改由外接 Google 地圖；是否結束返院由醫師自行操作。
+              </p>
+            </div>
+            <div className="space-y-3 rounded-[1.5rem] border border-white/10 bg-white/10 p-4">
+              <div>
+                <p className="text-xs text-white/70">返院目的地</p>
+                <p className="mt-1 text-sm font-semibold">{activeRoutePlan.end_address}</p>
+              </div>
+              <div>
+                <p className="text-xs text-white/70">今日總結</p>
+                <p className="mt-1 text-sm text-white/90">
+                  共完成 {routeContexts.length} 站患者服務，返院後即可整理回院病歷與後續紀錄。
+                </p>
+              </div>
+            </div>
+          </div>
+        </section>
+      ) : null}
+
+      {!currentRouteContext && !shouldShowHospitalReturn ? (
+        <section className="rounded-[1.75rem] border border-slate-200 bg-white p-6 text-sm text-slate-600">
+          目前沒有可即時導航的路線。請先確認管理端已實行路線，再從這頁開啟 Google 地圖導航。
+        </section>
+      ) : null}
+    </div>
+  );
 
   return (
     <div className="space-y-4 lg:space-y-6">
-      <Panel title="即時導航">
-        <div className="space-y-4 lg:space-y-6">
-          <DoctorRouteSelector embedded />
-          {navigatingContext ? (
-            <section className="overflow-hidden rounded-[1.15rem] border border-brand-moss/30 bg-gradient-to-br from-brand-forest via-brand-forest to-brand-moss text-white lg:rounded-[1.75rem]">
-              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 px-3 py-2.5 lg:gap-3 lg:px-5 lg:py-4">
-                <div>
-                  <p className="text-xs font-semibold tracking-[0.2em] text-white/70">導航進行中</p>
-                  <h3 className="mt-1 text-base font-semibold leading-tight lg:text-xl">前往 {maskPatientName(navigatingContext.detail.patient.name)} 的停留點</h3>
-                </div>
-                <div className="rounded-xl bg-white/10 px-3 py-2 text-xs lg:rounded-2xl lg:px-4 lg:py-3 lg:text-sm">
-                  第 {getRouteDisplayOrder(routeSchedules, navigatingContext.schedule.id) ?? navigatingContext.schedule.route_order} 站 / 下一位 {nextRouteContext ? maskPatientName(nextRouteContext.detail.patient.name) : "返院"}
-                </div>
-              </div>
-              <div className="space-y-3 p-3 xl:p-5">
-                <div className="flex flex-col gap-2 sm:flex-row">
-                  <button
-                    type="button"
-                    onClick={() => openExternalNavigation(currentMapUrl)}
-                    className="inline-flex min-h-[44px] flex-1 items-center justify-center rounded-full bg-brand-coral px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90"
-                  >
-                    用 Google 地圖開啟本站導航
-                  </button>
-                  <Link
-                    to={`/doctor/schedules/${navigatingContext.schedule.id}`}
-                    className="inline-flex min-h-[44px] items-center justify-center rounded-full border border-white/20 bg-white/10 px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/20"
-                  >
-                    查看本站詳情
-                  </Link>
-                </div>
-                <div className="flex flex-col gap-2 sm:flex-row">
-                  {nextMapUrl ? (
-                    <button
-                      type="button"
-                      onClick={() => openExternalNavigation(nextMapUrl)}
-                      className="inline-flex min-h-[44px] flex-1 items-center justify-center rounded-full border border-white/20 bg-white/10 px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/20"
-                    >
-                      開啟下一站導航：{nextRouteContext ? maskPatientName(nextRouteContext.detail.patient.name) : ""}
-                    </button>
-                  ) : hospitalMapUrl ? (
-                    <button
-                      type="button"
-                      onClick={() => openExternalNavigation(hospitalMapUrl)}
-                      className="inline-flex min-h-[44px] flex-1 items-center justify-center rounded-full border border-white/20 bg-white/10 px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/20"
-                    >
-                      開啟返院導航
-                    </button>
-                  ) : null}
-                </div>
-                <button
-                  type="button"
-                  onClick={handleConfirmArrival}
-                  className="inline-flex min-h-[44px] w-full items-center justify-center rounded-full bg-white px-4 py-2 text-sm font-semibold text-brand-ink transition hover:bg-brand-sand"
-                >
-                  已抵達，開始治療
-                </button>
-              </div>
-            </section>
-          ) : null}
-
-          {!navigatingContext && treatmentContext ? (
-            <section className="rounded-[1.15rem] border border-emerald-200 bg-emerald-50 p-3 lg:rounded-[1.75rem] lg:p-6">
-              <p className="text-sm font-semibold text-emerald-800">治療進行中</p>
-              <h3 className="mt-1.5 text-lg font-bold leading-tight text-brand-ink lg:mt-2 lg:text-2xl">
-                {maskPatientName(treatmentContext.detail.patient.name)} 已到站，完成治療後即可接續下一段
-              </h3>
-              <p className="mt-1.5 text-sm text-slate-600">
-                {nextRouteContext
-                  ? `按下後會直接開啟下一家 ${maskPatientName(nextRouteContext.detail.patient.name)} 的 Google 地圖導航。`
-                  : "按下後可接續最後一段返院導航。"}
-              </p>
-              <button
-                type="button"
-                onClick={handleCompleteTreatment}
-                className="mt-3 inline-flex min-h-[52px] w-full items-center justify-center rounded-[1.1rem] bg-brand-forest px-4 py-3 text-base font-bold text-white transition hover:opacity-90 lg:mt-5 lg:min-h-[88px] lg:rounded-[1.5rem] lg:px-6 lg:py-5 lg:text-xl"
-              >
-                {nextRouteContext ? "完成治療，前往下一家" : "完成治療，返回醫院"}
-              </button>
-            </section>
-          ) : null}
-
-          {!navigatingContext && !treatmentContext && readyContext ? (
-            <section className="rounded-[1.15rem] border border-slate-200 bg-white p-3 lg:rounded-[1.75rem] lg:p-6">
-              <p className="text-sm font-semibold text-brand-moss">待出發</p>
-              <h3 className="mt-1.5 text-lg font-bold leading-tight text-brand-ink lg:mt-2 lg:text-2xl">
-                即將前往第 {getRouteDisplayOrder(routeSchedules, readyContext.schedule.id) ?? readyContext.schedule.route_order} 站 {maskPatientName(readyContext.detail.patient.name)}
-              </h3>
-              <p className="mt-1.5 text-sm text-slate-600">
-                主畫面會固定保留這個即時導航區塊，請直接從這裡開始出發。
-              </p>
-              <button
-                type="button"
-                onClick={() => handleStartRouteStop(readyContext)}
-                className="mt-3 inline-flex min-h-[52px] w-full items-center justify-center rounded-[1.1rem] bg-brand-coral px-4 py-3 text-base font-bold text-white transition hover:opacity-90 lg:mt-5 lg:min-h-[88px] lg:rounded-[1.5rem] lg:px-6 lg:py-5 lg:text-xl"
-              >
-                開始出發
-              </button>
-            </section>
-          ) : null}
-
-          {!currentRouteContext && shouldShowHospitalReturn && activeRoutePlan ? (
-            <section className="overflow-hidden rounded-[1.35rem] border border-brand-moss/30 bg-gradient-to-br from-slate-900 via-slate-800 to-brand-ink text-white lg:rounded-[1.75rem]">
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-4 py-3 lg:px-5 lg:py-4">
-                <div>
-                  <p className="text-xs font-semibold tracking-[0.2em] text-white/70">返院導航</p>
-                  <h3 className="mt-1 text-lg font-semibold lg:text-xl">所有患者已完成，最後一站返回醫院</h3>
-                  <p className="mt-1 text-sm text-white/80">
-                    今日患者都已結束，接下來可手動開啟最後一段返院導航。
-                  </p>
-                </div>
-                <div className="rounded-2xl bg-white/10 px-4 py-3 text-sm">
-                  終點 {activeRoutePlan.end_address}
-                </div>
-              </div>
-              <div className="grid gap-3 p-4 xl:grid-cols-[minmax(0,1.25fr)_300px] xl:gap-4 xl:p-5">
-                <div className="space-y-4">
-                  <div className="rounded-[1.5rem] border border-white/10 bg-white/10 px-4 py-4 text-sm text-white/90">
-                    返院階段不再顯示內嵌地圖，請直接用按鍵開啟返院導航。
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (hospitalMapUrl) {
-                        openExternalNavigation(hospitalMapUrl);
-                      }
-                    }}
-                    className="inline-flex w-full items-center justify-center rounded-full bg-brand-coral px-4 py-2.5 text-sm font-semibold text-white transition hover:opacity-90"
-                  >
-                    用 Google 地圖開啟返院導航
-                  </button>
-                  <p className="text-xs text-white/70">
-                    返院改由外接 Google 地圖；是否結束返院由醫師自行操作。
-                  </p>
-                </div>
-                <div className="space-y-3 rounded-[1.5rem] border border-white/10 bg-white/10 p-4">
-                  <div>
-                    <p className="text-xs text-white/70">返院目的地</p>
-                    <p className="mt-1 text-sm font-semibold">{activeRoutePlan.end_address}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-white/70">今日總結</p>
-                    <p className="mt-1 text-sm text-white/90">
-                      共完成 {routeContexts.length} 站患者服務，返院後即可整理回院病歷與後續紀錄。
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </section>
-          ) : null}
-
-          {!currentRouteContext && !shouldShowHospitalReturn ? (
-            <section className="rounded-[1.75rem] border border-slate-200 bg-white p-6 text-sm text-slate-600">
-              目前沒有可即時導航的路線。請先確認管理端已實行路線，再從這頁開啟 Google 地圖導航。
-            </section>
-          ) : null}
+      <Panel
+        title="即時導航"
+        action={
+          <button
+            type="button"
+            onClick={() => setIsNavigationModalOpen(true)}
+            className="rounded-full bg-brand-coral px-5 py-2.5 text-sm font-semibold text-white"
+          >
+            開啟即時導航
+          </button>
+        }
+      >
+        <div className="rounded-[1.25rem] border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-600">
+          <p className="font-semibold text-brand-ink">目前狀態</p>
+          <p className="mt-1">{navigationSummary}</p>
+          <p className="mt-2 text-xs text-slate-500">
+            路線選擇、開始出發、抵達治療與返院導航都會在全頁視窗內操作，避免手機畫面被原頁面框住。
+          </p>
         </div>
       </Panel>
 
+      {isNavigationModalOpen && typeof document !== "undefined"
+        ? createPortal(
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-label="即時導航全頁視窗"
+              className="fixed inset-0 z-[100] h-[100dvh] w-[100dvw] overflow-hidden bg-brand-cream"
+            >
+              <div className="flex h-full min-w-0 flex-col">
+                <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-200 bg-white/95 px-4 py-3 shadow-sm backdrop-blur lg:px-6 lg:py-4">
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold tracking-[0.2em] text-brand-coral">即時導航</p>
+                    <h2 className="mt-1 text-lg font-semibold text-brand-ink lg:text-2xl">全頁導航操作視窗</h2>
+                    <p className="mt-1 text-sm text-slate-600">{navigationSummary}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsNavigationModalOpen(false)}
+                    className="shrink-0 rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-600 ring-1 ring-slate-200"
+                  >
+                    關閉視窗
+                  </button>
+                </div>
+                <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3 lg:px-6 lg:py-5">
+                  <div className="mx-auto w-full max-w-6xl pb-[max(1rem,env(safe-area-inset-bottom))]">
+                    {navigationModalContent}
+                  </div>
+                </div>
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
     </div>
   );
 }

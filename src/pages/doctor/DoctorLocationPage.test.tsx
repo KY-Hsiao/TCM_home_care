@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it } from "vitest";
 import { SESSION_STORAGE_KEY } from "../../app/auth-storage";
@@ -46,8 +46,21 @@ describe("DoctorLocationPage", () => {
     expect(screen.queryByText("最近移動軌跡")).not.toBeInTheDocument();
     expect(screen.queryByRole("combobox", { name: "切換醫師位置" })).not.toBeInTheDocument();
     expect(screen.queryByText("切換醫師位置")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "開始出發" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "開始出發" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "開啟即時導航" }));
+
+    expect(screen.getByRole("dialog", { name: "即時導航全頁視窗" })).toBeInTheDocument();
+    expect(
+      screen.getAllByRole("button").some((button) =>
+        button.textContent?.includes("點這裡查看受試者名單與單人紀錄")
+      )
+    ).toBe(true);
     expect(screen.queryByText(/按開始出發後會外接 Google 地圖導航至第 2 站 蕭瑞芬/)).not.toBeInTheDocument();
     expect(screen.queryByText("同步案件：第 2 站 / 蕭瑞芬")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "關閉視窗" }));
+
+    expect(screen.queryByRole("dialog", { name: "即時導航全頁視窗" })).not.toBeInTheDocument();
   });
 });
