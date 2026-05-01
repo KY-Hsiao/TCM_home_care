@@ -23,21 +23,16 @@ describe("DoctorReturnRecordPage", () => {
     vi.spyOn(window, "alert").mockImplementation(() => undefined);
   });
 
-  it("以全頁視窗開啟回院病歷，並可關閉後再次開啟", () => {
+  it("直接顯示回院病歷表單，且移除中間開啟視窗按鈕", () => {
+    vi.spyOn(window, "close").mockImplementation(() => undefined);
     renderWithProviders(<DoctorReturnRecordPage />);
 
-    expect(screen.getByRole("dialog", { name: "回院病歷全頁視窗" })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "回院病歷全頁視窗" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "開啟回院病歷視窗" })).not.toBeInTheDocument();
     expect(screen.getByLabelText("選擇路線")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "關閉視窗" }));
-
-    expect(screen.queryByRole("dialog", { name: "回院病歷全頁視窗" })).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("選擇路線")).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "開啟回院病歷視窗" }));
-
-    expect(screen.getByRole("dialog", { name: "回院病歷全頁視窗" })).toBeInTheDocument();
-    expect(screen.getByLabelText("選擇路線")).toBeInTheDocument();
+    expect(window.close).toHaveBeenCalled();
   });
 
   it("會顯示長照慢性臥床版四診選單，且勾選其他後出現輸入框", () => {

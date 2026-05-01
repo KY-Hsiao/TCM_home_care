@@ -544,7 +544,7 @@ function buildCarriedOverRoutePlan(input: {
     )
     .forEach((item) => {
       const patient = input.patientsById.get(item.patient_id);
-      if (!patient || patient.status === "closed") {
+      if (!patient || patient.status !== "active") {
         return;
       }
       const checked = item.checked;
@@ -629,7 +629,7 @@ function buildPlannerRowsFromRoutePlan(
     routePlan.route_items
       .map((item) => {
         const patient = patientsById.get(item.patient_id);
-        if (!patient || patient.status === "closed") {
+        if (!patient || patient.status !== "active") {
           return null;
         }
         return {
@@ -688,16 +688,19 @@ function buildRoutePreviewInput(input: {
   return {
     origin: {
       address: startLocation.address,
+      label: "旗山醫院",
       latitude: startLocation.latitude,
       longitude: startLocation.longitude
     },
     destination: {
       address: endLocation.address,
+      label: "旗山醫院",
       latitude: endLocation.latitude,
       longitude: endLocation.longitude
     },
     waypoints: input.checkedRows.map((row) => ({
       address: row.address,
+      label: `第 ${row.routeOrder ?? "-"} 站 ${maskPatientName(row.name)}`,
       latitude: row.latitude,
       longitude: row.longitude
     })),
@@ -922,11 +925,11 @@ export function AdminSchedulesPage() {
   );
   const savedRoutePlans = useMemo(
     () => repositories.visitRepository.getSavedRoutePlans(),
-    [repositories, db.saved_route_plans]
+    [repositories]
   );
   const allSchedules = useMemo(
     () => repositories.visitRepository.getSchedules(),
-    [repositories, db.visit_schedules]
+    [repositories]
   );
   const allScheduleRows = useMemo(
     () =>
@@ -997,7 +1000,7 @@ export function AdminSchedulesPage() {
             serviceTimeSlot: selectedTimeSlot
           })
         : [],
-    [repositories, db.patients, effectiveSelectedWeekday, selectedDoctorId, selectedTimeSlot]
+    [repositories, effectiveSelectedWeekday, selectedDoctorId, selectedTimeSlot]
   );
   const sortedPlannerRows = useMemo(() => sortPlannerRows(plannerRows), [plannerRows]);
   const checkedRows = useMemo(
@@ -1312,7 +1315,7 @@ export function AdminSchedulesPage() {
         : "目前路線未重新排序。";
     const unresolvedText =
       unresolvedCoordinateCount > 0
-        ? `另有 ${unresolvedCoordinateCount} 站缺少座標，先保留在後段，可再拖曳微調。`
+        ? `另有 ${unresolvedCoordinateCount} 站缺少座標，已排到最後順位；請補座標後重新排程。`
         : "可再拖曳微調。";
     setRecentAction([strategyText, distanceText, unresolvedText].filter(Boolean).join(" "));
   };
@@ -1375,7 +1378,15 @@ export function AdminSchedulesPage() {
       normalizedEndAddress === routeEndLocation.address ? routeEndLocation.latitude : null;
     const endLongitude =
       normalizedEndAddress === routeEndLocation.address ? routeEndLocation.longitude : null;
-    const routeItems: SavedRoutePlan["route_items"] = sortPlannerRows(plannerRows).map((row) => ({
+    const activePlannerRows = sortPlannerRows(plannerRows).filter((row) => {
+      const patient = patientsById.get(row.patientId);
+      return patient?.status === "active";
+    });
+    if (activePlannerRows.length === 0) {
+      setRecentAction("目前沒有可加入路線的服務中個案。");
+      return null;
+    }
+    const routeItems: SavedRoutePlan["route_items"] = activePlannerRows.map((row) => ({
       patient_id: row.patientId,
       schedule_id: row.scheduleId,
       checked: row.checked,
@@ -1384,6 +1395,7 @@ export function AdminSchedulesPage() {
       patient_name: row.name,
       address: row.address
     }));
+    const checkedRouteItems = routeItems.filter((item) => item.checked);
 
     return {
       id: routePlanId,
@@ -1406,8 +1418,8 @@ export function AdminSchedulesPage() {
       end_address: normalizedEndAddress,
       end_latitude: endLatitude,
       end_longitude: endLongitude,
-      total_minutes: checkedRows.length * 60,
-      total_distance_kilometers: checkedRows.length * 2,
+      total_minutes: checkedRouteItems.length * 60,
+      total_distance_kilometers: checkedRouteItems.length * 2,
       saved_at: new Date().toISOString(),
       created_at: selectedSavedRoutePlan?.created_at ?? new Date().toISOString(),
       updated_at: new Date().toISOString()
@@ -1511,7 +1523,7 @@ export function AdminSchedulesPage() {
     }
     const nextRows = buildPlannerRowsForPreviousRouteDraft(previousRoutePlan, patientsById);
     if (nextRows.length === 0) {
-      setRecentAction("前次路線中的個案已結案或不存在，無法套用。");
+      setRecentAction("前次路線中的個案已暫停、結案或不存在，無法套用。");
       return;
     }
     setSelectedSavedRoutePlanId("");
@@ -1917,7 +1929,6 @@ export function AdminSchedulesPage() {
                 route={routePreview}
                 emptyText="請先選擇醫師、星期、上午/下午，並保留至少一位已勾選個案，才會產生路線預覽。"
                 compact
-                hidePointLegend
                 headerActions={
                   <button
                     type="button"
@@ -2594,7 +2605,7 @@ export function AdminLeaveRequestsPage() {
           (left, right) =>
             new Date(right.created_at).getTime() - new Date(left.created_at).getTime()
         ),
-    [db.leave_requests, repositories]
+    [repositories]
   );
   const pendingLeaveRequests = leaveRequests.filter((leaveRequest) => leaveRequest.status === "pending");
 

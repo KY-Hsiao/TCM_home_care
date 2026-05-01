@@ -7,6 +7,7 @@ function buildPreviewPoints(route: RouteMapInput) {
     {
       key: "origin",
       label: "起",
+      pointName: route.origin.label ?? route.origin.address,
       address: route.origin.address,
       latitude: route.origin.latitude,
       longitude: route.origin.longitude
@@ -14,6 +15,7 @@ function buildPreviewPoints(route: RouteMapInput) {
     ...route.waypoints.map((waypoint, index) => ({
       key: `waypoint-${index}`,
       label: `${index + 1}`,
+      pointName: waypoint.label ?? waypoint.address,
       address: waypoint.address,
       latitude: waypoint.latitude,
       longitude: waypoint.longitude
@@ -21,6 +23,7 @@ function buildPreviewPoints(route: RouteMapInput) {
     {
       key: "destination",
       label: "終",
+      pointName: route.destination.label ?? route.destination.address,
       address: route.destination.address,
       latitude: route.destination.latitude,
       longitude: route.destination.longitude
@@ -29,6 +32,7 @@ function buildPreviewPoints(route: RouteMapInput) {
     (point): point is {
       key: string;
       label: string;
+      pointName: string;
       address: string;
       latitude: number;
       longitude: number;
@@ -50,7 +54,7 @@ function buildPreviewCanvasPoints(route: RouteMapInput) {
   const maxLongitude = Math.max(...longitudes);
   const latitudeSpan = Math.max(maxLatitude - minLatitude, 0.001);
   const longitudeSpan = Math.max(maxLongitude - minLongitude, 0.001);
-  const padding = 24;
+  const padding = 56;
   const width = 640;
   const height = 480;
 
@@ -59,6 +63,19 @@ function buildPreviewCanvasPoints(route: RouteMapInput) {
     x: padding + ((point.longitude - minLongitude) / longitudeSpan) * (width - padding * 2),
     y: height - padding - ((point.latitude - minLatitude) / latitudeSpan) * (height - padding * 2)
   }));
+}
+
+function buildUnresolvedPreviewPoints(route: RouteMapInput) {
+  return route.waypoints
+    .map((waypoint, index) => ({
+      key: `waypoint-${index}`,
+      label: `${index + 1}`,
+      pointName: waypoint.label ?? waypoint.address,
+      address: waypoint.address,
+      latitude: waypoint.latitude,
+      longitude: waypoint.longitude
+    }))
+    .filter((point) => point.latitude === null || point.longitude === null);
 }
 
 function resolvePreviewMapZoom(points: Array<{ latitude: number; longitude: number }>) {
@@ -143,14 +160,15 @@ export function RouteMapPreviewCard({
 
   const previewState = services.maps.getRoutePreviewState(route);
   const previewCanvasPoints = buildPreviewCanvasPoints(route);
+  const unresolvedPreviewPoints = buildUnresolvedPreviewPoints(route);
   const hasCanvasPreview = previewCanvasPoints.length >= 2;
   const previewBackgroundMapUrl = buildPreviewMapBackgroundUrl(previewCanvasPoints);
   const mediaHeightClass = compact
-    ? "mt-3 aspect-[4/3] w-full max-h-[42vh] rounded-3xl border border-slate-200 bg-white"
-    : "mt-4 aspect-[4/3] w-full max-h-[70vh] rounded-3xl border border-slate-200 bg-white";
+    ? "mt-3 aspect-[4/3] w-full min-h-[360px] max-h-[62vh] rounded-3xl border border-slate-200 bg-white"
+    : "mt-4 aspect-[4/3] w-full min-h-[420px] max-h-[76vh] rounded-3xl border border-slate-200 bg-white";
   const canvasHeightClass = compact
-    ? "mt-3 aspect-[4/3] w-full max-h-[42vh] rounded-2xl bg-white/70"
-    : "mt-3 aspect-[4/3] w-full max-h-[70vh] rounded-2xl bg-white/70";
+    ? "mt-3 aspect-[4/3] w-full min-h-[360px] max-h-[62vh] rounded-2xl bg-white/70"
+    : "mt-3 aspect-[4/3] w-full min-h-[420px] max-h-[76vh] rounded-2xl bg-white/70";
 
   return (
     <div className="rounded-3xl border border-slate-200 bg-white p-3 lg:p-4">
@@ -177,15 +195,7 @@ export function RouteMapPreviewCard({
         </div>
       </div>
 
-      {previewState.embedUrl ? (
-        <iframe
-          title={`${route.label} 路線圖預覽`}
-          src={previewState.embedUrl}
-          loading="lazy"
-          referrerPolicy="no-referrer-when-downgrade"
-          className={mediaHeightClass}
-        />
-      ) : hasCanvasPreview ? (
+      {hasCanvasPreview ? (
         <div className="mt-4 overflow-hidden rounded-3xl border border-slate-200 bg-[radial-gradient(circle_at_top,_rgba(209,213,219,0.65),_transparent_42%),linear-gradient(180deg,_#f8fafc_0%,_#eef6f2_100%)] p-3">
           <div className="flex items-center justify-between gap-3">
             <p className="text-sm font-semibold text-brand-ink">頁內示意路線預覽</p>
@@ -241,6 +251,19 @@ export function RouteMapPreviewCard({
                   >
                     {point.label}
                   </text>
+                  <text
+                    x={Math.min(Math.max(point.x + 16, 80), 560)}
+                    y={Math.max(point.y - 14, 22)}
+                    textAnchor="middle"
+                    fontSize="12"
+                    fontWeight="700"
+                    fill="#0f172a"
+                    stroke="#ffffff"
+                    strokeWidth="4"
+                    paintOrder="stroke"
+                  >
+                    {point.pointName}
+                  </text>
                 </g>
               ))}
             </svg>
@@ -250,12 +273,31 @@ export function RouteMapPreviewCard({
               {previewCanvasPoints.map((point) => (
                 <div key={`${point.key}-legend`} className="rounded-2xl bg-white/80 px-3 py-2">
                   <span className="font-semibold text-brand-ink">{point.label}</span>
+                  <span className="ml-2 font-semibold text-brand-ink">{point.pointName}</span>
                   <span className="ml-2">{point.address}</span>
+                </div>
+              ))}
+              {unresolvedPreviewPoints.map((point) => (
+                <div key={`${point.key}-legend-missing`} className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-amber-800">
+                  <span className="font-semibold">{point.label}</span>
+                  <span className="ml-2 font-semibold">{point.pointName}</span>
+                  <span className="ml-2">缺少座標，未畫入預覽圖，需補座標後重新排程。</span>
                 </div>
               ))}
             </div>
           )}
+          {previewState.externalUrl ? (
+            <p className="mt-3 text-xs text-slate-500">需要實際導航時，請使用上方 Google 地圖完整路線連結。</p>
+          ) : null}
         </div>
+      ) : previewState.embedUrl ? (
+        <iframe
+          title={`${route.label} 路線圖預覽`}
+          src={previewState.embedUrl}
+          loading="lazy"
+          referrerPolicy="no-referrer-when-downgrade"
+          className={mediaHeightClass}
+        />
       ) : (
         <div className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-5 text-sm text-slate-600">
           <p className="font-medium text-brand-ink">頁內路線圖暫時無法產生</p>

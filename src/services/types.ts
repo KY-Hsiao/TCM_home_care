@@ -87,6 +87,7 @@ export type WebhookReplyInput = {
 export type RouteMapLocation = {
   address: string;
   locationKeyword?: string | null;
+  label?: string | null;
   latitude: number | null;
   longitude: number | null;
 };

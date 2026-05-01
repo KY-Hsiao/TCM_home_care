@@ -2079,7 +2079,10 @@ export function AdminPatientsPage() {
     : undefined;
   const selectedDoctor =
     db.doctors.find((doctor) => doctor.id === draft.preferred_doctor_id) ?? db.doctors[0];
-  const availableServiceSlots = selectedDoctor?.available_service_slots ?? [];
+  const availableServiceSlots = useMemo(
+    () => selectedDoctor?.available_service_slots ?? [],
+    [selectedDoctor]
+  );
   const syncDraft = (patient?: Patient) => {
     const next = buildPatientDraft(patient);
     if (!next.preferred_service_slot) {

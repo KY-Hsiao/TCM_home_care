@@ -34,5 +34,15 @@ export default tseslint.config(
         }
       ]
     }
+  },
+  {
+    files: ["api/**/*.js"],
+    languageOptions: {
+      ecmaVersion: 2022,
+      globals: {
+        ...globals.node,
+        fetch: "readonly"
+      }
+    }
   }
 );

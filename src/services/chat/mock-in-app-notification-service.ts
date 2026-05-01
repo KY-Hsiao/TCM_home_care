@@ -1,23 +1,16 @@
-import type {
-  ChatNotificationEvent,
-  ChatServiceAdapter,
-  ServicesContextDeps,
-  WebhookReplyInput
-} from "../types";
+import type { ChatServiceAdapter } from "../types";
 
-export function createMockInAppNotificationServiceAdapter(
-  _deps: ServicesContextDeps
-): ChatServiceAdapter {
+export function createMockInAppNotificationServiceAdapter(): ChatServiceAdapter {
   return {
-    sendNotification(_event: ChatNotificationEvent) {
+    sendNotification() {
       return undefined;
     },
-    replyToEvent(_input: WebhookReplyInput) {
+    replyToEvent() {
       return undefined;
     },
-  buildFamilyEntryUrl() {
-    return "/admin/patients";
-  },
+    buildFamilyEntryUrl() {
+      return "/admin/patients";
+    },
     supports(feature) {
       return ["card_message", "button_actions"].includes(feature);
     }

@@ -1,6 +1,6 @@
-import type { ServicesContextDeps, WebhookHandler } from "../types";
+import type { WebhookHandler } from "../types";
 
-export function createNoopWebhookHandler(_deps: ServicesContextDeps): WebhookHandler {
+export function createNoopWebhookHandler(): WebhookHandler {
   return {
     handleBinding() {
       return;

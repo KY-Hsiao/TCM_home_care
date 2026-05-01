@@ -153,7 +153,7 @@ export function DoctorLeaveRequestPage() {
           (left, right) =>
           new Date(right.created_at).getTime() - new Date(left.created_at).getTime()
         ),
-    [activeDoctor?.id, db.leave_requests, repositories]
+    [activeDoctor?.id, repositories]
   );
 
   const handleCreateLeaveRequest = () => {

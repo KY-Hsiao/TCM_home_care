@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
 import { useAppContext } from "../../app/use-app-context";
 import { StaffCommunicationDialog } from "../../shared/components/StaffCommunicationDialog";
 import { maskPatientName } from "../../shared/utils/patient-name";
@@ -20,7 +20,6 @@ const ACTIVE_VISIT_STATUSES = [
 
 export function DoctorTeamCommunicationPage() {
   const { db, repositories, session } = useAppContext();
-  const [isCommunicationOpen, setIsCommunicationOpen] = useState(true);
   const currentDoctor = repositories.patientRepository.getDoctors().find((doctor) => doctor.id === session.activeDoctorId);
   const currentAdmin =
     repositories.patientRepository.getAdmins().find((admin) => admin.id === session.activeAdminId) ??
@@ -85,14 +84,15 @@ export function DoctorTeamCommunicationPage() {
     viewerUserId: currentDoctor?.id ?? "",
     enabled: Boolean(currentDoctor && currentAdmin)
   });
+  const markConversationRead = conversation.markConversationRead;
 
   useEffect(() => {
     if (!currentDoctor || !currentAdmin) {
       return;
     }
-    void conversation.markConversationRead();
+    void markConversationRead();
     // 團隊通訊頁一打開就主動同步已讀，避免線上環境因輪詢/載入順序差異而殘留未讀燈。
-  }, [currentAdmin?.id, currentDoctor?.id]);
+  }, [currentAdmin, currentDoctor, markConversationRead]);
 
   if (!currentDoctor || !currentAdmin) {
     return <Panel title="團隊通訊">目前找不到登入中的醫師或行政資料。</Panel>;
@@ -100,43 +100,28 @@ export function DoctorTeamCommunicationPage() {
 
   return (
     <div className="min-w-0 space-y-3">
-      <Panel
-        title="團隊通訊"
-        action={
-          <button
-            type="button"
-            onClick={() => setIsCommunicationOpen(true)}
-            className="rounded-full bg-brand-forest px-4 py-2 text-sm font-semibold text-white"
-          >
-            開啟全頁對話
-          </button>
+      <StaffCommunicationDialog
+        counterpartLabel="行政人員"
+        currentUserLabel={currentDoctor.name}
+        contextLabel={
+          activeSchedule && activePatient
+            ? `第 ${activeSchedule.route_order} 站 ${maskPatientName(activePatient.name)}`
+            : "院內行政協調"
         }
-      >
-        <p className="text-sm text-slate-600">
-          對話對象固定為行政人員；打字訊息會在全頁視窗內完成，避免手機版左右捲動。
-        </p>
-      </Panel>
-
-      {isCommunicationOpen ? (
-        <StaffCommunicationDialog
-          counterpartLabel="行政人員"
-          currentUserLabel={currentDoctor.name}
-          contextLabel={
-            activeSchedule && activePatient
-              ? `第 ${activeSchedule.route_order} 站 ${maskPatientName(activePatient.name)}`
-              : "院內行政協調"
+        doctorId={currentDoctor.id}
+        adminUserId={currentAdmin.id}
+        logs={conversation.messages}
+        unreadConversationCount={conversation.unreadCount}
+        syncError={conversation.syncError}
+        lastSyncedAt={conversation.lastSyncedAt}
+        onConversationViewed={() => void markConversationRead()}
+        onClose={() => {
+          if (typeof window !== "undefined") {
+            window.close();
           }
-          doctorId={currentDoctor.id}
-          adminUserId={currentAdmin.id}
-          logs={conversation.messages}
-          unreadConversationCount={conversation.unreadCount}
-          syncError={conversation.syncError}
-          lastSyncedAt={conversation.lastSyncedAt}
-          onConversationViewed={() => void conversation.markConversationRead()}
-          onClose={() => setIsCommunicationOpen(false)}
-          onCreateLog={createDoctorAdminContactLog}
-        />
-      ) : null}
+        }}
+        onCreateLog={createDoctorAdminContactLog}
+      />
     </div>
   );
 }

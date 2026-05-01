@@ -110,7 +110,8 @@ describe("doctor page helpers", () => {
       shouldPromptArrival(
         schedule,
         buildRuntime({
-          latestDistanceMeters: 80
+          latestDistanceMeters: 80,
+          arrivalConfirmationPending: true
         })
       )
     ).toBe(true);

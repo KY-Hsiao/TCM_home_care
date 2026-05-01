@@ -49,8 +49,8 @@ describe("DoctorReturnNavigation", () => {
 
     renderDashboard();
 
-    fireEvent.click(screen.getByRole("button", { name: "開啟即時導航" }));
-    expect(screen.getByRole("dialog", { name: "即時導航全頁視窗" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "開啟即時導航" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "即時導航全頁視窗" })).not.toBeInTheDocument();
     fireEvent.click(screen.getAllByRole("button", { name: "重置路線" })[0]);
 
     const activeRoutePlan =

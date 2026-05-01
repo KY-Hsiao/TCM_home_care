@@ -98,7 +98,13 @@ export function AppShell() {
     : location.pathname.startsWith("/doctor")
       ? "doctor"
       : null;
-  const navItems = shellRole ? navigationByRole[shellRole] : [];
+  const navItems = shellRole
+    ? navigationByRole[shellRole].filter(
+        (item) =>
+          shellRole !== "doctor" ||
+          !["/doctor/team-communication", "/doctor/reminders"].includes(item.to)
+      )
+    : [];
   const isAuthenticated = shellRole ? isAuthenticatedForRole(shellRole) : true;
   const currentDoctor = doctors.find((doctor) => doctor.id === session.activeDoctorId);
   const currentAdmin =
@@ -281,7 +287,13 @@ export function AppShell() {
     return () => {
       navigator.geolocation.clearWatch(watchId);
     };
-  }, [session.activeDoctorId, session.activeRoutePlanId, session.authenticatedDoctorId, shellRole]);
+  }, [
+    services.doctorLocationSync,
+    session.activeDoctorId,
+    session.activeRoutePlanId,
+    session.authenticatedDoctorId,
+    shellRole
+  ]);
 
   const doctorCommunicationContextLabel =
     activeDoctorScheduleDetail
@@ -343,6 +355,7 @@ export function AppShell() {
     doctorId: shellRole === "doctor" ? currentUserId ?? undefined : undefined,
     adminUserId: shellRole === "admin" ? currentUserId ?? undefined : currentAdmin?.id
   });
+  const refreshTeamCommunicationUnread = teamCommunicationUnread.refresh;
   const shellConversation = useTeamCommunicationConversation({
     db,
     repositories,
@@ -350,7 +363,7 @@ export function AppShell() {
     adminUserId: currentAdmin?.id ?? "",
     viewerRole: "doctor",
     viewerUserId: currentDoctor?.id ?? "",
-    enabled: Boolean(shellRole === "doctor" && currentDoctor && currentAdmin)
+    enabled: Boolean(shellRole === "doctor" && currentDoctor && currentAdmin && isStaffCommunicationOpen)
   });
   const doctorTeamCommunicationUnreadCount = isTeamCommunicationRoute ? 0 : teamCommunicationUnread.count;
 
@@ -359,13 +372,13 @@ export function AppShell() {
       return;
     }
 
-    void teamCommunicationUnread.refresh();
+    void refreshTeamCommunicationUnread();
     const timeoutId = window.setTimeout(() => {
-      void teamCommunicationUnread.refresh();
+      void refreshTeamCommunicationUnread();
     }, 400);
 
     return () => window.clearTimeout(timeoutId);
-  }, [currentUserId, isTeamCommunicationRoute, shellRole]);
+  }, [currentUserId, isTeamCommunicationRoute, refreshTeamCommunicationUnread, shellRole]);
 
   useEffect(() => {
     if (isTeamCommunicationRoute || !shellRole || !currentUserId) {
@@ -374,8 +387,8 @@ export function AppShell() {
 
     // 離開團隊通訊頁後再補抓一次全域未讀數，避免頁內已讀同步完成較慢時，
     // 左側標籤仍被舊的未讀值短暫蓋回去。
-    void teamCommunicationUnread.refresh();
-  }, [currentUserId, isTeamCommunicationRoute, location.pathname, shellRole]);
+    void refreshTeamCommunicationUnread();
+  }, [currentUserId, isTeamCommunicationRoute, location.pathname, refreshTeamCommunicationUnread, shellRole]);
 
   const handleLogout = () => {
     if (!shellRole) {
@@ -462,6 +475,18 @@ export function AppShell() {
               <NavLink
                 key={item.to}
                 to={item.to}
+                target={
+                  shellRole === "doctor" &&
+                  ["/doctor/navigation", "/doctor/return-records"].includes(item.to)
+                    ? "_blank"
+                    : undefined
+                }
+                rel={
+                  shellRole === "doctor" &&
+                  ["/doctor/navigation", "/doctor/return-records"].includes(item.to)
+                    ? "noreferrer"
+                    : undefined
+                }
                 className={({ isActive }) =>
                   `${isDoctorShell ? "block min-w-0 rounded-2xl px-3 py-2 text-sm lg:rounded-3xl lg:px-4 lg:py-3" : "block rounded-3xl px-4 py-3"} transition ${
                     isActive ? "bg-white text-brand-ink" : "bg-white/5 hover:bg-white/10"
@@ -562,22 +587,6 @@ export function AppShell() {
                     </p>
                   </div>
                 </div>
-                {unreadNotificationCount > 0 ? (
-                  <Link
-                    to="/doctor/reminders"
-                    className="mt-2.5 block rounded-2xl border border-brand-coral/30 bg-rose-50 px-4 py-3 text-sm text-rose-700 lg:mt-3"
-                  >
-                    目前有 {unreadNotificationCount} 則未讀通知，請先查看通知中心。
-                  </Link>
-                ) : null}
-                {doctorTeamCommunicationUnreadCount > 0 ? (
-                  <Link
-                    to="/doctor/team-communication"
-                    className="mt-2.5 block rounded-2xl border border-rose-300 bg-rose-100 px-4 py-3 text-sm font-semibold text-rose-700 lg:mt-3"
-                  >
-                    行政人員剛送來 {doctorTeamCommunicationUnreadCount} 則未讀團隊通訊，請立即查看。
-                  </Link>
-                ) : null}
               </div>
             </div>
           ) : null}
@@ -621,14 +630,6 @@ export function AppShell() {
                 ) : null}
                 </div>
               </div>
-              {unreadNotificationCount > 0 ? (
-                <Link
-                  to="/admin/reminders"
-                  className="rounded-2xl border border-brand-coral/30 bg-rose-50 px-4 py-3 text-sm text-rose-700"
-                >
-                  目前有 {unreadNotificationCount} 則未讀通知，請先查看通知中心。
-                </Link>
-              ) : null}
             </header>
           ) : null}
           <main className="min-w-0 pb-1">
@@ -675,7 +676,7 @@ export function AppShell() {
           lastSyncedAt={shellConversation.lastSyncedAt}
           onConversationViewed={() => {
             void shellConversation.markConversationRead();
-            void teamCommunicationUnread.refresh();
+            void refreshTeamCommunicationUnread();
           }}
           onClose={() => setIsStaffCommunicationOpen(false)}
           onCreateLog={createDoctorAdminContactLog}

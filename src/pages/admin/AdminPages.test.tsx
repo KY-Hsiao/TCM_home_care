@@ -75,6 +75,23 @@ function openRouteEndpointsDialog() {
   return screen.getByRole("dialog", { name: "起終點設定視窗" });
 }
 
+function expectRouteStopLabel(label: string) {
+  expect(screen.getAllByText(label).length).toBeGreaterThan(0);
+}
+
+function getDraggableRouteStop(label: string) {
+  const routeStop = screen
+    .getAllByText(label)
+    .map((element) => element.closest("div[draggable='true']"))
+    .find((element): element is HTMLElement => element instanceof HTMLElement);
+
+  if (!routeStop) {
+    throw new Error(`找不到可拖曳站點：${label}`);
+  }
+
+  return routeStop;
+}
+
 function resolveTimeSlot(dateTime: string) {
   return new Date(dateTime).getHours() < 12 ? "上午" : "下午";
 }
@@ -264,7 +281,7 @@ describe("AdminPages", () => {
 
     expect(within(slotPatientDialog).getByLabelText("王○珠 勾選")).not.toBeChecked();
     expect(screen.queryByText("第 1 站 王○珠")).not.toBeInTheDocument();
-    expect(screen.getByText("第 1 站 陳○雄")).toBeInTheDocument();
+    expectRouteStopLabel("第 1 站 陳○雄");
     expect(screen.getByText("可執行 7 站")).toBeInTheDocument();
     expect(screen.getAllByText("暫停").length).toBeGreaterThan(0);
   });
@@ -351,7 +368,7 @@ describe("AdminPages", () => {
 
     expect(screen.getByRole("status")).toHaveTextContent("已沿用 7 天前同時段路線");
     expect(screen.getByLabelText("路線日期")).toHaveValue("2026-04-29");
-    expect(screen.getByText("第 1 站 王○珠")).toBeInTheDocument();
+    expectRouteStopLabel("第 1 站 王○珠");
 
     storedDb = JSON.parse(window.localStorage.getItem(MOCK_DB_STORAGE_KEY) ?? "{}");
     expect(
@@ -408,21 +425,18 @@ describe("AdminPages", () => {
 
     selectScheduleFilters();
 
-    const firstRouteStop = screen.getByText("第 1 站 王○珠").closest("div[draggable='true']");
-    const thirdRouteStop = screen.getByText("第 3 站 李○蘭").closest("div[draggable='true']");
+    const firstRouteStop = getDraggableRouteStop("第 1 站 王○珠");
+    const thirdRouteStop = getDraggableRouteStop("第 3 站 李○蘭");
 
-    expect(firstRouteStop).not.toBeNull();
-    expect(thirdRouteStop).not.toBeNull();
+    fireEvent.dragStart(firstRouteStop);
+    fireEvent.dragEnter(thirdRouteStop);
+    fireEvent.dragOver(thirdRouteStop);
+    fireEvent.drop(thirdRouteStop);
+    fireEvent.dragEnd(firstRouteStop);
 
-    fireEvent.dragStart(firstRouteStop!);
-    fireEvent.dragEnter(thirdRouteStop!);
-    fireEvent.dragOver(thirdRouteStop!);
-    fireEvent.drop(thirdRouteStop!);
-    fireEvent.dragEnd(firstRouteStop!);
-
-    expect(screen.getByText("第 1 站 陳○雄")).toBeInTheDocument();
-    expect(screen.getByText("第 2 站 李○蘭")).toBeInTheDocument();
-    expect(screen.getByText("第 3 站 王○珠")).toBeInTheDocument();
+    expectRouteStopLabel("第 1 站 陳○雄");
+    expectRouteStopLabel("第 2 站 李○蘭");
+    expectRouteStopLabel("第 3 站 王○珠");
   });
 
   it("AdminSchedulesPage 可依下一個停留點最短距離自動排序本次路線", () => {
@@ -430,8 +444,8 @@ describe("AdminPages", () => {
 
     selectScheduleFilters();
 
-    expect(screen.getByText("第 2 站 陳○雄")).toBeInTheDocument();
-    expect(screen.getByText("第 8 站 鄭○華")).toBeInTheDocument();
+    expectRouteStopLabel("第 2 站 陳○雄");
+    expectRouteStopLabel("第 8 站 鄭○華");
     const routeLink = screen.getByRole("link", { name: "用 Google 地圖開啟完整路線" });
     const initialHref = routeLink.getAttribute("href");
 
@@ -475,7 +489,7 @@ describe("AdminPages", () => {
       expect(screen.getByRole("combobox", { name: "篩選星期" })).toHaveValue("星期三");
       expect(screen.getByRole("combobox", { name: "篩選時段" })).toHaveValue("上午");
       expect(screen.getByLabelText("路線日期")).toHaveValue("2026-04-29");
-      expect(screen.getByText("第 1 站 李○蘭")).toBeInTheDocument();
+      expectRouteStopLabel("第 1 站 李○蘭");
     });
 
     slotPatientDialog = openSlotPatientDialog();
@@ -520,8 +534,6 @@ describe("AdminPages", () => {
     );
 
     renderWithProviders(<DoctorLocationPage />);
-
-    fireEvent.click(screen.getByRole("button", { name: "開啟即時導航" }));
 
     await waitFor(() => {
       expect(screen.getAllByText("即時導航").length).toBeGreaterThan(0);
@@ -1056,7 +1068,7 @@ describe("AdminPages", () => {
     ).toBe(true);
   });
 
-  it("AdminTeamCommunicationPage 可雙擊醫師名單直接切換對話對象", () => {
+  it("AdminTeamCommunicationPage 可雙擊醫師名單直接切換對話對象", async () => {
     const customDb = createSeedDb();
     customDb.doctors.push({
       ...customDb.doctors[0],
@@ -1083,9 +1095,10 @@ describe("AdminPages", () => {
 
     expect(screen.getByLabelText("訊息內容")).toBeInTheDocument();
     expect(screen.getByPlaceholderText(/林若謙醫師/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText(/最後同步/)).toBeInTheDocument());
   });
 
-  it("AdminTeamCommunicationPage 只保留文字訊息入口", () => {
+  it("AdminTeamCommunicationPage 只保留文字訊息入口", async () => {
     window.localStorage.setItem(
       SESSION_STORAGE_KEY,
       JSON.stringify({
@@ -1103,6 +1116,7 @@ describe("AdminPages", () => {
     expect(screen.getByRole("button", { name: "送出站內訊息" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "語音通話" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "開始語音通話" })).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText(/最後同步/)).toBeInTheDocument());
   });
 
   it("AdminRemindersPage 初始為空，並可新增行政公告與指定醫師通知", async () => {

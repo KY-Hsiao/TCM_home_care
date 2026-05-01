@@ -20,7 +20,6 @@ import {
   resolvePassword,
   updateStoredPassword
 } from "./auth-storage";
-export { useAppContext } from "./use-app-context";
 
 export function AppProviders({ children }: PropsWithChildren) {
   const [db, setDb] = useState<AppDb>(() => loadDb());

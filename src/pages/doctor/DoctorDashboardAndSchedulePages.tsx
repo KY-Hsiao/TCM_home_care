@@ -870,7 +870,6 @@ export function DoctorDashboardPage() {
 
 export function DoctorLocationPage() {
   const { repositories, services, session } = useAppContext();
-  const [isNavigationModalOpen, setIsNavigationModalOpen] = useState(false);
   const currentDoctor =
     repositories.patientRepository.getDoctors().find((doctor) => doctor.id === session.activeDoctorId) ??
     repositories.patientRepository.getDoctors()[0];
@@ -1223,60 +1222,19 @@ export function DoctorLocationPage() {
 
   return (
     <div className="space-y-4 lg:space-y-6">
-      <Panel
-        title="即時導航"
-        action={
-          <button
-            type="button"
-            onClick={() => setIsNavigationModalOpen(true)}
-            className="rounded-full bg-brand-coral px-5 py-2.5 text-sm font-semibold text-white"
-          >
-            開啟即時導航
-          </button>
-        }
-      >
+      <Panel title="即時導航">
         <div className="rounded-[1.25rem] border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-600">
           <p className="font-semibold text-brand-ink">目前狀態</p>
           <p className="mt-1">{navigationSummary}</p>
           <p className="mt-2 text-xs text-slate-500">
-            路線選擇、開始出發、抵達治療與返院導航都會在全頁視窗內操作，避免手機畫面被原頁面框住。
+            路線選擇、開始出發、抵達治療與返院導航都會在本頁直接操作；需要 Google 地圖時會另開外部導航。
           </p>
         </div>
       </Panel>
 
-      {isNavigationModalOpen && typeof document !== "undefined"
-        ? createPortal(
-            <div
-              role="dialog"
-              aria-modal="true"
-              aria-label="即時導航全頁視窗"
-              className="fixed inset-0 z-[100] h-[100dvh] w-[100dvw] overflow-hidden bg-brand-cream"
-            >
-              <div className="flex h-full min-w-0 flex-col">
-                <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-200 bg-white/95 px-4 py-3 shadow-sm backdrop-blur lg:px-6 lg:py-4">
-                  <div className="min-w-0">
-                    <p className="text-xs font-semibold tracking-[0.2em] text-brand-coral">即時導航</p>
-                    <h2 className="mt-1 text-lg font-semibold text-brand-ink lg:text-2xl">全頁導航操作視窗</h2>
-                    <p className="mt-1 text-sm text-slate-600">{navigationSummary}</p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setIsNavigationModalOpen(false)}
-                    className="shrink-0 rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-600 ring-1 ring-slate-200"
-                  >
-                    關閉視窗
-                  </button>
-                </div>
-                <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3 lg:px-6 lg:py-5">
-                  <div className="mx-auto w-full max-w-6xl pb-[max(1rem,env(safe-area-inset-bottom))]">
-                    {navigationModalContent}
-                  </div>
-                </div>
-              </div>
-            </div>,
-            document.body
-          )
-        : null}
+      <div className="mx-auto w-full max-w-6xl pb-[max(1rem,env(safe-area-inset-bottom))]">
+        {navigationModalContent}
+      </div>
     </div>
   );
 }

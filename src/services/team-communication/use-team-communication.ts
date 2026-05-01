@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AppDb } from "../../domain/models";
 import type { AppRepositories } from "../../domain/repository";
 import { createHttpTeamCommunicationRepository } from "./http-team-communication-repository";
@@ -120,6 +120,8 @@ export function useTeamCommunicationConversation(input: {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
   const conversationQuery = useMemo(
     () => ({
       doctorId: input.doctorId,
@@ -130,23 +132,26 @@ export function useTeamCommunicationConversation(input: {
     [input.adminUserId, input.doctorId, input.viewerRole, input.viewerUserId]
   );
 
-  const resolveUnreadMessages = (sourceMessages: TeamCommunicationMessage[]) =>
-    sourceMessages.filter((message) => {
-      const readAfter = readConversationWatermark({
-        role: input.viewerRole,
-        userId: input.viewerUserId,
-        doctorId: input.doctorId,
-        adminUserId: input.adminUserId
-      });
-      return (
-        !message.is_read &&
-        message.receiver_role === input.viewerRole &&
-        message.receiver_user_id === input.viewerUserId &&
-        (!readAfter || new Date(message.contacted_at).getTime() > new Date(readAfter).getTime())
-      );
-    });
+  const resolveUnreadMessages = useCallback(
+    (sourceMessages: TeamCommunicationMessage[]) =>
+      sourceMessages.filter((message) => {
+        const readAfter = readConversationWatermark({
+          role: input.viewerRole,
+          userId: input.viewerUserId,
+          doctorId: input.doctorId,
+          adminUserId: input.adminUserId
+        });
+        return (
+          !message.is_read &&
+          message.receiver_role === input.viewerRole &&
+          message.receiver_user_id === input.viewerUserId &&
+          (!readAfter || new Date(message.contacted_at).getTime() > new Date(readAfter).getTime())
+        );
+      }),
+    [input.adminUserId, input.doctorId, input.viewerRole, input.viewerUserId]
+  );
 
-  const refresh = async (options?: { silent?: boolean }) => {
+  const refresh = useCallback(async (options?: { silent?: boolean }) => {
     if (!enabled) {
       return;
     }
@@ -174,7 +179,7 @@ export function useTeamCommunicationConversation(input: {
         setIsRefreshing(false);
       }
     }
-  };
+  }, [conversationQuery, enabled, resolveUnreadMessages]);
 
   useEffect(() => {
     void refresh();
@@ -192,9 +197,9 @@ export function useTeamCommunicationConversation(input: {
       window.clearInterval(intervalId);
       window.removeEventListener(TEAM_COMMUNICATION_SYNC_EVENT, handleSync);
     };
-  }, [conversationQuery, enabled, input.db, input.repositories]);
+  }, [enabled, refresh]);
 
-  const markConversationRead = async () => {
+  const markConversationRead = useCallback(async () => {
     const readAt = new Date().toISOString();
     storeConversationWatermark({
       role: input.viewerRole,
@@ -204,9 +209,10 @@ export function useTeamCommunicationConversation(input: {
       readAt
     });
     await repositoryRef.current.markConversationRead(conversationQuery);
+    const currentMessages = messagesRef.current;
     const latestMessages =
-      messages.length > 0
-        ? messages
+      currentMessages.length > 0
+        ? currentMessages
         : await repositoryRef.current.listConversation(conversationQuery);
     const unreadMessages = resolveUnreadMessages(latestMessages);
     if (!unreadMessages.length) {
@@ -238,13 +244,21 @@ export function useTeamCommunicationConversation(input: {
       doctorId: input.doctorId,
       adminUserId: input.adminUserId
     });
-  };
+  }, [
+    conversationQuery,
+    input.adminUserId,
+    input.doctorId,
+    input.viewerRole,
+    input.viewerUserId,
+    refresh,
+    resolveUnreadMessages
+  ]);
 
-  const createMessage = async (payload: TeamCommunicationCreateInput) => {
+  const createMessage = useCallback(async (payload: TeamCommunicationCreateInput) => {
     await repositoryRef.current.createMessage(payload);
     await refresh();
     emitTeamCommunicationSync();
-  };
+  }, [refresh]);
 
   return {
     messages,
@@ -282,7 +296,7 @@ export function useTeamCommunicationUnreadCount(input: {
   const refreshRequestIdRef = useRef(0);
   const [count, setCount] = useState(0);
 
-  const refresh = async () => {
+  const refresh = useCallback(async () => {
     if (!enabled) {
       return;
     }
@@ -307,7 +321,7 @@ export function useTeamCommunicationUnreadCount(input: {
     } catch {
       // 保留舊值，避免未讀燈在短暫網路失敗時閃爍歸零。
     }
-  };
+  }, [enabled, input.adminUserId, input.doctorId, input.role, input.userId]);
 
   useEffect(() => {
     void refresh();
@@ -335,7 +349,7 @@ export function useTeamCommunicationUnreadCount(input: {
       window.clearInterval(intervalId);
       window.removeEventListener(TEAM_COMMUNICATION_SYNC_EVENT, handleSync);
     };
-  }, [enabled, input.adminUserId, input.db, input.doctorId, input.repositories, input.role, input.userId]);
+  }, [enabled, input.adminUserId, input.doctorId, input.role, input.userId, refresh]);
 
   return {
     count,

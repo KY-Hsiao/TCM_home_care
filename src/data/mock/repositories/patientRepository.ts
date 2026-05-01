@@ -231,7 +231,7 @@ export function createPatientRepository(
       return [...getDb().patients]
         .filter(
           (patient) =>
-            patient.status !== "closed" &&
+            patient.status === "active" &&
             patient.preferred_doctor_id === doctorId &&
             patient.preferred_service_slot === targetSlot
         )
@@ -407,7 +407,7 @@ export function createPatientRepository(
           });
         }
 
-        let nextSchedules = db.visit_schedules.map((schedule) =>
+        const nextSchedules = db.visit_schedules.map((schedule) =>
           schedule.patient_id === patient.id &&
           !["completed", "cancelled"].includes(schedule.status)
             ? {

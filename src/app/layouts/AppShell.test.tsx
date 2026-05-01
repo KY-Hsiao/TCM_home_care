@@ -177,7 +177,7 @@ describe("AppShell", () => {
     renderShell("/admin/dashboard", <AdminDashboardPage />);
 
     expect(screen.getAllByText(/通知中心（未讀 1）/).length).toBeGreaterThan(0);
-    expect(screen.getByText("目前有 1 則未讀通知，請先查看通知中心。")).toBeInTheDocument();
+    expect(screen.queryByText("目前有 1 則未讀通知，請先查看通知中心。")).not.toBeInTheDocument();
   });
 
   it("Shell 內雙擊通知標題後會自動清除未讀提示", async () => {
@@ -223,7 +223,7 @@ describe("AppShell", () => {
     renderShell("/admin/reminders", <AdminRemindersPage />);
 
     expect(screen.getAllByText(/通知中心（未讀 1）/).length).toBeGreaterThan(0);
-    expect(screen.getByText("目前有 1 則未讀通知，請先查看通知中心。")).toBeInTheDocument();
+    expect(screen.queryByText("目前有 1 則未讀通知，請先查看通知中心。")).not.toBeInTheDocument();
 
     fireEvent.doubleClick(screen.getByRole("button", { name: /待查看站內訊息/ }));
 
@@ -233,7 +233,7 @@ describe("AppShell", () => {
     });
   });
 
-  it("行政端可從左側目錄進入團隊通訊頁", () => {
+  it("行政端可從左側目錄進入團隊通訊頁", async () => {
     window.localStorage.setItem(
       SESSION_STORAGE_KEY,
       JSON.stringify({
@@ -251,9 +251,10 @@ describe("AppShell", () => {
     expect(screen.getByRole("heading", { name: "團隊通訊" })).toBeInTheDocument();
     expect(screen.getByLabelText("訊息內容")).toBeInTheDocument();
     expect(screen.getByPlaceholderText(/蕭坤元醫師/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText(/最後同步/)).toBeInTheDocument());
   });
 
-  it("醫師端團隊通訊頁會以全頁視窗顯示對話區並可關閉", () => {
+  it("醫師端團隊通訊頁會以全頁視窗顯示對話區並可關閉", async () => {
     window.localStorage.setItem(
       SESSION_STORAGE_KEY,
       JSON.stringify({
@@ -267,7 +268,7 @@ describe("AppShell", () => {
 
     renderShell("/doctor/team-communication", <DoctorTeamCommunicationPage />);
 
-    expect(within(screen.getByRole("navigation")).getByRole("link", { name: /團隊通訊/ })).toBeInTheDocument();
+    expect(within(screen.getByRole("navigation")).queryByRole("link", { name: /團隊通訊/ })).not.toBeInTheDocument();
     expect(screen.getByRole("dialog")).toBeInTheDocument();
     expect(screen.getByLabelText("訊息內容")).toBeInTheDocument();
     expect(screen.getByPlaceholderText(/行政人員/)).toBeInTheDocument();
@@ -276,6 +277,7 @@ describe("AppShell", () => {
     expect(screen.queryByText("目前案件")).not.toBeInTheDocument();
     expect(screen.queryByText("最近聯絡時間")).not.toBeInTheDocument();
     expect(screen.queryByText(/對話對象：行政人員/)).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText(/最後同步/)).toBeInTheDocument());
   });
 
   it("行政傳給醫師的未讀團隊通訊，醫師打開團隊通訊後會立刻轉成已讀", async () => {
@@ -323,11 +325,8 @@ describe("AppShell", () => {
     expect(screen.getAllByText(/團隊通訊/).length).toBeGreaterThan(0);
 
     await waitFor(() => {
-      expect(screen.queryByRole("link", { name: "團隊通訊已讀綠燈" })).not.toBeInTheDocument();
       expect(screen.getByRole("button", { name: "團隊通訊" })).toBeInTheDocument();
-      expect(within(screen.getByRole("navigation")).getByRole("link", { name: /團隊通訊/ })).not.toHaveTextContent(
-        "1"
-      );
+      expect(within(screen.getByRole("navigation")).queryByRole("link", { name: /團隊通訊/ })).not.toBeInTheDocument();
       expect(screen.queryByText("行政人員有 1 則未讀團隊通訊")).not.toBeInTheDocument();
       expect(screen.queryByText("行政人員剛送來 1 則未讀團隊通訊，請立即查看。")).not.toBeInTheDocument();
       expect(screen.queryByText("全部已讀")).not.toBeInTheDocument();
@@ -377,12 +376,11 @@ describe("AppShell", () => {
     renderShell("/doctor/navigation", <DoctorLocationPage />);
 
     await waitFor(() => {
-      expect(screen.queryByRole("link", { name: "團隊通訊未讀紅燈" })).not.toBeInTheDocument();
       expect(screen.getByRole("button", { name: "團隊通訊（新訊息 1）" })).toBeInTheDocument();
-      expect(within(screen.getByRole("navigation")).getByRole("link", { name: /團隊通訊/ })).toHaveTextContent("1");
+      expect(within(screen.getByRole("navigation")).queryByRole("link", { name: /團隊通訊/ })).not.toBeInTheDocument();
     });
 
-    fireEvent.click(within(screen.getByRole("navigation")).getByRole("link", { name: /團隊通訊/ }));
+    fireEvent.click(screen.getByRole("button", { name: "團隊通訊（新訊息 1）" }));
 
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "團隊通訊" })).toBeInTheDocument();
@@ -392,9 +390,7 @@ describe("AppShell", () => {
 
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "團隊通訊" })).toBeInTheDocument();
-      expect(
-        within(screen.getByRole("navigation")).getByRole("link", { name: /團隊通訊/ })
-      ).not.toHaveTextContent("未讀 1 則");
+      expect(within(screen.getByRole("navigation")).queryByRole("link", { name: /團隊通訊/ })).not.toBeInTheDocument();
     });
   });
 
@@ -437,7 +433,7 @@ describe("AppShell", () => {
       .getAllByRole("link")
       .map((link) => link.querySelector("div")?.textContent?.trim());
 
-    expect(navLabels).toEqual(["即時導航", "回院病歷", "請假申請", "團隊通訊", "通知中心"]);
+    expect(navLabels).toEqual(["即時導航", "回院病歷", "請假申請"]);
 
     expect(screen.queryByLabelText("請假原因")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "提出請假申請" }));
@@ -584,6 +580,7 @@ describe("AppShell", () => {
     renderShell("/doctor/navigation", <DoctorLocationPage />);
 
     fireEvent.click(screen.getByRole("button", { name: "團隊通訊" }));
+    await waitFor(() => expect(screen.getByText(/最後同步/)).toBeInTheDocument());
     fireEvent.change(screen.getByLabelText("訊息內容"), {
       target: { value: "已抵達前一站，預計 10 分鐘後回院整理病歷。" }
     });
@@ -646,7 +643,7 @@ describe("AppShell", () => {
     });
   });
 
-  it("醫師端團隊通訊視窗只保留文字訊息", () => {
+  it("醫師端團隊通訊視窗只保留文字訊息", async () => {
     window.localStorage.setItem(
       SESSION_STORAGE_KEY,
       JSON.stringify({
@@ -662,6 +659,7 @@ describe("AppShell", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "團隊通訊" }));
 
+    await waitFor(() => expect(screen.getByText(/最後同步/)).toBeInTheDocument());
     expect(screen.getByLabelText("訊息內容")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "送出站內訊息" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "語音通話" })).not.toBeInTheDocument();

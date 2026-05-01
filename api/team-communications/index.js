@@ -13,7 +13,7 @@ function setJson(response, statusCode, payload) {
 export default async function handler(request, response) {
   try {
     await ensureTeamCommunicationTable();
-  } catch (error) {
+  } catch {
     setJson(response, 503, {
       error: "團隊通訊資料庫尚未完成設定，請先配置 Neon / Vercel Postgres 整合。"
     });

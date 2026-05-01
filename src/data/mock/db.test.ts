@@ -26,7 +26,7 @@ describe("mock db loader", () => {
     consoleErrorSpy.mockRestore();
   });
 
-  it("同一位醫師同一服務時段在同一天最多只會排入 8 位個案", () => {
+  it("新增服務中個案不會直接塞入已實行路線排程", () => {
     let db = createSeedDb();
     const repositories = createRepositories(
       () => db,
@@ -51,7 +51,8 @@ describe("mock db loader", () => {
         status: "active"
       });
 
-      expect(result.scheduleSynced).toBe(true);
+      expect(result.scheduleSynced).toBe(false);
+      expect(result.skippedReason).toBe("請到排程管理頁建立或實行路線");
     }
 
     repositories.patientRepository.upsertPatient({
@@ -79,6 +80,7 @@ describe("mock db loader", () => {
     );
 
     expect(sameDaySlotSchedules.length).toBeLessThanOrEqual(8);
+    expect(db.visit_schedules.some((schedule) => schedule.patient_id === "pat-limit-overflow")).toBe(false);
   });
 
   it("會自動清掉超過一個月的行政端醫師路線暫存", () => {

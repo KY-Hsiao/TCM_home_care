@@ -421,7 +421,7 @@ function executeRoutePlanInDb(db: AppDb, routePlanId: string) {
     db.caregivers.map((caregiver) => [caregiver.patient_id, caregiver.id])
   );
 
-  let nextSchedules = [...db.visit_schedules];
+  const nextSchedules = [...db.visit_schedules];
   const checkedCount = routePlan.route_items.filter((item) => item.checked).length;
   let pausedIndex = 0;
 
