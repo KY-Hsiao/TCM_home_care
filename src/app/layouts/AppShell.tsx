@@ -635,13 +635,6 @@ export function AppShell() {
                   </button>
                 ) : null}
                 </div>
-                <div className="lg:pl-2">
-                  <p className="text-sm text-brand-moss">Web Demo Session</p>
-                  <h2 className="text-2xl font-bold">行政管理協作視圖</h2>
-                  <p className="mt-1 text-sm text-slate-500">
-                    {shellRole === "admin" ? `目前登入行政：${currentUserName ?? "未登入"}` : "系統共用頁面"}
-                  </p>
-                </div>
               </div>
               {unreadNotificationCount > 0 ? (
                 <Link
