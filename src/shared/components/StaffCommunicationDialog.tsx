@@ -64,7 +64,6 @@ function resolveLogDirection(log: TeamCommunicationMessage, currentUserLabel: st
 }
 
 export function StaffCommunicationPanel({
-  title,
   counterpartLabel,
   currentUserLabel,
   contextLabel,
@@ -134,25 +133,17 @@ export function StaffCommunicationPanel({
   };
 
   return (
-    <div className="flex h-full min-h-0 w-full flex-col overflow-hidden rounded-[28px] bg-[#f4f7f1] shadow-2xl lg:rounded-[32px]">
-      <div className="shrink-0 border-b border-slate-200 bg-white/95 px-4 py-3 backdrop-blur sm:px-5 sm:py-4">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-          <div className="min-w-0">
-            <h2 className="break-words text-lg font-semibold text-brand-ink sm:text-2xl">{title}</h2>
-          </div>
-          <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
-            {onClose ? (
-              <button
-                type="button"
-                onClick={onClose}
-                className="w-full rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-600 ring-1 ring-slate-200 sm:w-auto"
-              >
-                關閉
-              </button>
-            ) : null}
-          </div>
-        </div>
-      </div>
+    <div className="relative flex h-full min-h-0 w-full flex-col overflow-hidden rounded-[28px] bg-[#f4f7f1] shadow-2xl lg:rounded-[32px]">
+      {onClose ? (
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="關閉"
+          className="absolute right-3 top-3 z-20 inline-flex h-10 w-10 items-center justify-center rounded-full bg-white/95 text-xl font-semibold text-slate-600 shadow ring-1 ring-slate-200"
+        >
+          ×
+        </button>
+      ) : null}
 
       <div className="min-h-0 flex-1 overflow-y-auto bg-[linear-gradient(180deg,#eef6ef_0%,#f8faf8_100%)] px-4 py-3 sm:px-5 sm:py-4">
         {syncError ? (

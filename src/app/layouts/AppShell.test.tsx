@@ -244,8 +244,8 @@ describe("AppShell", () => {
 
     expect(within(screen.getByRole("navigation")).getByRole("link", { name: /團隊通訊/ })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "團隊通訊" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "蕭坤元醫師" })).toBeInTheDocument();
     expect(screen.getByLabelText("訊息內容")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/蕭坤元醫師/)).toBeInTheDocument();
   });
 
   it("醫師端團隊通訊頁會直接顯示對話區，不再另外開視窗", () => {
@@ -264,8 +264,8 @@ describe("AppShell", () => {
 
     expect(within(screen.getByRole("navigation")).getByRole("link", { name: /團隊通訊/ })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "團隊通訊" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "行政人員" })).toBeInTheDocument();
     expect(screen.getByLabelText("訊息內容")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/行政人員/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "開啟團隊通訊" })).not.toBeInTheDocument();
     expect(screen.queryByText("對話對象")).not.toBeInTheDocument();
     expect(screen.queryByText("目前案件")).not.toBeInTheDocument();

@@ -883,8 +883,8 @@ describe("AdminPages", () => {
 
     fireEvent.doubleClick(screen.getByRole("button", { name: /林若謙醫師/ }));
 
-    expect(screen.getByRole("heading", { name: "林若謙醫師" })).toBeInTheDocument();
     expect(screen.getByLabelText("訊息內容")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/林若謙醫師/)).toBeInTheDocument();
   });
 
   it("AdminTeamCommunicationPage 只保留文字訊息入口", () => {
