@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SESSION_STORAGE_KEY } from "../../app/auth-storage";
@@ -121,6 +121,16 @@ function getFirstRoutePatientName() {
   return firstRouteItem.patient_name;
 }
 
+function expectNavigationWindowOrExternalOpen(openSpy: { mock: { calls: unknown[][] } }) {
+  const navigationWindow = screen.queryByRole("dialog", { name: "Google 導航視窗" });
+  if (navigationWindow) {
+    expect(within(navigationWindow).getByRole("button", { name: /關閉導航/ })).toBeInTheDocument();
+    expect(within(navigationWindow).getByRole("link", { name: "外部 Google 地圖" })).toBeInTheDocument();
+    return;
+  }
+  expect(openSpy.mock.calls.length).toBeGreaterThan(0);
+}
+
 describe("DoctorDashboardPage", () => {
   beforeEach(() => {
     window.localStorage.clear();
@@ -157,7 +167,7 @@ describe("DoctorDashboardPage", () => {
     resetCurrentRouteFromNavigationModal();
     fireEvent.click(screen.getByRole("button", { name: "開始出發" }));
 
-    expect(openSpy).toHaveBeenCalled();
+    expectNavigationWindowOrExternalOpen(openSpy);
     expect(screen.getByRole("heading", { name: "即時導航" })).toBeInTheDocument();
     expect(
       screen.queryByText("導航目的地會依患者順序接續，但到站與離站都改成手動確認，不再自動切換或自動結束 Google 地圖。")
@@ -250,7 +260,7 @@ describe("DoctorDashboardPage", () => {
     resetCurrentRouteFromNavigationModal();
     fireEvent.click(screen.getByRole("button", { name: "開始出發" }));
 
-    expect(openSpy).toHaveBeenCalled();
+    expectNavigationWindowOrExternalOpen(openSpy);
     expect(screen.getByRole("heading", { name: "即時導航" })).toBeInTheDocument();
   });
 
@@ -264,7 +274,7 @@ describe("DoctorDashboardPage", () => {
     const firstPatientName = getFirstRoutePatientName();
     fireEvent.click(screen.getByRole("button", { name: "開始出發" }));
 
-    expect(openSpy).toHaveBeenCalled();
+    expectNavigationWindowOrExternalOpen(openSpy);
     expect(screen.getByText(`前往 ${maskPatientName(firstPatientName)} 的停留點`)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "重置路線" }));
@@ -286,7 +296,7 @@ describe("DoctorDashboardPage", () => {
     expect(screen.getByText(/按下後會直接開啟下一家 .+ 的 Google 地圖導航。/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "完成治療，前往下一家" }));
 
-    expect(openSpy).toHaveBeenCalled();
+    expectNavigationWindowOrExternalOpen(openSpy);
     expect(screen.queryByText(`前往 ${maskPatientName(firstPatientName)} 的停留點`)).not.toBeInTheDocument();
     expect(screen.getByText(/前往 .* 的停留點/)).toBeInTheDocument();
 

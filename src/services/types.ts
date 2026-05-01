@@ -255,6 +255,14 @@ export interface MapsUrlBuilder {
     originLatitude?: number | null;
     originLongitude?: number | null;
   }): string;
+  buildNavigationEmbedUrl(input: {
+    destinationAddress: string;
+    destinationKeyword?: string | null;
+    destinationLatitude: number | null;
+    destinationLongitude: number | null;
+    originLatitude?: number | null;
+    originLongitude?: number | null;
+  }): string | null;
   buildRouteDirectionsUrl(input: RouteMapInput): string;
   buildRouteEmbedDirectionsUrl(input: RouteMapInput): string | null;
   getRoutePreviewState(input: RouteMapInput): RouteMapPreviewState;

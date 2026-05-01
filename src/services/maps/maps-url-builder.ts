@@ -41,7 +41,11 @@ function buildRouteDirectionsQuery(input: RouteMapInput) {
 }
 
 export function createMapsUrlBuilder(options?: { embedApiKey?: string | null }): MapsUrlBuilder {
-  const embedApiKey = options?.embedApiKey ?? import.meta.env.VITE_GOOGLE_MAPS_EMBED_API_KEY ?? "";
+  const embedApiKey =
+    options?.embedApiKey ??
+    import.meta.env.VITE_GOOGLE_MAPS_EMBED_API_KEY ??
+    import.meta.env.VITE_GOOGLE_MAPS_API_KEY ??
+    "";
 
   return {
     buildPatientMapUrl({ address, locationKeyword, latitude, longitude }) {
@@ -70,6 +74,29 @@ export function createMapsUrlBuilder(options?: { embedApiKey?: string | null }):
       return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}${
         origin ? `&origin=${encodeURIComponent(origin)}` : ""
       }`;
+    },
+    buildNavigationEmbedUrl({
+      destinationAddress,
+      destinationKeyword,
+      destinationLatitude,
+      destinationLongitude,
+      originLatitude,
+      originLongitude
+    }) {
+      if (!embedApiKey) {
+        return null;
+      }
+      const origin = formatCoordinateQuery(originLatitude ?? null, originLongitude ?? null);
+      if (!origin) {
+        return null;
+      }
+      const destination = resolveMapQuery({
+        address: destinationAddress,
+        locationKeyword: destinationKeyword,
+        latitude: destinationLatitude,
+        longitude: destinationLongitude
+      });
+      return `https://www.google.com/maps/embed/v1/directions?key=${encodeURIComponent(embedApiKey)}&origin=${encodeURIComponent(origin)}&destination=${encodeURIComponent(destination)}&mode=driving`;
     },
     buildRouteDirectionsUrl(input) {
       const { origin, destination, waypoints, travelMode } = buildRouteDirectionsQuery(input);

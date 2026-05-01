@@ -195,11 +195,32 @@ export function RouteMapPreviewCard({
         </div>
       </div>
 
+      {previewState.embedUrl ? (
+        <div className="mt-4 overflow-hidden rounded-3xl border border-slate-200 bg-white">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-4 py-3">
+            <div>
+              <p className="text-sm font-semibold text-brand-ink">Google 路徑預覽</p>
+              <p className="mt-1 text-xs text-slate-500">依目前站序產生 Directions embed，供排程前確認實際路徑。</p>
+            </div>
+            <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+              已啟用 Maps API
+            </span>
+          </div>
+          <iframe
+            title={`${route.label} Google 路徑預覽`}
+            src={previewState.embedUrl}
+            loading="lazy"
+            referrerPolicy="no-referrer-when-downgrade"
+            className={mediaHeightClass}
+          />
+        </div>
+      ) : null}
+
       {hasCanvasPreview ? (
         <div className="mt-4 overflow-hidden rounded-3xl border border-slate-200 bg-[radial-gradient(circle_at_top,_rgba(209,213,219,0.65),_transparent_42%),linear-gradient(180deg,_#f8fafc_0%,_#eef6f2_100%)] p-3">
           <div className="flex items-center justify-between gap-3">
             <p className="text-sm font-semibold text-brand-ink">頁內示意路線預覽</p>
-            <span className="text-xs text-slate-500">依個案座標繪製，不需額外 API key</span>
+            <span className="text-xs text-slate-500">依個案座標繪製，明確標示個案位置</span>
           </div>
           <div className={`${canvasHeightClass} relative overflow-hidden border border-slate-200`}>
             {previewBackgroundMapUrl ? (
@@ -291,13 +312,7 @@ export function RouteMapPreviewCard({
           ) : null}
         </div>
       ) : previewState.embedUrl ? (
-        <iframe
-          title={`${route.label} 路線圖預覽`}
-          src={previewState.embedUrl}
-          loading="lazy"
-          referrerPolicy="no-referrer-when-downgrade"
-          className={mediaHeightClass}
-        />
+        null
       ) : (
         <div className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-5 text-sm text-slate-600">
           <p className="font-medium text-brand-ink">頁內路線圖暫時無法產生</p>

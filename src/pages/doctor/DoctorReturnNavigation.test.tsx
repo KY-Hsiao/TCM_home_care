@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SESSION_STORAGE_KEY } from "../../app/auth-storage";
@@ -81,6 +81,14 @@ describe("DoctorReturnNavigation", () => {
     }
 
     expect(returned).toBe(true);
+    const navigationWindow = screen.queryByRole("dialog", { name: "Google 導航視窗" });
+    if (navigationWindow) {
+      expect(within(navigationWindow).getByRole("link", { name: "外部 Google 地圖" })).toHaveAttribute(
+        "href",
+        expect.stringContaining(`destination=${destinationQuery}`)
+      );
+      return;
+    }
     expect(openSpy).toHaveBeenCalled();
     expect(String(openSpy.mock.lastCall?.[0] ?? "")).toContain(`destination=${destinationQuery}`);
   });

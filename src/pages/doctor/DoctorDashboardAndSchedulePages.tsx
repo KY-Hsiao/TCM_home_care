@@ -26,6 +26,13 @@ function openExternalNavigation(url: string) {
   window.open(url, "_blank", "noopener,noreferrer");
 }
 
+type EmbeddedNavigationWindow = {
+  title: string;
+  embedUrl: string | null;
+  externalUrl: string;
+  arrivalAction?: () => void;
+};
+
 function resolveDoctorRouteStatus(status: string) {
   if (["completed", "followup_pending"].includes(status)) {
     return "completed";
@@ -870,6 +877,7 @@ export function DoctorDashboardPage() {
 
 export function DoctorLocationPage() {
   const { repositories, services, session } = useAppContext();
+  const [embeddedNavigationWindow, setEmbeddedNavigationWindow] = useState<EmbeddedNavigationWindow | null>(null);
   const currentDoctor =
     repositories.patientRepository.getDoctors().find((doctor) => doctor.id === session.activeDoctorId) ??
     repositories.patientRepository.getDoctors()[0];
@@ -934,36 +942,87 @@ export function DoctorLocationPage() {
         )[0]
     : undefined;
   const latestLocation = currentRouteContext?.runtime?.latestSample ?? latestLinkedLocation;
+  const buildScheduleNavigationUrls = (input: {
+    schedule: (typeof routeContexts)[number]["schedule"];
+    originLatitude?: number | null;
+    originLongitude?: number | null;
+  }) => {
+    const navigationInput = {
+      destinationAddress: input.schedule.address_snapshot,
+      destinationKeyword: input.schedule.location_keyword_snapshot,
+      destinationLatitude: input.schedule.home_latitude_snapshot,
+      destinationLongitude: input.schedule.home_longitude_snapshot,
+      originLatitude: input.originLatitude ?? null,
+      originLongitude: input.originLongitude ?? null
+    };
+    return {
+      externalUrl: services.maps.buildNavigationUrl(navigationInput),
+      embedUrl: services.maps.buildNavigationEmbedUrl(navigationInput)
+    };
+  };
+  const buildHospitalNavigationUrls = (input: {
+    originLatitude?: number | null;
+    originLongitude?: number | null;
+  }) => {
+    if (!activeRoutePlan) {
+      return null;
+    }
+    const navigationInput = {
+      destinationAddress: activeRoutePlan.end_address,
+      destinationLatitude: activeRoutePlan.end_latitude,
+      destinationLongitude: activeRoutePlan.end_longitude,
+      originLatitude: input.originLatitude ?? null,
+      originLongitude: input.originLongitude ?? null
+    };
+    return {
+      externalUrl: services.maps.buildNavigationUrl(navigationInput),
+      embedUrl: services.maps.buildNavigationEmbedUrl(navigationInput)
+    };
+  };
+  const openEmbeddedNavigation = (windowState: EmbeddedNavigationWindow) => {
+    if (!windowState.embedUrl) {
+      openExternalNavigation(windowState.externalUrl);
+      return;
+    }
+    setEmbeddedNavigationWindow(windowState);
+  };
   const currentMapUrl = currentRouteContext
-    ? services.maps.buildNavigationUrl({
-        destinationAddress: currentRouteContext.schedule.address_snapshot,
-        destinationKeyword: currentRouteContext.schedule.location_keyword_snapshot,
-        destinationLatitude: currentRouteContext.schedule.home_latitude_snapshot,
-        destinationLongitude: currentRouteContext.schedule.home_longitude_snapshot,
-        originLatitude: latestLocation?.latitude ?? null,
-        originLongitude: latestLocation?.longitude ?? null
-      })
+    ? buildScheduleNavigationUrls({
+        schedule: currentRouteContext.schedule,
+        originLatitude: latestLocation?.latitude ?? activeRoutePlan?.start_latitude ?? null,
+        originLongitude: latestLocation?.longitude ?? activeRoutePlan?.start_longitude ?? null
+      }).externalUrl
     : "https://www.google.com/maps";
-  const nextMapUrl = nextRouteContext
-    ? services.maps.buildNavigationUrl({
-        destinationAddress: nextRouteContext.schedule.address_snapshot,
-        destinationKeyword: nextRouteContext.schedule.location_keyword_snapshot,
-        destinationLatitude: nextRouteContext.schedule.home_latitude_snapshot,
-        destinationLongitude: nextRouteContext.schedule.home_longitude_snapshot,
-        originLatitude: latestLocation?.latitude ?? null,
-        originLongitude: latestLocation?.longitude ?? null
-      })
+  const currentMapEmbedUrl = currentRouteContext
+    ? buildScheduleNavigationUrls({
+        schedule: currentRouteContext.schedule,
+        originLatitude: latestLocation?.latitude ?? activeRoutePlan?.start_latitude ?? null,
+        originLongitude: latestLocation?.longitude ?? activeRoutePlan?.start_longitude ?? null
+      }).embedUrl
     : null;
-  const hospitalMapUrl =
+  const nextMapUrl = nextRouteContext
+    ? buildScheduleNavigationUrls({
+        schedule: nextRouteContext.schedule,
+        originLatitude: latestLocation?.latitude ?? currentRouteContext?.schedule.home_latitude_snapshot ?? activeRoutePlan?.start_latitude ?? null,
+        originLongitude: latestLocation?.longitude ?? currentRouteContext?.schedule.home_longitude_snapshot ?? activeRoutePlan?.start_longitude ?? null
+      }).externalUrl
+    : null;
+  const nextMapEmbedUrl = nextRouteContext
+    ? buildScheduleNavigationUrls({
+        schedule: nextRouteContext.schedule,
+        originLatitude: latestLocation?.latitude ?? currentRouteContext?.schedule.home_latitude_snapshot ?? activeRoutePlan?.start_latitude ?? null,
+        originLongitude: latestLocation?.longitude ?? currentRouteContext?.schedule.home_longitude_snapshot ?? activeRoutePlan?.start_longitude ?? null
+      }).embedUrl
+    : null;
+  const hospitalNavigationUrls =
     shouldShowHospitalReturn && activeRoutePlan
-      ? services.maps.buildNavigationUrl({
-          destinationAddress: activeRoutePlan.end_address,
-          destinationLatitude: activeRoutePlan.end_latitude,
-          destinationLongitude: activeRoutePlan.end_longitude,
+      ? buildHospitalNavigationUrls({
           originLatitude: latestLocation?.latitude ?? null,
           originLongitude: latestLocation?.longitude ?? null
         })
       : null;
+  const hospitalMapUrl = hospitalNavigationUrls?.externalUrl ?? null;
+  const hospitalMapEmbedUrl = hospitalNavigationUrls?.embedUrl ?? null;
   const handleStartRouteStop = (routeContext: typeof currentRouteContext) => {
     if (!routeContext) {
       return;
@@ -981,16 +1040,16 @@ export function DoctorLocationPage() {
         geofence_status: "tracking"
       }
     });
-    openExternalNavigation(
-      services.maps.buildNavigationUrl({
-        destinationAddress: routeContext.schedule.address_snapshot,
-        destinationKeyword: routeContext.schedule.location_keyword_snapshot,
-        destinationLatitude: routeContext.schedule.home_latitude_snapshot,
-        destinationLongitude: routeContext.schedule.home_longitude_snapshot,
-        originLatitude: routeContext.runtime?.latestSample?.latitude ?? null,
-        originLongitude: routeContext.runtime?.latestSample?.longitude ?? null
-      })
-    );
+    const navigationUrls = buildScheduleNavigationUrls({
+      schedule: routeContext.schedule,
+      originLatitude: routeContext.runtime?.latestSample?.latitude ?? activeRoutePlan?.start_latitude ?? null,
+      originLongitude: routeContext.runtime?.latestSample?.longitude ?? activeRoutePlan?.start_longitude ?? null
+    });
+    openEmbeddedNavigation({
+      title: `前往 ${maskPatientName(routeContext.detail.patient.name)}`,
+      ...navigationUrls,
+      arrivalAction: () => services.visitAutomation.confirmArrival(routeContext.schedule.id, "doctor")
+    });
   };
   const handleConfirmArrival = () => {
     if (!navigatingContext) {
@@ -1002,24 +1061,22 @@ export function DoctorLocationPage() {
     if (!treatmentContext) {
       return;
     }
-    const returnHospitalNavigationUrl = activeRoutePlan
-      ? services.maps.buildNavigationUrl({
-          destinationAddress: activeRoutePlan.end_address,
-          destinationLatitude: activeRoutePlan.end_latitude,
-          destinationLongitude: activeRoutePlan.end_longitude,
-          originLatitude:
-            treatmentContext.runtime?.latestSample?.latitude ??
-            treatmentContext.schedule.home_latitude_snapshot,
-          originLongitude:
-            treatmentContext.runtime?.latestSample?.longitude ??
-            treatmentContext.schedule.home_longitude_snapshot
-        })
-      : null;
+    const returnHospitalNavigationUrls = buildHospitalNavigationUrls({
+      originLatitude:
+        treatmentContext.runtime?.latestSample?.latitude ??
+        treatmentContext.schedule.home_latitude_snapshot,
+      originLongitude:
+        treatmentContext.runtime?.latestSample?.longitude ??
+        treatmentContext.schedule.home_longitude_snapshot
+    });
     services.visitAutomation.confirmDeparture(treatmentContext.schedule.id, "doctor");
     const nextContext = findNextSequentialRouteContext(routeContexts, treatmentContext.schedule.id);
     if (!nextContext) {
-      if (returnHospitalNavigationUrl) {
-        openExternalNavigation(returnHospitalNavigationUrl);
+      if (returnHospitalNavigationUrls) {
+        openEmbeddedNavigation({
+          title: "返回醫院",
+          ...returnHospitalNavigationUrls
+        });
       }
       return;
     }
@@ -1036,20 +1093,20 @@ export function DoctorLocationPage() {
         geofence_status: "tracking"
       }
     });
-    openExternalNavigation(
-      services.maps.buildNavigationUrl({
-        destinationAddress: nextContext.schedule.address_snapshot,
-        destinationKeyword: nextContext.schedule.location_keyword_snapshot,
-        destinationLatitude: nextContext.schedule.home_latitude_snapshot,
-        destinationLongitude: nextContext.schedule.home_longitude_snapshot,
-        originLatitude:
-          treatmentContext.runtime?.latestSample?.latitude ??
-          treatmentContext.schedule.home_latitude_snapshot,
-        originLongitude:
-          treatmentContext.runtime?.latestSample?.longitude ??
-          treatmentContext.schedule.home_longitude_snapshot
-      })
-    );
+    const nextNavigationUrls = buildScheduleNavigationUrls({
+      schedule: nextContext.schedule,
+      originLatitude:
+        treatmentContext.runtime?.latestSample?.latitude ??
+        treatmentContext.schedule.home_latitude_snapshot,
+      originLongitude:
+        treatmentContext.runtime?.latestSample?.longitude ??
+        treatmentContext.schedule.home_longitude_snapshot
+    });
+    openEmbeddedNavigation({
+      title: `前往 ${maskPatientName(nextContext.detail.patient.name)}`,
+      ...nextNavigationUrls,
+      arrivalAction: () => services.visitAutomation.confirmArrival(nextContext.schedule.id, "doctor")
+    });
   };
   const navigationSummary = currentRouteContext
     ? navigatingContext
@@ -1080,7 +1137,14 @@ export function DoctorLocationPage() {
             <div className="flex flex-col gap-2 sm:flex-row">
               <button
                 type="button"
-                onClick={() => openExternalNavigation(currentMapUrl)}
+                onClick={() =>
+                  openEmbeddedNavigation({
+                    title: `前往 ${maskPatientName(navigatingContext.detail.patient.name)}`,
+                    externalUrl: currentMapUrl,
+                    embedUrl: currentMapEmbedUrl,
+                    arrivalAction: () => services.visitAutomation.confirmArrival(navigatingContext.schedule.id, "doctor")
+                  })
+                }
                 className="inline-flex min-h-[44px] flex-1 items-center justify-center rounded-full bg-brand-coral px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90"
               >
                 用 Google 地圖開啟本站導航
@@ -1096,7 +1160,16 @@ export function DoctorLocationPage() {
               {nextMapUrl ? (
                 <button
                   type="button"
-                  onClick={() => openExternalNavigation(nextMapUrl)}
+                  onClick={() =>
+                    openEmbeddedNavigation({
+                      title: `前往 ${nextRouteContext ? maskPatientName(nextRouteContext.detail.patient.name) : "下一站"}`,
+                      externalUrl: nextMapUrl,
+                      embedUrl: nextMapEmbedUrl,
+                      arrivalAction: nextRouteContext
+                        ? () => services.visitAutomation.confirmArrival(nextRouteContext.schedule.id, "doctor")
+                        : undefined
+                    })
+                  }
                   className="inline-flex min-h-[44px] flex-1 items-center justify-center rounded-full border border-white/20 bg-white/10 px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/20"
                 >
                   開啟下一站導航：{nextRouteContext ? maskPatientName(nextRouteContext.detail.patient.name) : ""}
@@ -1104,7 +1177,13 @@ export function DoctorLocationPage() {
               ) : hospitalMapUrl ? (
                 <button
                   type="button"
-                  onClick={() => openExternalNavigation(hospitalMapUrl)}
+                  onClick={() =>
+                    openEmbeddedNavigation({
+                      title: "返回醫院",
+                      externalUrl: hospitalMapUrl,
+                      embedUrl: hospitalMapEmbedUrl
+                    })
+                  }
                   className="inline-flex min-h-[44px] flex-1 items-center justify-center rounded-full border border-white/20 bg-white/10 px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/20"
                 >
                   開啟返院導航
@@ -1185,7 +1264,11 @@ export function DoctorLocationPage() {
                 type="button"
                 onClick={() => {
                   if (hospitalMapUrl) {
-                    openExternalNavigation(hospitalMapUrl);
+                    openEmbeddedNavigation({
+                      title: "返回醫院",
+                      externalUrl: hospitalMapUrl,
+                      embedUrl: hospitalMapEmbedUrl
+                    });
                   }
                 }}
                 className="inline-flex w-full items-center justify-center rounded-full bg-brand-coral px-4 py-2.5 text-sm font-semibold text-white transition hover:opacity-90"
@@ -1235,6 +1318,61 @@ export function DoctorLocationPage() {
       <div className="mx-auto w-full max-w-6xl pb-[max(1rem,env(safe-area-inset-bottom))]">
         {navigationModalContent}
       </div>
+
+      {embeddedNavigationWindow ? (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/55 p-2 sm:p-4">
+          <div
+            role="dialog"
+            aria-label="Google 導航視窗"
+            className="flex h-[calc(100dvh-1rem)] w-full max-w-5xl flex-col overflow-hidden rounded-[1.35rem] bg-white shadow-2xl lg:h-[calc(100dvh-2rem)] lg:rounded-[2rem]"
+          >
+            <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-4 py-3 lg:px-5 lg:py-4">
+              <div>
+                <p className="text-xs font-semibold tracking-[0.18em] text-brand-coral">即時導航</p>
+                <h2 className="mt-1 text-lg font-semibold text-brand-ink lg:text-xl">
+                  {embeddedNavigationWindow.title}
+                </h2>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <a
+                  href={embeddedNavigationWindow.externalUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-brand-ink"
+                >
+                  外部 Google 地圖
+                </a>
+                <button
+                  type="button"
+                  onClick={() => {
+                    embeddedNavigationWindow.arrivalAction?.();
+                    setEmbeddedNavigationWindow(null);
+                  }}
+                  className="rounded-full bg-brand-coral px-4 py-2 text-sm font-semibold text-white"
+                >
+                  {embeddedNavigationWindow.arrivalAction ? "已抵達，關閉導航" : "關閉導航"}
+                </button>
+              </div>
+            </div>
+            {embeddedNavigationWindow.embedUrl ? (
+              <iframe
+                title={`${embeddedNavigationWindow.title} Google 導航`}
+                src={embeddedNavigationWindow.embedUrl}
+                loading="lazy"
+                referrerPolicy="no-referrer-when-downgrade"
+                className="min-h-0 flex-1 border-0"
+              />
+            ) : (
+              <div className="flex min-h-0 flex-1 items-center justify-center bg-slate-50 p-6 text-center text-sm text-slate-600">
+                <div>
+                  <p className="font-semibold text-brand-ink">目前無法內嵌此段導航</p>
+                  <p className="mt-2">請使用上方外部 Google 地圖連結繼續導航。</p>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

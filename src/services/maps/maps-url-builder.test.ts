@@ -161,6 +161,22 @@ describe("maps url builder", () => {
     expect(url).toContain("mode=driving");
   });
 
+  it("一般 Google Maps API key 也可作為 embed key 使用", () => {
+    const maps = createMapsUrlBuilder({ embedApiKey: "general-map-key" });
+
+    const url = maps.buildNavigationEmbedUrl({
+      destinationAddress: "高雄市旗山區延平一路 128 號",
+      destinationLatitude: 22.886,
+      destinationLongitude: 120.482,
+      originLatitude: 22.88794,
+      originLongitude: 120.48341
+    });
+
+    expect(url).toContain("https://www.google.com/maps/embed/v1/directions");
+    expect(url).toContain("key=general-map-key");
+    expect(url).toContain(encodeURIComponent("22.88794,120.48341"));
+  });
+
   it("waypoint 超過上限時會回傳 fallback 狀態", () => {
     const maps = createMapsUrlBuilder({ embedApiKey: "demo-key" });
 
