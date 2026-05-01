@@ -2081,35 +2081,39 @@ export function AdminPatientsPage() {
 
   const activeStatusOptionLabel = selectedPatient?.status === "paused" ? "恢復治療" : "服務中";
 
-  const deleteSelectedPatient = () => {
-    if (!selectedPatient) {
+  const deletePatient = (targetPatient?: Patient) => {
+    if (!targetPatient) {
       setRecentAction("請先選擇要刪除的個案。");
       return;
     }
 
-      const confirmed = window.confirm(
-        `確定要刪除 ${maskPatientName(selectedPatient.name)} 嗎？相關排程、訪視紀錄與流程資料也會一併移除。`
-      );
+    const confirmed = window.confirm(
+      `確定要刪除 ${maskPatientName(targetPatient.name)} 嗎？相關排程、訪視紀錄與流程資料也會一併移除。`
+    );
     if (!confirmed) {
       return;
     }
 
-    const result = repositories.patientRepository.removePatient(selectedPatient.id);
+    const result = repositories.patientRepository.removePatient(targetPatient.id);
     if (!result.removed) {
       setRecentAction(
-        `無法刪除 ${maskPatientName(selectedPatient.name)}：${result.blockedReason ?? "未提供原因"}。`
+        `無法刪除 ${maskPatientName(targetPatient.name)}：${result.blockedReason ?? "未提供原因"}。`
       );
       return;
     }
 
-    const nextPatient = patients.find((patient) => patient.id !== selectedPatient.id);
-    setSelectedPatientIds((current) => current.filter((id) => id !== selectedPatient.id));
-    syncDraft(nextPatient);
+    const nextPatient = patients.find((patient) => patient.id !== targetPatient.id);
+    setSelectedPatientIds((current) => current.filter((id) => id !== targetPatient.id));
+    if (selectedPatient?.id === targetPatient.id) {
+      syncDraft(nextPatient);
+    }
     setRecentAction(
-      `已刪除 ${maskPatientName(selectedPatient.name)}，並清除 ${result.removedScheduleCount} 筆相關排程。`
+      `已刪除 ${maskPatientName(targetPatient.name)}，並清除 ${result.removedScheduleCount} 筆相關排程。`
     );
     setEditorOpen(false);
   };
+
+  const deleteSelectedPatient = () => deletePatient(selectedPatient);
 
   const handleCsvImport = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -2308,6 +2312,14 @@ export function AdminPatientsPage() {
                     }`}
                   >
                     編輯
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => deletePatient(patient)}
+                    aria-label={`刪除 ${maskPatientName(patient.name)}`}
+                    className="rounded-full bg-white px-3 py-2 text-xs font-semibold text-rose-600 ring-1 ring-rose-200 transition hover:bg-rose-50"
+                  >
+                    刪除
                   </button>
                 </div>
               </div>

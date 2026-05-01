@@ -703,6 +703,20 @@ export function createPatientRepository(
             .filter((caregiver) => caregiver.patient_id === patientId)
             .map((caregiver) => caregiver.id)
         );
+        const nextSavedRoutePlans = db.saved_route_plans
+          .map((routePlan) => {
+            const nextRouteItems = reindexRouteItems(
+              routePlan.route_items.filter((item) => item.patient_id !== patientId)
+            );
+            return {
+              ...routePlan,
+              route_items: nextRouteItems,
+              schedule_ids: nextRouteItems
+                .map((item) => item.schedule_id)
+                .filter((scheduleId): scheduleId is string => Boolean(scheduleId))
+            };
+          })
+          .filter((routePlan) => routePlan.route_items.length > 0);
 
         result = {
           patientId,
@@ -719,6 +733,7 @@ export function createPatientRepository(
             (binding) => !caregiverIds.has(binding.caregiver_id)
           ),
           visit_schedules: db.visit_schedules.filter((schedule) => schedule.patient_id !== patientId),
+          saved_route_plans: nextSavedRoutePlans,
           visit_records: db.visit_records.filter(
             (record) => !scheduleIds.has(record.visit_schedule_id)
           ),
@@ -731,6 +746,11 @@ export function createPatientRepository(
             (reminder) =>
               !reminder.related_visit_schedule_id ||
               !scheduleIds.has(reminder.related_visit_schedule_id)
+          ),
+          notification_center_items: db.notification_center_items.filter(
+            (item) =>
+              item.linked_patient_id !== patientId &&
+              (!item.linked_visit_schedule_id || !scheduleIds.has(item.linked_visit_schedule_id))
           ),
           doctor_location_logs: db.doctor_location_logs.filter(
             (log) =>

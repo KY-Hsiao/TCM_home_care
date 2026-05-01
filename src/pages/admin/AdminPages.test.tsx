@@ -1581,6 +1581,47 @@ describe("AdminPages", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
+  it("AdminPatientsPage 可從個案卡片直接刪除，並清除已儲存路線中的站點", () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const customDb = createSeedDb();
+    const routePlan = customDb.saved_route_plans[0];
+    const routeItem = routePlan?.route_items[0];
+    if (!routePlan || !routeItem) {
+      throw new Error("缺少已儲存路線測試資料。");
+    }
+    customDb.saved_route_plans = [
+      {
+        ...routePlan,
+        id: "route-pat-011-cleanup",
+        route_items: [
+          ...routePlan.route_items,
+          {
+            ...routeItem,
+            patient_id: "pat-011",
+            patient_name: "何○惜",
+            schedule_id: null,
+            route_order: 99
+          }
+        ]
+      }
+    ];
+    window.localStorage.setItem(MOCK_DB_STORAGE_KEY, JSON.stringify(customDb));
+
+    renderWithProviders(<AdminPatientsPage />);
+
+    fireEvent.click(screen.getByRole("button", { name: "刪除 何○惜" }));
+
+    expect(screen.getByRole("status")).toHaveTextContent("已刪除 何○惜");
+    expect(screen.queryByRole("button", { name: "編輯 何○惜" })).not.toBeInTheDocument();
+    const storedDb = JSON.parse(window.localStorage.getItem(MOCK_DB_STORAGE_KEY) ?? "{}");
+    expect(storedDb.patients.some((patient: { id: string }) => patient.id === "pat-011")).toBe(false);
+    expect(
+      storedDb.saved_route_plans.some((storedRoutePlan: { route_items: Array<{ patient_id: string }> }) =>
+        storedRoutePlan.route_items.some((item) => item.patient_id === "pat-011")
+      )
+    ).toBe(false);
+  });
+
   it("AdminPatientsPage 不允許刪除已經開始移動或治療中的個案", () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
 
