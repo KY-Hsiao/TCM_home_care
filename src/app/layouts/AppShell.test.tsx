@@ -253,7 +253,7 @@ describe("AppShell", () => {
     expect(screen.getByPlaceholderText(/蕭坤元醫師/)).toBeInTheDocument();
   });
 
-  it("醫師端團隊通訊頁會直接顯示對話區，不再另外開視窗", () => {
+  it("醫師端團隊通訊頁會以全頁視窗顯示對話區並可關閉", () => {
     window.localStorage.setItem(
       SESSION_STORAGE_KEY,
       JSON.stringify({
@@ -268,10 +268,10 @@ describe("AppShell", () => {
     renderShell("/doctor/team-communication", <DoctorTeamCommunicationPage />);
 
     expect(within(screen.getByRole("navigation")).getByRole("link", { name: /團隊通訊/ })).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "團隊通訊" })).not.toBeInTheDocument();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
     expect(screen.getByLabelText("訊息內容")).toBeInTheDocument();
     expect(screen.getByPlaceholderText(/行政人員/)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "開啟團隊通訊" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "關閉" })).toBeInTheDocument();
     expect(screen.queryByText("對話對象")).not.toBeInTheDocument();
     expect(screen.queryByText("目前案件")).not.toBeInTheDocument();
     expect(screen.queryByText("最近聯絡時間")).not.toBeInTheDocument();

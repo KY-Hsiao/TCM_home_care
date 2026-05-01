@@ -1,6 +1,6 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useAppContext } from "../../app/use-app-context";
-import { StaffCommunicationPanel } from "../../shared/components/StaffCommunicationDialog";
+import { StaffCommunicationDialog } from "../../shared/components/StaffCommunicationDialog";
 import { maskPatientName } from "../../shared/utils/patient-name";
 import { Panel } from "../../shared/ui/Panel";
 import { useTeamCommunicationConversation } from "../../services/team-communication/use-team-communication";
@@ -20,6 +20,7 @@ const ACTIVE_VISIT_STATUSES = [
 
 export function DoctorTeamCommunicationPage() {
   const { db, repositories, session } = useAppContext();
+  const [isCommunicationOpen, setIsCommunicationOpen] = useState(true);
   const currentDoctor = repositories.patientRepository.getDoctors().find((doctor) => doctor.id === session.activeDoctorId);
   const currentAdmin =
     repositories.patientRepository.getAdmins().find((admin) => admin.id === session.activeAdminId) ??
@@ -98,9 +99,26 @@ export function DoctorTeamCommunicationPage() {
   }
 
   return (
-    <div className="min-w-0 space-y-4">
-      <div className="h-[min(78dvh,860px)] min-h-[460px]">
-        <StaffCommunicationPanel
+    <div className="min-w-0 space-y-3">
+      <Panel
+        title="團隊通訊"
+        action={
+          <button
+            type="button"
+            onClick={() => setIsCommunicationOpen(true)}
+            className="rounded-full bg-brand-forest px-4 py-2 text-sm font-semibold text-white"
+          >
+            開啟全頁對話
+          </button>
+        }
+      >
+        <p className="text-sm text-slate-600">
+          對話對象固定為行政人員；打字訊息會在全頁視窗內完成，避免手機版左右捲動。
+        </p>
+      </Panel>
+
+      {isCommunicationOpen ? (
+        <StaffCommunicationDialog
           counterpartLabel="行政人員"
           currentUserLabel={currentDoctor.name}
           contextLabel={
@@ -115,9 +133,10 @@ export function DoctorTeamCommunicationPage() {
           syncError={conversation.syncError}
           lastSyncedAt={conversation.lastSyncedAt}
           onConversationViewed={() => void conversation.markConversationRead()}
+          onClose={() => setIsCommunicationOpen(false)}
           onCreateLog={createDoctorAdminContactLog}
         />
-      </div>
+      ) : null}
     </div>
   );
 }

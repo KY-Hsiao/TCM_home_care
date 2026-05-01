@@ -419,14 +419,14 @@ export function AppShell() {
     <div className="min-h-dvh overflow-x-hidden bg-brand-sand text-brand-ink">
       <div
         className={`mx-auto grid min-h-dvh max-w-[1600px] min-w-0 items-start overflow-x-hidden ${
-          isDoctorShell ? "gap-2 px-2 py-2 lg:grid-cols-[280px_1fr] lg:gap-3 lg:px-3 lg:py-3" : "gap-6 px-4 py-4 lg:grid-cols-[280px_1fr]"
+            isDoctorShell ? "gap-2 px-2 py-2 lg:grid-cols-[260px_1fr] lg:gap-3 lg:px-3 lg:py-3" : "gap-4 px-3 py-3 lg:grid-cols-[260px_1fr] lg:px-4"
         }`}
       >
         <aside
           className={`min-w-0 overflow-hidden border border-white/70 bg-brand-ink text-white shadow-card ${
             isDoctorShell
               ? "rounded-[1.35rem] p-3 pb-2.5 lg:rounded-[2rem] lg:p-6"
-              : "rounded-[2rem] p-6"
+              : "rounded-[1.75rem] p-4 lg:p-5"
           }`}
         >
           <div>
@@ -448,8 +448,8 @@ export function AppShell() {
           <nav
             className={
               isDoctorShell
-                ? "mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:mt-6 lg:block lg:space-y-2"
-                : "mt-6 space-y-2"
+                ? "mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:mt-5 lg:block lg:space-y-2"
+                : "mt-4 space-y-2"
             }
           >
             {navItems.map((item) => (
@@ -579,8 +579,8 @@ export function AppShell() {
 
         <div className={`min-w-0 ${isDoctorShell ? "space-y-3 lg:space-y-4" : "space-y-4"}`}>
           {shellRole !== "doctor" ? (
-            <header className="rounded-[2rem] border border-white/70 bg-white/90 p-5 shadow-card backdrop-blur">
-              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-start">
+            <header className="rounded-[1.5rem] border border-white/70 bg-white/90 p-3 shadow-card backdrop-blur lg:p-4">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-start">
                 <div className="grid gap-2 md:grid-cols-[160px_160px_auto]">
                   <Link
                     to="/admin/reminders"

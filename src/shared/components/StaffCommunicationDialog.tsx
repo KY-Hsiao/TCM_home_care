@@ -117,7 +117,7 @@ export function StaffCommunicationPanel({
   };
 
   return (
-    <div className="relative flex h-full min-h-0 w-full flex-col overflow-hidden rounded-[28px] bg-[#f4f7f1] shadow-2xl lg:rounded-[32px]">
+    <div className="relative flex h-full min-h-0 w-full flex-col overflow-hidden rounded-[1.25rem] bg-[#f4f7f1] shadow-2xl lg:rounded-[1.75rem]">
       {onClose ? (
         <button
           type="button"
@@ -129,14 +129,14 @@ export function StaffCommunicationPanel({
         </button>
       ) : null}
 
-      <div className="min-h-0 flex-1 overflow-y-auto bg-[linear-gradient(180deg,#eef6ef_0%,#f8faf8_100%)] px-4 py-3 sm:px-5 sm:py-4">
+      <div className="min-h-0 flex-1 overflow-y-auto bg-[linear-gradient(180deg,#eef6ef_0%,#f8faf8_100%)] px-3 py-2.5 sm:px-4 sm:py-3">
         {syncError ? (
-          <div className="mb-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+          <div className="mb-2 rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
             {syncError}
           </div>
         ) : null}
         {lastSyncedAt ? (
-          <div className="mb-4 break-words text-right text-xs text-slate-500">
+          <div className="mb-2 break-words text-right text-xs text-slate-500">
             最後同步：{formatDateTimeFull(lastSyncedAt)}
           </div>
         ) : null}
@@ -158,7 +158,7 @@ export function StaffCommunicationPanel({
                       <span>{formatDateTimeFull(log.contacted_at)}</span>
                     </div>
                     <div
-                      className={`rounded-[22px] px-4 py-3 text-sm shadow-sm ${
+                      className={`rounded-[1.15rem] px-3.5 py-2.5 text-sm shadow-sm ${
                         isOutgoing
                           ? "rounded-br-md bg-brand-forest text-white"
                           : "rounded-bl-md border border-slate-200 bg-white text-slate-700"
@@ -180,18 +180,18 @@ export function StaffCommunicationPanel({
           </div>
         ) : (
           <div className="flex h-full min-h-[220px] items-center justify-center sm:min-h-[260px]">
-            <div className="rounded-3xl border border-dashed border-slate-200 bg-white/85 px-6 py-8 text-center text-sm text-slate-500">
+            <div className="rounded-3xl border border-dashed border-slate-200 bg-white/85 px-5 py-6 text-center text-sm text-slate-500">
               目前還沒有院內對話紀錄，請直接從下方開始發送訊息。
             </div>
           </div>
         )}
       </div>
 
-      <div className="shrink-0 border-t border-slate-200 bg-white/95 px-4 py-3 backdrop-blur sm:px-5 sm:py-4">
+      <div className="shrink-0 border-t border-slate-200 bg-white/95 px-3 py-2.5 backdrop-blur sm:px-4 sm:py-3">
         {feedback ? (
           <div
             role="status"
-            className={`mb-3 rounded-2xl px-4 py-3 text-sm ${
+            className={`mb-2 rounded-2xl px-3 py-2 text-sm ${
               feedback.includes("已")
                 ? "border border-emerald-200 bg-emerald-50 text-emerald-800"
                 : "border border-amber-200 bg-amber-50 text-amber-800"
@@ -201,14 +201,14 @@ export function StaffCommunicationPanel({
           </div>
         ) : null}
 
-        <div className="space-y-3">
+        <div className="space-y-2">
           <label className="block text-sm">
             <span className="mb-1 block font-medium text-brand-ink">訊息內容</span>
             <textarea
               value={draftMessage}
               onChange={(event) => setDraftMessage(event.target.value)}
-              rows={3}
-              className="w-full rounded-3xl border border-slate-200 px-4 py-3"
+              rows={2}
+              className="w-full rounded-2xl border border-slate-200 px-3 py-2.5"
               placeholder={`直接輸入要傳給 ${counterpartLabel} 的交辦、回報或追蹤內容`}
             />
           </label>
@@ -229,8 +229,13 @@ export function StaffCommunicationPanel({
 
 export function StaffCommunicationDialog(props: StaffCommunicationDialogProps) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4">
-      <div className="h-[min(92dvh,860px)] w-full max-w-4xl">
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="團隊通訊全頁視窗"
+      className="fixed inset-0 z-50 bg-slate-950/45 p-2 sm:p-3"
+    >
+      <div className="h-[calc(100dvh-1rem)] w-full sm:h-[calc(100dvh-1.5rem)]">
         <StaffCommunicationPanel {...props} />
       </div>
     </div>
