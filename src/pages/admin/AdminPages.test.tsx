@@ -509,9 +509,11 @@ describe("AdminPages", () => {
 
     renderWithProviders(<DoctorLocationPage />);
 
+    fireEvent.click(screen.getByRole("button", { name: "開啟即時導航" }));
+
     await waitFor(() => {
-      expect(screen.getByText("即時導航")).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: /4月29日 星期三上午 \/ 8位/ })).toBeInTheDocument();
+      expect(screen.getAllByText("即時導航").length).toBeGreaterThan(0);
+      expect(screen.getByText("4月29日 星期三上午 / 8位")).toBeInTheDocument();
     });
   });
 
@@ -724,6 +726,63 @@ describe("AdminPages", () => {
 
     expect(screen.getAllByText("緊急處置人次").length).toBeGreaterThan(0);
     expect(screen.getByRole("link", { name: /張○發/ })).toBeInTheDocument();
+  });
+
+  it("AdminDashboardPage 會顯示回院病歷勾選異常後建立的通知中心案件", () => {
+    const seededDb = createSeedDb();
+    const baseSchedule = seededDb.visit_schedules.find((schedule) => schedule.patient_id === "pat-001");
+    if (!baseSchedule) {
+      throw new Error("找不到測試用個案排程");
+    }
+
+    const returnRecordSchedule = {
+      ...baseSchedule,
+      id: "vs-return-dashboard-exception-001",
+      scheduled_start_at: "2026-05-18T01:00:00.000Z",
+      scheduled_end_at: "2026-05-18T01:30:00.000Z",
+      service_time_slot: "回院病歷",
+      route_group_id: "return-vs-001",
+      status: "completed" as const,
+      visit_type: "回院病歷",
+      note: "回院病歷｜治療後頭暈｜異常個案",
+      updated_at: "2026-05-18T01:30:00.000Z"
+    };
+
+    window.localStorage.setItem(
+      MOCK_DB_STORAGE_KEY,
+      JSON.stringify({
+        ...seededDb,
+        visit_schedules: [returnRecordSchedule, ...seededDb.visit_schedules],
+        notification_center_items: [
+          {
+            id: "nc-reminder-return-dashboard-exception-001",
+            role: "admin",
+            owner_user_id: null,
+            source_type: "patient_exception",
+            title: "異常個案｜王○珠",
+            content: "王○珠 已於回院病歷勾選為異常個案，主訴：治療後頭暈",
+            linked_patient_id: "pat-001",
+            linked_visit_schedule_id: "vs-return-dashboard-exception-001",
+            linked_doctor_id: "doc-001",
+            linked_leave_request_id: null,
+            status: "pending",
+            is_unread: true,
+            reply_text: null,
+            reply_updated_at: null,
+            reply_updated_by_role: null,
+            created_at: "2026-05-18T01:30:00.000Z",
+            updated_at: "2026-05-18T01:30:00.000Z"
+          }
+        ]
+      })
+    );
+
+    renderWithProviders(<AdminDashboardPage />);
+
+    const exceptionPanel = screen.getByText("個案異常儀表板").closest("section");
+    expect(exceptionPanel).not.toBeNull();
+    expect(within(exceptionPanel!).getByRole("link", { name: /王○珠/ })).toBeInTheDocument();
+    expect(within(exceptionPanel!).queryByText("今日沒有需要特別關注的異常案件。")).not.toBeInTheDocument();
   });
 
   it("AdminDoctorTrackingPage 會集中顯示多醫師總覽圖與個別站點進度", () => {

@@ -113,11 +113,24 @@ export function createStaffingRepository(
           .map((item) => item.linked_visit_schedule_id)
           .filter((scheduleId): scheduleId is string => Boolean(scheduleId))
       );
-      const exceptionSchedules = todaySchedules.filter(
+      const exceptionSchedulesByStatus = todaySchedules.filter(
         (schedule) =>
           ["paused", "issue_pending", "followup_pending", "rescheduled", "cancelled"].includes(schedule.status) ||
           exceptionScheduleIds.has(schedule.id)
       );
+      const exceptionSchedulesFromNotifications = pendingPatientExceptionItems
+        .map((item) =>
+          item.linked_visit_schedule_id
+            ? db.visit_schedules.find((schedule) => schedule.id === item.linked_visit_schedule_id)
+            : undefined
+        )
+        .filter((schedule): schedule is AppDb["visit_schedules"][number] => Boolean(schedule));
+      const exceptionSchedules = [
+        ...exceptionSchedulesByStatus,
+        ...exceptionSchedulesFromNotifications.filter(
+          (schedule) => !exceptionSchedulesByStatus.some((item) => item.id === schedule.id)
+        )
+      ];
       const urgentScheduleIds = resolveUrgentScheduleIds(todaySchedules, patientExceptionItems);
       const previousMonthRange = buildMonthRange();
       const previousMonthSchedules = db.visit_schedules.filter((schedule) => {
