@@ -445,31 +445,6 @@ export function AppShell() {
             </p>
           </div>
 
-          {shellRole ? (
-            <Link
-              to={shellRole === "doctor" ? "/doctor/team-communication" : "/admin/team-communication"}
-              aria-label={doctorTeamCommunicationUnreadCount > 0 ? "團隊通訊未讀紅燈" : "團隊通訊已讀綠燈"}
-              className={`mt-3 flex items-center gap-2 rounded-2xl border px-3 py-2.5 shadow-sm ${
-                doctorTeamCommunicationUnreadCount > 0
-                  ? "border-rose-300 bg-rose-50 text-rose-700"
-                  : "border-emerald-200 bg-emerald-50 text-emerald-800"
-              } ${isDoctorShell ? "lg:mt-4" : "lg:mt-5"}`}
-            >
-              <span
-                className={`inline-flex h-3.5 w-3.5 shrink-0 rounded-full ${
-                  doctorTeamCommunicationUnreadCount > 0
-                    ? "bg-rose-500 shadow-[0_0_0_4px_rgba(244,63,94,0.15)]"
-                    : "bg-emerald-500 shadow-[0_0_0_4px_rgba(16,185,129,0.15)]"
-                }`}
-              />
-              <span className="text-sm font-semibold">
-                {doctorTeamCommunicationUnreadCount > 0
-                  ? `團隊通訊未讀 ${doctorTeamCommunicationUnreadCount} 則`
-                  : "團隊通訊已讀"}
-              </span>
-            </Link>
-          ) : null}
-
           <nav
             className={
               isDoctorShell

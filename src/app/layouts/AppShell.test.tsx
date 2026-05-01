@@ -273,7 +273,7 @@ describe("AppShell", () => {
     expect(screen.queryByText(/對話對象：行政人員/)).not.toBeInTheDocument();
   });
 
-  it("行政傳給醫師的未讀團隊通訊，醫師打開團隊通訊後會立刻轉成已讀並切換為綠燈", async () => {
+  it("行政傳給醫師的未讀團隊通訊，醫師打開團隊通訊後會立刻轉成已讀", async () => {
     const seededDb = createSeedDb();
     window.localStorage.setItem(
       MOCK_DB_STORAGE_KEY,
@@ -318,7 +318,8 @@ describe("AppShell", () => {
     expect(screen.getAllByText(/團隊通訊/).length).toBeGreaterThan(0);
 
     await waitFor(() => {
-      expect(screen.getByRole("link", { name: "團隊通訊已讀綠燈" })).toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: "團隊通訊已讀綠燈" })).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "團隊通訊" })).toBeInTheDocument();
       expect(within(screen.getByRole("navigation")).getByRole("link", { name: /團隊通訊/ })).not.toHaveTextContent(
         "1"
       );
@@ -371,20 +372,21 @@ describe("AppShell", () => {
     renderShell("/doctor/navigation", <DoctorLocationPage />);
 
     await waitFor(() => {
-      expect(screen.getByRole("link", { name: "團隊通訊未讀紅燈" })).toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: "團隊通訊未讀紅燈" })).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "團隊通訊（新訊息 1）" })).toBeInTheDocument();
       expect(within(screen.getByRole("navigation")).getByRole("link", { name: /團隊通訊/ })).toHaveTextContent("1");
     });
 
     fireEvent.click(within(screen.getByRole("navigation")).getByRole("link", { name: /團隊通訊/ }));
 
     await waitFor(() => {
-      expect(screen.getByRole("link", { name: "團隊通訊已讀綠燈" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "團隊通訊" })).toBeInTheDocument();
     });
 
     fireEvent.click(within(screen.getByRole("navigation")).getByRole("link", { name: /即時導航/ }));
 
     await waitFor(() => {
-      expect(screen.getByRole("link", { name: "團隊通訊已讀綠燈" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "團隊通訊" })).toBeInTheDocument();
       expect(
         within(screen.getByRole("navigation")).getByRole("link", { name: /團隊通訊/ })
       ).not.toHaveTextContent("未讀 1 則");
@@ -408,6 +410,7 @@ describe("AppShell", () => {
     expect(screen.queryByText("聯絡行政 / 緊急求救")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "聯絡行政端" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "緊急求救" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /團隊通訊已讀綠燈|團隊通訊未讀紅燈/ })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "團隊通訊" })).toBeInTheDocument();
   });
 
