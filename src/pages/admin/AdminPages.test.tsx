@@ -1212,6 +1212,59 @@ describe("AdminPages", () => {
     });
   });
 
+  it("AdminLeaveRequestsPage 可由行政端建立請假申請並同步通知中心", async () => {
+    window.localStorage.setItem(
+      MOCK_DB_STORAGE_KEY,
+      JSON.stringify({
+        ...createSeedDb(),
+        leave_requests: [],
+        notification_center_items: []
+      })
+    );
+
+    renderWithProviders(<AdminLeaveRequestsPage />);
+
+    fireEvent.change(screen.getByLabelText("請假醫師"), {
+      target: { value: "doc-001" }
+    });
+    fireEvent.change(screen.getByLabelText("行政請假開始日期"), {
+      target: { value: "2026-05-06" }
+    });
+    fireEvent.change(screen.getByLabelText("行政請假結束日期"), {
+      target: { value: "2026-05-06" }
+    });
+    fireEvent.change(screen.getByLabelText("行政請假原因"), {
+      target: { value: "行政代填院內訓練" }
+    });
+    fireEvent.change(screen.getByLabelText("行政請假交班備註"), {
+      target: { value: "請協助調整當日訪視。" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "建立請假申請" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("status")).toHaveTextContent("行政端已建立請假申請");
+      expect(screen.getByText("行政代填院內訓練")).toBeInTheDocument();
+    });
+
+    const storedDb = JSON.parse(window.localStorage.getItem(MOCK_DB_STORAGE_KEY) ?? "{}");
+    expect(storedDb.leave_requests?.[0]).toMatchObject({
+      doctor_id: "doc-001",
+      start_date: "2026-05-06",
+      end_date: "2026-05-06",
+      reason: "行政代填院內訓練",
+      handoff_note: "請協助調整當日訪視。",
+      status: "pending"
+    });
+    expect(storedDb.notification_center_items?.[0]).toMatchObject({
+      role: "admin",
+      source_type: "leave_request",
+      linked_doctor_id: "doc-001",
+      linked_leave_request_id: storedDb.leave_requests?.[0]?.id,
+      status: "pending",
+      is_unread: true
+    });
+  });
+
   it("AdminLeaveRequestsPage 駁回請假時可填寫並保存駁回理由", async () => {
     window.localStorage.setItem(
       MOCK_DB_STORAGE_KEY,

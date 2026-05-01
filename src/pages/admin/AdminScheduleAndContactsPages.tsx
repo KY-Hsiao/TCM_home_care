@@ -2550,9 +2550,17 @@ export function AdminRemindersPage() {
 export function AdminLeaveRequestsPage() {
   const { repositories, db } = useAppContext();
   const [selectedLeaveRequestId, setSelectedLeaveRequestId] = useState<string>("");
-  const [statusFeedback, setStatusFeedback] = useState<string | null>(null);
+  const [statusFeedback, setStatusFeedback] = useState<{
+    tone: "success" | "error";
+    message: string;
+  } | null>(null);
   const [rejectionReasonDraft, setRejectionReasonDraft] = useState("");
   const [isRejecting, setIsRejecting] = useState(false);
+  const [createDoctorId, setCreateDoctorId] = useState(db.doctors[0]?.id ?? "");
+  const [createStartDate, setCreateStartDate] = useState(new Date().toISOString().slice(0, 10));
+  const [createEndDate, setCreateEndDate] = useState(new Date().toISOString().slice(0, 10));
+  const [createReason, setCreateReason] = useState("行政代填請假");
+  const [createHandoffNote, setCreateHandoffNote] = useState("請協助檢查受影響個案");
 
   const leaveRequests = useMemo(
     () =>
@@ -2566,6 +2574,16 @@ export function AdminLeaveRequestsPage() {
     [db.leave_requests, repositories]
   );
   const pendingLeaveRequests = leaveRequests.filter((leaveRequest) => leaveRequest.status === "pending");
+
+  useEffect(() => {
+    if (!db.doctors.length) {
+      setCreateDoctorId("");
+      return;
+    }
+    if (!db.doctors.some((doctor) => doctor.id === createDoctorId)) {
+      setCreateDoctorId(db.doctors[0].id);
+    }
+  }, [createDoctorId, db.doctors]);
 
   useEffect(() => {
     if (!leaveRequests.length) {
@@ -2594,23 +2612,66 @@ export function AdminLeaveRequestsPage() {
     setIsRejecting(false);
   }, [selectedLeaveRequest?.id, selectedLeaveRequest?.rejection_reason]);
 
+  const createAdminLeaveRequest = () => {
+    if (!createDoctorId) {
+      setStatusFeedback({
+        tone: "error",
+        message: "請先選擇請假醫師。"
+      });
+      return;
+    }
+    if (!createStartDate || !createEndDate || !createReason.trim()) {
+      setStatusFeedback({
+        tone: "error",
+        message: "請完整填寫請假期間與原因。"
+      });
+      return;
+    }
+    if (createStartDate > createEndDate) {
+      setStatusFeedback({
+        tone: "error",
+        message: "開始日期不可晚於結束日期。"
+      });
+      return;
+    }
+    repositories.staffingRepository.createLeaveRequest({
+      doctorId: createDoctorId,
+      startDate: createStartDate,
+      endDate: createEndDate,
+      reason: createReason.trim(),
+      handoffNote: createHandoffNote.trim(),
+      status: "pending"
+    });
+    setStatusFeedback({
+      tone: "success",
+      message: "行政端已建立請假申請，並同步加入通知中心。"
+    });
+  };
+
   const updateLeaveStatus = (status: "pending" | "approved" | "rejected") => {
     if (!selectedLeaveRequest) {
       return;
     }
     if (status === "rejected" && !rejectionReasonDraft.trim()) {
-      setStatusFeedback("請先填寫駁回理由。");
+      setStatusFeedback({
+        tone: "error",
+        message: "請先填寫駁回理由。"
+      });
       return;
     }
     repositories.staffingRepository.updateLeaveRequestStatus(selectedLeaveRequest.id, status, {
       rejectionReason: status === "rejected" ? rejectionReasonDraft : null
     });
     setStatusFeedback(
-      status === "approved"
-        ? "請假申請已核准。"
-        : status === "rejected"
-          ? "請假申請已駁回，並已記錄駁回理由。"
-          : "已取消駁回，請假申請已恢復待處理。"
+      {
+        tone: "success",
+        message:
+          status === "approved"
+            ? "請假申請已核准。"
+            : status === "rejected"
+              ? "請假申請已駁回，並已記錄駁回理由。"
+              : "已取消駁回，請假申請已恢復待處理。"
+      }
     );
   };
 
@@ -2625,7 +2686,10 @@ export function AdminLeaveRequestsPage() {
       }
     }
     repositories.staffingRepository.deleteLeaveRequest(selectedLeaveRequest.id);
-    setStatusFeedback("請假案件已刪除。");
+    setStatusFeedback({
+      tone: "success",
+      message: "請假案件已刪除。"
+    });
   };
 
   return (
@@ -2651,13 +2715,86 @@ export function AdminLeaveRequestsPage() {
       {statusFeedback ? (
         <div
           role="status"
-          className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800"
+          className={`rounded-2xl border px-4 py-3 text-sm ${
+            statusFeedback.tone === "success"
+              ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+              : "border-rose-200 bg-rose-50 text-rose-700"
+          }`}
         >
-          {statusFeedback}
+          {statusFeedback.message}
         </div>
       ) : null}
 
       <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
+        <Panel title="行政建立請假">
+          <div className="space-y-4 text-sm">
+            <label className="block">
+              <span className="mb-1 block font-medium text-brand-ink">請假醫師</span>
+              <select
+                aria-label="請假醫師"
+                value={createDoctorId}
+                onChange={(event) => setCreateDoctorId(event.target.value)}
+                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
+              >
+                {db.doctors.map((doctor) => (
+                  <option key={doctor.id} value={doctor.id}>
+                    {doctor.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="grid gap-3 md:grid-cols-2">
+              <label className="block">
+                <span className="mb-1 block font-medium text-brand-ink">開始日期</span>
+                <input
+                  type="date"
+                  aria-label="行政請假開始日期"
+                  value={createStartDate}
+                  onChange={(event) => setCreateStartDate(event.target.value)}
+                  className="w-full rounded-2xl border border-slate-200 px-4 py-3"
+                />
+              </label>
+              <label className="block">
+                <span className="mb-1 block font-medium text-brand-ink">結束日期</span>
+                <input
+                  type="date"
+                  aria-label="行政請假結束日期"
+                  value={createEndDate}
+                  onChange={(event) => setCreateEndDate(event.target.value)}
+                  className="w-full rounded-2xl border border-slate-200 px-4 py-3"
+                />
+              </label>
+            </div>
+            <label className="block">
+              <span className="mb-1 block font-medium text-brand-ink">請假原因</span>
+              <input
+                type="text"
+                aria-label="行政請假原因"
+                value={createReason}
+                onChange={(event) => setCreateReason(event.target.value)}
+                className="w-full rounded-2xl border border-slate-200 px-4 py-3"
+              />
+            </label>
+            <label className="block">
+              <span className="mb-1 block font-medium text-brand-ink">交班備註</span>
+              <textarea
+                aria-label="行政請假交班備註"
+                value={createHandoffNote}
+                onChange={(event) => setCreateHandoffNote(event.target.value)}
+                rows={3}
+                className="w-full rounded-2xl border border-slate-200 px-4 py-3"
+              />
+            </label>
+            <button
+              type="button"
+              onClick={createAdminLeaveRequest}
+              className="rounded-full bg-brand-forest px-5 py-3 font-semibold text-white"
+            >
+              建立請假申請
+            </button>
+          </div>
+        </Panel>
+
         <Panel title="待處理請假">
           <div className="space-y-3">
             {leaveRequests.length ? (
@@ -2691,7 +2828,9 @@ export function AdminLeaveRequestsPage() {
             )}
           </div>
         </Panel>
+      </div>
 
+      <div className="grid gap-6 xl:grid-cols-[1fr]">
         <Panel title="請假案件與處理摘要">
           {selectedLeaveRequest ? (
             <div className="space-y-4">
