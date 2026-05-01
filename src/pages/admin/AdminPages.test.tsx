@@ -1454,6 +1454,9 @@ describe("AdminPages", () => {
   it("AdminPatientsPage 會顯示去識別化姓名並隱藏病歷號欄位", () => {
     renderWithProviders(<AdminPatientsPage />);
 
+    expect(screen.getByRole("table", { name: "個案管理清單" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "個案姓名" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "負責醫師" })).toBeInTheDocument();
     expect(screen.getByText("王○珠")).toBeInTheDocument();
     expect(screen.queryByText("病歷號")).not.toBeInTheDocument();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();

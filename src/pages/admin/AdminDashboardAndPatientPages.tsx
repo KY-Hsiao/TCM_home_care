@@ -2272,84 +2272,107 @@ export function AdminPatientsPage() {
             </button>
           </div>
         </div>
-        <div className="space-y-3">
-          {displayPatients.map((patient) => {
-            const isClosedPatient = patient.status === "closed";
-            const isSelectedPatient = selectedId === patient.id;
+        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+          <div className="overflow-x-auto">
+            <table className="min-w-[980px] w-full border-collapse text-left text-sm">
+              <caption className="sr-only">個案管理清單</caption>
+              <thead className="bg-slate-50 text-xs font-semibold text-slate-500">
+                <tr>
+                  <th scope="col" className="w-12 px-4 py-3">選取</th>
+                  <th scope="col" className="px-4 py-3">個案姓名</th>
+                  <th scope="col" className="px-4 py-3">狀態</th>
+                  <th scope="col" className="px-4 py-3">主診斷</th>
+                  <th scope="col" className="px-4 py-3">需求</th>
+                  <th scope="col" className="px-4 py-3">服務時段</th>
+                  <th scope="col" className="px-4 py-3">負責醫師</th>
+                  <th scope="col" className="min-w-[220px] px-4 py-3">地址 / 定位</th>
+                  <th scope="col" className="w-40 px-4 py-3">操作</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {displayPatients.map((patient) => {
+                  const isClosedPatient = patient.status === "closed";
+                  const isSelectedPatient = selectedId === patient.id;
+                  const maskedName = maskPatientName(patient.name);
+                  const addressLabel = patient.home_address || patient.address || "未設定";
+                  const locationLabel =
+                    patient.location_keyword === sameAddressLocationKeyword
+                      ? `同住址（${resolveLocationKeyword(patient.location_keyword, addressLabel)}）`
+                      : patient.location_keyword || "未設定";
 
-            return (
-            <div
-              key={patient.id}
-              data-patient-id={patient.id}
-              data-patient-status={patient.status}
-              className={`w-full rounded-2xl border p-4 ${
-                isClosedPatient
-                  ? "border-slate-300 bg-slate-100 text-slate-500"
-                  : isSelectedPatient
-                    ? "border-brand-forest bg-brand-sand/60"
-                    : "border-slate-200 bg-white"
-              }`}
-            >
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <input
-                    type="checkbox"
-                    checked={selectedPatientIds.includes(patient.id)}
-                    onChange={(event) => togglePatientSelection(patient.id, event.target.checked)}
-                    aria-label={`${maskPatientName(patient.name)} 勾選`}
-                  />
-                  <p className={`font-semibold ${isClosedPatient ? "text-slate-500" : "text-brand-ink"}`}>
-                    {maskPatientName(patient.name)}
-                  </p>
-                </div>
-                <div className="flex items-center gap-3">
-                  <Badge value={patient.status} compact />
-                  <button
-                    type="button"
-                    onClick={() => openPatientEditor(patient)}
-                    aria-label={`編輯 ${maskPatientName(patient.name)}`}
-                    className={`rounded-full px-3 py-2 text-xs font-semibold ring-1 ${
-                      isClosedPatient
-                        ? "bg-slate-50 text-slate-500 ring-slate-300"
-                        : "bg-white text-brand-forest ring-slate-200"
-                    }`}
-                  >
-                    編輯
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => deletePatient(patient)}
-                    aria-label={`刪除 ${maskPatientName(patient.name)}`}
-                    className="rounded-full bg-white px-3 py-2 text-xs font-semibold text-rose-600 ring-1 ring-rose-200 transition hover:bg-rose-50"
-                  >
-                    刪除
-                  </button>
-                </div>
-              </div>
-              <p className={`mt-2 text-sm ${isClosedPatient ? "text-slate-500" : "text-slate-600"}`}>
-                {patient.primary_diagnosis}
-              </p>
-              <p className={`mt-1 text-xs ${isClosedPatient ? "text-slate-400" : "text-slate-500"}`}>
-                需求：{patient.service_needs.join("、") || "未設定"} / 時段：{patient.preferred_service_slot || "未設定"}
-              </p>
-              <p className={`mt-1 text-xs ${isClosedPatient ? "text-slate-400" : "text-slate-500"}`}>
-                負責醫師：{db.doctors.find((doctor) => doctor.id === patient.preferred_doctor_id)?.name ?? "未指定"}
-              </p>
-              <p className={`mt-1 text-xs ${isClosedPatient ? "text-slate-400" : "text-slate-500"}`}>
-                地址：{patient.home_address || patient.address || "未設定"}
-              </p>
-              <p className={`mt-1 text-xs ${isClosedPatient ? "text-slate-400" : "text-slate-500"}`}>
-                位置關鍵字：
-                {patient.location_keyword === sameAddressLocationKeyword
-                  ? `同住址（${resolveLocationKeyword(
-                      patient.location_keyword,
-                      patient.home_address || patient.address || "未設定"
-                    )}）`
-                  : patient.location_keyword || "未設定"}
-              </p>
-            </div>
-          );
-          })}
+                  return (
+                    <tr
+                      key={patient.id}
+                      data-patient-id={patient.id}
+                      data-patient-status={patient.status}
+                      className={`align-top transition ${
+                        isClosedPatient
+                          ? "bg-slate-100 text-slate-500"
+                          : isSelectedPatient
+                            ? "bg-brand-sand/55"
+                            : "bg-white hover:bg-slate-50"
+                      }`}
+                    >
+                      <td className="px-4 py-3">
+                        <input
+                          type="checkbox"
+                          checked={selectedPatientIds.includes(patient.id)}
+                          onChange={(event) => togglePatientSelection(patient.id, event.target.checked)}
+                          aria-label={`${maskedName} 勾選`}
+                        />
+                      </td>
+                      <th scope="row" className={`px-4 py-3 font-semibold ${isClosedPatient ? "text-slate-500" : "text-brand-ink"}`}>
+                        {maskedName}
+                      </th>
+                      <td className="px-4 py-3">
+                        <Badge value={patient.status} compact />
+                      </td>
+                      <td className={`px-4 py-3 ${isClosedPatient ? "text-slate-500" : "text-slate-700"}`}>
+                        {patient.primary_diagnosis || "未設定"}
+                      </td>
+                      <td className={`px-4 py-3 ${isClosedPatient ? "text-slate-400" : "text-slate-600"}`}>
+                        {patient.service_needs.join("、") || "未設定"}
+                      </td>
+                      <td className={`px-4 py-3 ${isClosedPatient ? "text-slate-400" : "text-slate-600"}`}>
+                        {patient.preferred_service_slot || "未設定"}
+                      </td>
+                      <td className={`px-4 py-3 ${isClosedPatient ? "text-slate-400" : "text-slate-600"}`}>
+                        {db.doctors.find((doctor) => doctor.id === patient.preferred_doctor_id)?.name ?? "未指定"}
+                      </td>
+                      <td className={`px-4 py-3 ${isClosedPatient ? "text-slate-400" : "text-slate-600"}`}>
+                        <p className="card-clamp-2">{addressLabel}</p>
+                        <p className="mt-1 text-xs text-slate-400">位置關鍵字：{locationLabel}</p>
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={() => openPatientEditor(patient)}
+                            aria-label={`編輯 ${maskedName}`}
+                            className={`rounded-full px-3 py-2 text-xs font-semibold ring-1 ${
+                              isClosedPatient
+                                ? "bg-slate-50 text-slate-500 ring-slate-300"
+                                : "bg-white text-brand-forest ring-slate-200"
+                            }`}
+                          >
+                            編輯
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => deletePatient(patient)}
+                            aria-label={`刪除 ${maskedName}`}
+                            className="rounded-full bg-white px-3 py-2 text-xs font-semibold text-rose-600 ring-1 ring-rose-200 transition hover:bg-rose-50"
+                          >
+                            刪除
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       </Panel>
 
