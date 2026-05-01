@@ -272,6 +272,90 @@ describe("AdminPages", () => {
     expect(screen.getByText("可執行 8 站")).toBeInTheDocument();
   });
 
+  it("AdminSchedulesPage 開啟時會偵測三天內未排時段，經行政同意後沿用 7 天前同時段路線並建立通知", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-26T08:00:00+08:00"));
+
+    const customDb = createSeedDb();
+    const sourceRoutePlan = {
+      ...customDb.saved_route_plans[0],
+      id: "route-auto-source-001",
+      route_group_id: "route-auto-source-001",
+      doctor_id: "doc-001",
+      route_name: "4/22 蕭坤元醫師 星期三上午路線",
+      route_date: "2026-04-22",
+      route_weekday: "星期三",
+      service_time_slot: "上午",
+      execution_status: "archived",
+      schedule_ids: [],
+      route_items: [
+        {
+          patient_id: "pat-001",
+          schedule_id: null,
+          checked: true,
+          route_order: 1,
+          status: "scheduled",
+          patient_name: "王麗珠",
+          address: "高雄市旗山區延平一路 128 號"
+        }
+      ]
+    } satisfies typeof customDb.saved_route_plans[number];
+    window.localStorage.setItem(
+      MOCK_DB_STORAGE_KEY,
+      JSON.stringify({
+        ...customDb,
+        doctors: customDb.doctors.map((doctor) =>
+          doctor.id === "doc-001"
+            ? { ...doctor, available_service_slots: ["星期三上午"] }
+            : { ...doctor, available_service_slots: [] }
+        ),
+        visit_schedules: [],
+        saved_route_plans: [sourceRoutePlan],
+        notification_center_items: []
+      })
+    );
+
+    renderWithProviders(<AdminSchedulesPage />);
+
+    expect(screen.getByText("排程待確認")).toBeInTheDocument();
+    expect(screen.getByText(/2026\/04\/29 星期三上午/)).toBeInTheDocument();
+
+    await act(async () => undefined);
+    let storedDb = JSON.parse(window.localStorage.getItem(MOCK_DB_STORAGE_KEY) ?? "{}");
+    expect(
+      (storedDb.notification_center_items ?? []).some(
+        (item: { title: string; status: string; is_unread: boolean }) =>
+          item.title === "排程待確認｜蕭坤元醫師" &&
+          item.status === "pending" &&
+          item.is_unread === true
+      )
+    ).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "同意排入" }));
+
+    expect(screen.getByRole("status")).toHaveTextContent("已沿用 7 天前同時段路線");
+    expect(screen.getByLabelText("路線日期")).toHaveValue("2026-04-29");
+    expect(screen.getByText("第 1 站 王○珠")).toBeInTheDocument();
+
+    storedDb = JSON.parse(window.localStorage.getItem(MOCK_DB_STORAGE_KEY) ?? "{}");
+    expect(
+      (storedDb.saved_route_plans ?? []).some(
+        (routePlan: { route_date: string; service_time_slot: string; execution_status: string }) =>
+          routePlan.route_date === "2026-04-29" &&
+          routePlan.service_time_slot === "上午" &&
+          routePlan.execution_status === "draft"
+      )
+    ).toBe(true);
+    expect(
+      (storedDb.notification_center_items ?? []).some(
+        (item: { title: string; status: string; is_unread: boolean }) =>
+          item.title === "排程待確認｜蕭坤元醫師" &&
+          item.status === "completed" &&
+          item.is_unread === false
+      )
+    ).toBe(true);
+  });
+
   it("AdminSchedulesPage 會顯示帶背景地圖的頁內路線預覽與外部 Google 路線按鈕", () => {
     renderWithProviders(<AdminSchedulesPage />);
 

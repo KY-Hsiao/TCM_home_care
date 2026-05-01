@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useAppContext } from "../../app/use-app-context";
-import type { SavedRoutePlan } from "../../domain/models";
+import type { NotificationCenterItem, SavedRoutePlan, VisitSchedule } from "../../domain/models";
 import type { RouteMapInput } from "../../services/types";
 import { RouteMapPreviewCard } from "../../modules/maps/RouteMapPreviewCard";
 import { ReminderCenterPanel } from "../shared/ReminderCenterPanel";
@@ -32,6 +32,21 @@ type RouteDateOption = {
   preferredWeekday: (typeof weekdayOptions)[number];
   preferredTimeSlot: RouteTimeSlot;
   label: string;
+};
+
+type AutoScheduleCarryoverCandidate = {
+  id: string;
+  notificationItemId: string;
+  doctorId: string;
+  doctorName: string;
+  routeDate: string;
+  routeWeekday: (typeof weekdayOptions)[number];
+  timeSlot: RouteTimeSlot;
+  sourceRoutePlanId: string;
+  sourceRoutePlanName: string;
+  sourceRouteDate: string;
+  sourceDaysBack: 7 | 14;
+  checkedPatientCount: number;
 };
 
 const weekdayOptions = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"] as const;
@@ -75,6 +90,25 @@ function formatDateInputValue(date: Date) {
   const month = `${date.getMonth() + 1}`.padStart(2, "0");
   const day = `${date.getDate()}`.padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function addDaysToDateInput(routeDate: string, days: number) {
+  const parsedDate = new Date(`${routeDate}T00:00:00`);
+  if (Number.isNaN(parsedDate.getTime())) {
+    return routeDate;
+  }
+  parsedDate.setDate(parsedDate.getDate() + days);
+  return formatDateInputValue(parsedDate);
+}
+
+function getUpcomingDateInputs(from = new Date(), daysAhead = 3) {
+  const startDate = new Date(from);
+  startDate.setHours(0, 0, 0, 0);
+  return Array.from({ length: daysAhead + 1 }, (_, dayOffset) => {
+    const targetDate = new Date(startDate);
+    targetDate.setDate(startDate.getDate() + dayOffset);
+    return formatDateInputValue(targetDate);
+  });
 }
 
 function buildRouteDateForWeekday(weekday: (typeof weekdayOptions)[number], from = new Date()) {
@@ -360,6 +394,206 @@ function parseDoctorServiceSlot(slot: string) {
     weekday: matchedWeekday,
     timeSlot: matchedTimeSlot
   };
+}
+
+function resolveScheduleRouteTimeSlot(schedule: Pick<VisitSchedule, "service_time_slot" | "scheduled_start_at">): RouteTimeSlot {
+  if (schedule.service_time_slot.includes("上午")) {
+    return "上午";
+  }
+  if (schedule.service_time_slot.includes("下午")) {
+    return "下午";
+  }
+  return new Date(schedule.scheduled_start_at).getHours() < 13 ? "上午" : "下午";
+}
+
+function hasPlannedRouteForSlot(input: {
+  doctorId: string;
+  routeDate: string;
+  timeSlot: RouteTimeSlot;
+  savedRoutePlans: SavedRoutePlan[];
+  schedules: VisitSchedule[];
+}) {
+  return (
+    input.savedRoutePlans.some(
+      (routePlan) =>
+        routePlan.doctor_id === input.doctorId &&
+        routePlan.route_date === input.routeDate &&
+        routePlan.service_time_slot === input.timeSlot
+    ) ||
+    input.schedules.some(
+      (schedule) =>
+        schedule.assigned_doctor_id === input.doctorId &&
+        schedule.scheduled_start_at.slice(0, 10) === input.routeDate &&
+        resolveScheduleRouteTimeSlot(schedule) === input.timeSlot &&
+        schedule.visit_type !== "回院病歷" &&
+        schedule.status !== "cancelled"
+    )
+  );
+}
+
+function buildAutoScheduleCarryoverCandidates(input: {
+  doctors: Array<{
+    id: string;
+    name: string;
+    available_service_slots: string[];
+  }>;
+  savedRoutePlans: SavedRoutePlan[];
+  schedules: VisitSchedule[];
+  now?: Date;
+}) {
+  const targetDates = getUpcomingDateInputs(input.now);
+
+  return targetDates.flatMap((routeDate) => {
+    const routeWeekday = resolveWeekdayFromRouteDate(routeDate);
+    if (!routeWeekday) {
+      return [];
+    }
+
+    return input.doctors.flatMap<AutoScheduleCarryoverCandidate>((doctor) => {
+      const targetTimeSlots = getDoctorTimeSlotsByWeekday(
+        doctor.available_service_slots,
+        routeWeekday
+      );
+
+      return targetTimeSlots.flatMap((timeSlot) => {
+        if (
+          hasPlannedRouteForSlot({
+            doctorId: doctor.id,
+            routeDate,
+            timeSlot,
+            savedRoutePlans: input.savedRoutePlans,
+            schedules: input.schedules
+          })
+        ) {
+          return [];
+        }
+
+        const sourceMatch = ([7, 14] as const)
+          .map((daysBack) => ({
+            daysBack,
+            sourceDate: addDaysToDateInput(routeDate, -daysBack)
+          }))
+          .map(({ daysBack, sourceDate }) => ({
+            daysBack,
+            sourceDate,
+            routePlan: input.savedRoutePlans.find(
+              (routePlan) =>
+                routePlan.doctor_id === doctor.id &&
+                routePlan.route_date === sourceDate &&
+                routePlan.service_time_slot === timeSlot &&
+                routePlan.route_items.length > 0
+            )
+          }))
+          .find((candidate) => Boolean(candidate.routePlan));
+
+        if (!sourceMatch?.routePlan) {
+          return [];
+        }
+
+        const id = `auto-carryover-${doctor.id}-${routeDate}-${timeSlot}`;
+        return [
+          {
+            id,
+            notificationItemId: `nc-${id}`,
+            doctorId: doctor.id,
+            doctorName: doctor.name,
+            routeDate,
+            routeWeekday,
+            timeSlot,
+            sourceRoutePlanId: sourceMatch.routePlan.id,
+            sourceRoutePlanName: sourceMatch.routePlan.route_name,
+            sourceRouteDate: sourceMatch.sourceDate,
+            sourceDaysBack: sourceMatch.daysBack,
+            checkedPatientCount: sourceMatch.routePlan.route_items.filter((item) => item.checked).length
+          }
+        ];
+      });
+    });
+  });
+}
+
+function buildAutoScheduleNotificationItem(candidate: AutoScheduleCarryoverCandidate): NotificationCenterItem {
+  const now = new Date().toISOString();
+  return {
+    id: candidate.notificationItemId,
+    role: "admin",
+    owner_user_id: null,
+    source_type: "system_notification",
+    title: `排程待確認｜${candidate.doctorName}`,
+    content: `${formatDateOnly(candidate.routeDate)} ${candidate.routeWeekday}${candidate.timeSlot} 尚未排程。系統找到 ${candidate.sourceDaysBack} 天前同時段路線「${candidate.sourceRoutePlanName}」，請行政人員確認是否沿用排入。`,
+    linked_patient_id: null,
+    linked_visit_schedule_id: null,
+    linked_doctor_id: candidate.doctorId,
+    linked_leave_request_id: null,
+    status: "pending",
+    is_unread: true,
+    reply_text: null,
+    reply_updated_at: null,
+    reply_updated_by_role: null,
+    created_at: now,
+    updated_at: now
+  };
+}
+
+function buildCarriedOverRoutePlan(input: {
+  candidate: AutoScheduleCarryoverCandidate;
+  sourceRoutePlan: SavedRoutePlan;
+  patientsById: Map<string, { id: string; name: string; address: string; home_address: string; status: string }>;
+}) {
+  const now = new Date().toISOString();
+  let nextRouteOrder = 1;
+  const routeItems: SavedRoutePlan["route_items"] = [];
+  input.sourceRoutePlan.route_items
+    .slice()
+    .sort(
+      (left, right) =>
+        (left.route_order ?? Number.MAX_SAFE_INTEGER) -
+          (right.route_order ?? Number.MAX_SAFE_INTEGER) ||
+        left.patient_name.localeCompare(right.patient_name, "zh-Hant")
+    )
+    .forEach((item) => {
+      const patient = input.patientsById.get(item.patient_id);
+      if (!patient || patient.status === "closed") {
+        return;
+      }
+      const checked = item.checked;
+      const routeOrder = checked ? nextRouteOrder++ : null;
+      routeItems.push({
+        patient_id: item.patient_id,
+        schedule_id: null,
+        checked,
+        route_order: routeOrder,
+        status: checked ? ("scheduled" as const) : ("paused" as const),
+        patient_name: patient.name,
+        address: patient.home_address || patient.address || item.address
+      });
+    });
+  const checkedCount = routeItems.filter((item) => item.checked).length;
+  const routePlanId = buildRoutePlanId(
+    input.candidate.doctorId,
+    input.candidate.routeDate,
+    input.candidate.routeWeekday,
+    input.candidate.timeSlot
+  );
+
+  return {
+    ...input.sourceRoutePlan,
+    id: routePlanId,
+    doctor_id: input.candidate.doctorId,
+    route_group_id: routePlanId,
+    route_name: `${formatDateOnly(input.candidate.routeDate)} ${input.candidate.doctorName} ${input.candidate.routeWeekday}${input.candidate.timeSlot}（沿用前次）`,
+    route_date: input.candidate.routeDate,
+    route_weekday: input.candidate.routeWeekday,
+    service_time_slot: input.candidate.timeSlot,
+    schedule_ids: [],
+    route_items: routeItems,
+    execution_status: "draft" as const,
+    executed_at: null,
+    total_minutes: checkedCount * 60,
+    saved_at: now,
+    created_at: now,
+    updated_at: now
+  } satisfies SavedRoutePlan;
 }
 
 function buildPlannerRowsFromSlotPatients(
@@ -682,6 +916,7 @@ export function AdminSchedulesPage() {
   const [plannerRows, setPlannerRows] = useState<PlannerRow[]>([]);
   const [draggingPlannerPatientId, setDraggingPlannerPatientId] = useState<string | null>(null);
   const [dragTargetPlannerPatientId, setDragTargetPlannerPatientId] = useState<string | null>(null);
+  const [dismissedAutoScheduleCandidateIds, setDismissedAutoScheduleCandidateIds] = useState<string[]>([]);
   const [recentAction, setRecentAction] = useState<string | null>(null);
 
   const doctors = repositories.patientRepository.getDoctors();
@@ -693,6 +928,26 @@ export function AdminSchedulesPage() {
   const savedRoutePlans = useMemo(
     () => repositories.visitRepository.getSavedRoutePlans(),
     [repositories, db.saved_route_plans]
+  );
+  const allSchedules = useMemo(
+    () => repositories.visitRepository.getSchedules(),
+    [repositories, db.visit_schedules]
+  );
+  const autoScheduleCarryoverCandidates = useMemo(
+    () =>
+      buildAutoScheduleCarryoverCandidates({
+        doctors,
+        savedRoutePlans,
+        schedules: allSchedules
+      }),
+    [allSchedules, doctors, savedRoutePlans]
+  );
+  const visibleAutoScheduleCarryoverCandidates = useMemo(
+    () =>
+      autoScheduleCarryoverCandidates.filter(
+        (candidate) => !dismissedAutoScheduleCandidateIds.includes(candidate.id)
+      ),
+    [autoScheduleCarryoverCandidates, dismissedAutoScheduleCandidateIds]
   );
   const selectedSavedRoutePlan = selectedSavedRoutePlanId
     ? savedRoutePlans.find((routePlan) => routePlan.id === selectedSavedRoutePlanId)
@@ -795,11 +1050,6 @@ export function AdminSchedulesPage() {
     if (!effectiveSelectedWeekday) {
       return [];
     }
-    if (selectedRouteDateOption) {
-      return selectedRouteDateOption.timeSlotOptionsByWeekday[
-        effectiveSelectedWeekday as (typeof weekdayOptions)[number]
-      ] ?? [];
-    }
     const serviceSlots = selectedDoctor?.available_service_slots ?? [];
     const matchedOptions = getDoctorTimeSlotsByWeekday(
       serviceSlots,
@@ -807,6 +1057,11 @@ export function AdminSchedulesPage() {
     );
     if (routeDateMode === "ad_hoc") {
       return matchedOptions.length ? matchedOptions : routeTimeSlotOptions;
+    }
+    if (selectedRouteDateOption) {
+      return selectedRouteDateOption.timeSlotOptionsByWeekday[
+        effectiveSelectedWeekday as (typeof weekdayOptions)[number]
+      ] ?? [];
     }
     return matchedOptions;
   }, [effectiveSelectedWeekday, routeDateMode, selectedDoctor, selectedRouteDateOption]);
@@ -829,6 +1084,20 @@ export function AdminSchedulesPage() {
     selectedDoctorId,
     selectedSavedRoutePlanId
   ]);
+
+  useEffect(() => {
+    const existingNotificationItemIds = new Set(
+      db.notification_center_items.map((item) => item.id)
+    );
+    autoScheduleCarryoverCandidates.forEach((candidate) => {
+      if (existingNotificationItemIds.has(candidate.notificationItemId)) {
+        return;
+      }
+      repositories.notificationRepository.createNotificationCenterItem(
+        buildAutoScheduleNotificationItem(candidate)
+      );
+    });
+  }, [autoScheduleCarryoverCandidates, db.notification_center_items, repositories.notificationRepository]);
 
   useEffect(() => {
     if (routeDateMode === "ad_hoc") {
@@ -949,6 +1218,7 @@ export function AdminSchedulesPage() {
     setSelectedSavedRoutePlanIds([]);
     setIsBatchDeleteDialogOpen(false);
     setIsSlotPatientDialogOpen(false);
+    setDismissedAutoScheduleCandidateIds([]);
     setDraggingPlannerPatientId(null);
     setDragTargetPlannerPatientId(null);
     setPlannerRows([]);
@@ -1246,10 +1516,106 @@ export function AdminSchedulesPage() {
     );
   };
 
+  const dismissAutoScheduleCarryoverCandidate = (candidateId: string) => {
+    setDismissedAutoScheduleCandidateIds((current) => [...new Set([...current, candidateId])]);
+  };
+
+  const applyAutoScheduleCarryoverCandidate = (candidate: AutoScheduleCarryoverCandidate) => {
+    const sourceRoutePlan = savedRoutePlans.find(
+      (routePlan) => routePlan.id === candidate.sourceRoutePlanId
+    );
+    if (!sourceRoutePlan) {
+      setRecentAction("找不到可沿用的前次路線，請改用手動排程。");
+      dismissAutoScheduleCarryoverCandidate(candidate.id);
+      return;
+    }
+
+    const routePlanDraft = buildCarriedOverRoutePlan({
+      candidate,
+      sourceRoutePlan,
+      patientsById
+    });
+    if (routePlanDraft.route_items.length === 0) {
+      setRecentAction("前次路線中的個案已結案或不存在，無法自動沿用。");
+      dismissAutoScheduleCarryoverCandidate(candidate.id);
+      return;
+    }
+
+    repositories.visitRepository.upsertSavedRoutePlan(routePlanDraft);
+    repositories.notificationRepository.updateNotificationCenterItemStatus(
+      candidate.notificationItemId,
+      "completed"
+    );
+    setSelectedSavedRoutePlanId(routePlanDraft.id);
+    setSelectedDoctorId(routePlanDraft.doctor_id);
+    setRouteDateMode("preset");
+    setRouteDate(routePlanDraft.route_date);
+    setSelectedWeekday(routePlanDraft.route_weekday);
+    setSelectedTimeSlot(routePlanDraft.service_time_slot);
+    setRouteStartAddress(routePlanDraft.start_address || routeStartLocation.address);
+    setRouteEndAddress(routePlanDraft.end_address || routeEndLocation.address);
+    setPlannerRows(buildPlannerRowsFromRoutePlan(routePlanDraft, patientsById));
+    dismissAutoScheduleCarryoverCandidate(candidate.id);
+    setRecentAction(
+      `已沿用 ${candidate.sourceDaysBack} 天前同時段路線，建立 ${routePlanDraft.route_name}；請確認後再實行路線。`
+    );
+  };
+
   return (
     <div className="space-y-6">
       <Panel title="排程管理頁">
         <div className="space-y-4">
+          {visibleAutoScheduleCarryoverCandidates.length > 0 ? (
+            <div className="rounded-3xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="font-semibold text-brand-ink">排程待確認</p>
+                  <p className="mt-1 text-xs text-amber-800">
+                    系統偵測到未來 3 天內有醫師可出巡時段尚未排程，已同步新增通知中心提醒；請行政確認後才會排入。
+                  </p>
+                </div>
+                <span className="rounded-full bg-white/80 px-3 py-1 text-xs font-semibold">
+                  {visibleAutoScheduleCarryoverCandidates.length} 筆
+                </span>
+              </div>
+              <div className="mt-3 space-y-2">
+                {visibleAutoScheduleCarryoverCandidates.map((candidate) => (
+                  <div
+                    key={candidate.id}
+                    className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-200 bg-white px-4 py-3"
+                  >
+                    <div className="min-w-0">
+                      <p className="font-semibold text-brand-ink">
+                        {candidate.doctorName}｜{formatDateOnly(candidate.routeDate)} {candidate.routeWeekday}
+                        {candidate.timeSlot}
+                      </p>
+                      <p className="mt-1 text-xs text-slate-600">
+                        尚未排程，可沿用 {candidate.sourceDaysBack} 天前「{candidate.sourceRoutePlanName}」，
+                        共 {candidate.checkedPatientCount} 位已勾選個案。
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => applyAutoScheduleCarryoverCandidate(candidate)}
+                        className="rounded-full bg-brand-forest px-4 py-2 text-xs font-semibold text-white"
+                      >
+                        同意排入
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => dismissAutoScheduleCarryoverCandidate(candidate.id)}
+                        className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-brand-ink"
+                      >
+                        暫不處理
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
