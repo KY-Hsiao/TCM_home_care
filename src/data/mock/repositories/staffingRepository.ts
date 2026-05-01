@@ -10,6 +10,30 @@ export function createStaffingRepository(
   getDb: () => AppDb,
   updateDb: (updater: (db: AppDb) => AppDb) => void
 ): StaffingRepository {
+  const executedStatuses = [
+    "on_the_way",
+    "tracking",
+    "proximity_pending",
+    "arrived",
+    "in_treatment",
+    "completed",
+    "followup_pending",
+    "issue_pending"
+  ];
+  const trackingStatuses = ["on_the_way", "tracking", "proximity_pending", "arrived", "in_treatment"];
+
+  const buildMonthRange = (date = new Date()) => {
+    const year = date.getFullYear();
+    const month = date.getMonth();
+    const start = new Date(year, month - 1, 1);
+    const end = new Date(year, month, 1);
+    return {
+      start,
+      end,
+      label: `${start.getFullYear()}年${start.getMonth() + 1}月`
+    };
+  };
+
   const resolveDashboardDate = (db: AppDb) => {
     const today = new Date();
     const todaySchedules = db.visit_schedules.filter((schedule) =>
@@ -26,6 +50,28 @@ export function createStaffingRepository(
     })[0];
 
     return nearestSchedule?.scheduled_start_at.slice(0, 10) ?? null;
+  };
+
+  const resolveUrgentScheduleIds = (
+    schedules: AppDb["visit_schedules"],
+    pendingPatientExceptionItems: AppDb["notification_center_items"]
+  ) => {
+    const scheduleIdsInScope = new Set(schedules.map((schedule) => schedule.id));
+    const urgentScheduleIds = new Set(
+      schedules
+        .filter((schedule) => schedule.last_feedback_code === "urgent")
+        .map((schedule) => schedule.id)
+    );
+    pendingPatientExceptionItems.forEach((item) => {
+      if (
+        item.linked_visit_schedule_id &&
+        scheduleIdsInScope.has(item.linked_visit_schedule_id) &&
+        (item.title.includes("urgent") || item.content.includes("urgent") || item.title.includes("緊急"))
+      ) {
+        urgentScheduleIds.add(item.linked_visit_schedule_id);
+      }
+    });
+    return urgentScheduleIds;
   };
 
   const getImpactedSchedules = (doctorId: string, startDate: string, endDate: string) => {
@@ -56,7 +102,10 @@ export function createStaffingRepository(
       const draftRoutePlans = db.saved_route_plans.filter(
         (routePlan) => routePlan.execution_status === "draft"
       );
-      const pendingPatientExceptionItems = db.notification_center_items.filter(
+      const patientExceptionItems = db.notification_center_items.filter(
+        (item) => item.role === "admin" && item.source_type === "patient_exception"
+      );
+      const pendingPatientExceptionItems = patientExceptionItems.filter(
         (item) => item.role === "admin" && item.status === "pending" && item.source_type === "patient_exception"
       );
       const exceptionScheduleIds = new Set(
@@ -69,27 +118,30 @@ export function createStaffingRepository(
           ["paused", "issue_pending", "followup_pending", "rescheduled", "cancelled"].includes(schedule.status) ||
           exceptionScheduleIds.has(schedule.id)
       );
-      const trackingStatuses = ["on_the_way", "tracking", "proximity_pending", "arrived", "in_treatment"];
-      const urgentScheduleIds = new Set(
-        todaySchedules
-          .filter((schedule) => schedule.last_feedback_code === "urgent")
-          .map((schedule) => schedule.id)
-      );
-      pendingPatientExceptionItems.forEach((item) => {
-        if (
-          item.linked_visit_schedule_id &&
-          (item.title.includes("urgent") || item.content.includes("urgent") || item.title.includes("緊急"))
-        ) {
-          urgentScheduleIds.add(item.linked_visit_schedule_id);
-        }
+      const urgentScheduleIds = resolveUrgentScheduleIds(todaySchedules, patientExceptionItems);
+      const previousMonthRange = buildMonthRange();
+      const previousMonthSchedules = db.visit_schedules.filter((schedule) => {
+        const scheduleStart = new Date(schedule.scheduled_start_at);
+        return scheduleStart >= previousMonthRange.start && scheduleStart < previousMonthRange.end;
       });
+      const previousMonthUrgentScheduleIds = resolveUrgentScheduleIds(
+        previousMonthSchedules,
+        patientExceptionItems
+      );
 
       return {
         todayVisitTotal: todaySchedules.length,
         draftRouteCount: draftRoutePlans.length,
+        executedVisitCount: todaySchedules.filter((schedule) => executedStatuses.includes(schedule.status)).length,
         trackingCount: todaySchedules.filter((schedule) => trackingStatuses.includes(schedule.status)).length,
         pausedCount: todaySchedules.filter((schedule) => schedule.status === "paused").length,
         urgentCount: urgentScheduleIds.size,
+        previousMonth: {
+          label: previousMonthRange.label,
+          executedVisitCount: previousMonthSchedules.filter((schedule) => executedStatuses.includes(schedule.status)).length,
+          pausedCount: previousMonthSchedules.filter((schedule) => schedule.status === "paused").length,
+          urgentCount: previousMonthUrgentScheduleIds.size
+        },
         unrecordedCount: todaySchedules.filter(
           (schedule) =>
             schedule.status === "completed" &&

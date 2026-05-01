@@ -87,9 +87,16 @@ export type DoctorDashboard = {
 export type AdminDashboard = {
   todayVisitTotal: number;
   draftRouteCount: number;
+  executedVisitCount: number;
   trackingCount: number;
   pausedCount: number;
   urgentCount: number;
+  previousMonth: {
+    label: string;
+    executedVisitCount: number;
+    pausedCount: number;
+    urgentCount: number;
+  };
   unrecordedCount: number;
   rescheduleCount: number;
   pendingLeaveRequests: LeaveRequest[];

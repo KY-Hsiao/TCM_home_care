@@ -324,10 +324,14 @@ export function AdminDashboardPage() {
   return (
     <div className="space-y-6">
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="今日訪視總數" value={dashboard.todayVisitTotal} hint="今日全部排程案件" />
-        <StatCard label="待實行路線" value={dashboard.draftRouteCount} hint="已儲存但尚未實行到醫師端的路線" />
-        <StatCard label="追蹤中案件數" value={dashboard.trackingCount} hint="醫師已出發或正在追蹤中的案件" />
-        <StatCard label="緊急處置數" value={dashboard.urgentCount} hint="醫師回覆緊急處置的案件" />
+        <StatCard label="執行人次" value={dashboard.executedVisitCount} hint="已出發、治療中或已完成的案件" />
+        <StatCard label="暫停人次" value={dashboard.pausedCount} hint="目前標記為暫停的案件" />
+        <StatCard label="緊急處置人次" value={dashboard.urgentCount} hint="醫師回覆緊急處置或緊急異常通知" />
+        <StatCard
+          label="上月總計"
+          value={`${dashboard.previousMonth.executedVisitCount}/${dashboard.previousMonth.pausedCount}/${dashboard.previousMonth.urgentCount}`}
+          hint={`${dashboard.previousMonth.label} 執行 / 暫停 / 緊急`}
+        />
       </div>
 
       <div className="grid gap-6 xl:grid-cols-2">
@@ -344,16 +348,16 @@ export function AdminDashboardPage() {
         >
           <div className="grid gap-3 sm:grid-cols-3">
             <div className="rounded-2xl border border-slate-200 bg-white p-4">
-              <p className="text-xs text-slate-500">異常案件</p>
-              <p className="mt-2 text-2xl font-semibold text-brand-ink">{dashboard.exceptionSchedules.length}</p>
+              <p className="text-xs text-slate-500">執行人次</p>
+              <p className="mt-2 text-2xl font-semibold text-brand-ink">{dashboard.executedVisitCount}</p>
             </div>
             <div className="rounded-2xl border border-slate-200 bg-white p-4">
-              <p className="text-xs text-slate-500">暫停案件</p>
+              <p className="text-xs text-slate-500">暫停人次</p>
               <p className="mt-2 text-2xl font-semibold text-brand-ink">{dashboard.pausedCount}</p>
             </div>
             <div className="rounded-2xl border border-slate-200 bg-white p-4">
-              <p className="text-xs text-slate-500">待補紀錄</p>
-              <p className="mt-2 text-2xl font-semibold text-brand-ink">{dashboard.unrecordedCount}</p>
+              <p className="text-xs text-slate-500">緊急處置人次</p>
+              <p className="mt-2 text-2xl font-semibold text-brand-ink">{dashboard.urgentCount}</p>
             </div>
           </div>
           <div className="mt-4 space-y-3">
@@ -403,9 +407,9 @@ export function AdminDashboardPage() {
               <p className="mt-2 text-2xl font-semibold text-brand-ink">{dashboard.rescheduleCount}</p>
             </div>
             <div className="rounded-2xl border border-slate-200 bg-white p-4">
-              <p className="text-xs text-slate-500">待實行路線</p>
-              <p className="mt-2 text-2xl font-semibold text-brand-ink">{dashboard.draftRoutePlans.length}</p>
-              <p className="mt-1 text-xs text-slate-500">已儲存但尚未送到醫師端</p>
+              <p className="text-xs text-slate-500">待補紀錄</p>
+              <p className="mt-2 text-2xl font-semibold text-brand-ink">{dashboard.unrecordedCount}</p>
+              <p className="mt-1 text-xs text-slate-500">已完成但尚未建立病歷</p>
             </div>
           </div>
           <div className="mt-4 grid gap-3 md:grid-cols-2">

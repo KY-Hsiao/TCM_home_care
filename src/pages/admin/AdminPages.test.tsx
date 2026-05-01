@@ -661,9 +661,12 @@ describe("AdminPages", () => {
 
     expect(screen.getByText("個案異常儀表板")).toBeInTheDocument();
     expect(screen.getByText("通知與任務儀表板")).toBeInTheDocument();
-    expect(screen.getAllByText("待實行路線").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("執行人次").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("暫停人次").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("緊急處置人次").length).toBeGreaterThan(0);
+    expect(screen.getByText("上月總計")).toBeInTheDocument();
+    expect(screen.queryByText("待實行路線")).not.toBeInTheDocument();
     expect(screen.getByText("待重排案件")).toBeInTheDocument();
-    expect(screen.getByText("暫停案件")).toBeInTheDocument();
     expect(screen.getByText("待補紀錄")).toBeInTheDocument();
     expect(screen.queryByText("待處理通知數")).not.toBeInTheDocument();
     expect(screen.queryByText("待處理任務")).not.toBeInTheDocument();
@@ -707,11 +710,15 @@ describe("AdminPages", () => {
 
     renderWithProviders(<AdminDashboardPage />);
 
-    const trackingCard = screen.getByText("追蹤中案件數").closest("div");
-    expect(trackingCard).not.toBeNull();
-    expect(within(trackingCard!).getByText("5")).toBeInTheDocument();
+    const executedCard = screen.getAllByText("執行人次")[0].closest("div");
+    expect(executedCard).not.toBeNull();
+    expect(within(executedCard!).getByText("6")).toBeInTheDocument();
 
-    expect(screen.getByText("異常案件")).toBeInTheDocument();
+    const previousMonthCard = screen.getByText("上月總計").closest("div");
+    expect(previousMonthCard).not.toBeNull();
+    expect(previousMonthCard?.textContent).toContain("2026年4月");
+
+    expect(screen.getAllByText("緊急處置人次").length).toBeGreaterThan(0);
     expect(screen.getByRole("link", { name: /張○發/ })).toBeInTheDocument();
   });
 
