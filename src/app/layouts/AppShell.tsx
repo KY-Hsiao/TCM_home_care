@@ -605,15 +605,8 @@ export function AppShell() {
         <div className={`min-w-0 ${isDoctorShell ? "space-y-3 lg:space-y-4" : "space-y-4"}`}>
           {shellRole !== "doctor" ? (
             <header className="rounded-[2rem] border border-white/70 bg-white/90 p-5 shadow-card backdrop-blur">
-              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                <div>
-                  <p className="text-sm text-brand-moss">Web Demo Session</p>
-                  <h2 className="text-2xl font-bold">行政管理協作視圖</h2>
-                  <p className="mt-1 text-sm text-slate-500">
-                    {shellRole === "admin" ? `目前登入行政：${currentUserName ?? "未登入"}` : "系統共用頁面"}
-                  </p>
-                </div>
-                <div className="grid gap-2 md:grid-cols-[160px_160px_auto_auto]">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-start">
+                <div className="grid gap-2 md:grid-cols-[160px_160px_auto]">
                   <Link
                     to="/admin/reminders"
                     className="rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-center text-sm font-semibold text-brand-ink"
@@ -638,9 +631,16 @@ export function AppShell() {
                       onClick={handleLogout}
                       className="rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white"
                     >
-                      登出
-                    </button>
-                  ) : null}
+                    登出
+                  </button>
+                ) : null}
+                </div>
+                <div className="lg:pl-2">
+                  <p className="text-sm text-brand-moss">Web Demo Session</p>
+                  <h2 className="text-2xl font-bold">行政管理協作視圖</h2>
+                  <p className="mt-1 text-sm text-slate-500">
+                    {shellRole === "admin" ? `目前登入行政：${currentUserName ?? "未登入"}` : "系統共用頁面"}
+                  </p>
                 </div>
               </div>
               {unreadNotificationCount > 0 ? (
