@@ -73,30 +73,30 @@ export function RoleSelectPage() {
   };
 
   return (
-    <div className="mx-auto flex min-h-screen max-w-6xl items-center px-4 py-10 lg:px-6">
-      <div className="grid w-full gap-6 lg:grid-cols-[1.05fr_0.95fr]">
-        <div className="overflow-hidden rounded-[2rem] bg-[linear-gradient(140deg,#0f172a_0%,#1e293b_58%,#14532d_100%)] p-10 text-white shadow-card">
+    <div className="mx-auto flex min-h-screen max-w-6xl items-center px-4 py-6 lg:px-6">
+      <div className="grid w-full gap-4 lg:grid-cols-[0.9fr_1fr] lg:gap-5">
+        <div className="overflow-hidden rounded-[1.6rem] bg-[linear-gradient(140deg,#0f172a_0%,#1e293b_58%,#14532d_100%)] p-6 text-white shadow-card lg:p-7">
           <p className="text-sm tracking-[0.18em] text-brand-sand/70">中醫居家輔助系統</p>
-          <h1 className="mt-4 text-4xl font-bold leading-tight lg:text-5xl">
+          <h1 className="mt-3 text-3xl font-bold leading-tight lg:text-4xl">
             中醫居家
             <br />
             輔助系統
           </h1>
-          <p className="mt-5 max-w-xl text-base leading-7 text-brand-sand/80">
+          <p className="mt-4 max-w-xl text-sm leading-6 text-brand-sand/80 lg:text-base">
             直接依角色登入，進入醫師端導航與回院病歷，或行政端通知中心、追蹤地圖與排程管理。
           </p>
-          <div className="mt-8 grid gap-3 sm:grid-cols-3">
-            <div className="rounded-2xl border border-white/15 bg-white/10 px-4 py-4">
+          <div className="mt-5 grid gap-2 sm:grid-cols-3 lg:grid-cols-1 xl:grid-cols-3">
+            <div className="rounded-2xl border border-white/15 bg-white/10 px-3 py-3">
               <p className="text-xs text-brand-sand/70">醫師端</p>
-              <p className="mt-2 font-semibold">導航與病歷</p>
+              <p className="mt-1 font-semibold">導航與病歷</p>
             </div>
-            <div className="rounded-2xl border border-white/15 bg-white/10 px-4 py-4">
+            <div className="rounded-2xl border border-white/15 bg-white/10 px-3 py-3">
               <p className="text-xs text-brand-sand/70">行政端</p>
-              <p className="mt-2 font-semibold">通知與追蹤</p>
+              <p className="mt-1 font-semibold">通知與追蹤</p>
             </div>
-            <div className="rounded-2xl border border-white/15 bg-white/10 px-4 py-4">
+            <div className="rounded-2xl border border-white/15 bg-white/10 px-3 py-3">
               <p className="text-xs text-brand-sand/70">登入方式</p>
-              <p className="mt-2 font-semibold">帳密直達角色</p>
+              <p className="mt-1 font-semibold">帳密直達角色</p>
             </div>
           </div>
         </div>
