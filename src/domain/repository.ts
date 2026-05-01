@@ -51,6 +51,13 @@ export type PatientRemoveResult = {
   blockedReason: string | null;
 };
 
+export type PatientBatchRemoveResult = {
+  results: PatientRemoveResult[];
+  removedCount: number;
+  blockedCount: number;
+  removedScheduleCount: number;
+};
+
 export type PatientProfile = {
   patient: Patient;
   caregivers: Caregiver[];
@@ -129,6 +136,7 @@ export interface PatientRepository {
     message: string;
   };
   removePatient(patientId: string): PatientRemoveResult;
+  removePatients(patientIds: string[]): PatientBatchRemoveResult;
   updateCaregiver(
     caregiverId: string,
     patch: Partial<

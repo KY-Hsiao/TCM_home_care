@@ -8,6 +8,7 @@ import type {
   SavedRoutePlan
 } from "../../../domain/models";
 import type {
+  PatientBatchRemoveResult,
   PatientRemoveResult,
   PatientRepository,
   PatientUpsertResult
@@ -74,6 +75,102 @@ function reindexRouteItems(routeItems: SavedRoutePlan["route_items"]) {
           route_order: null
         }
   );
+}
+
+function removePatientFromDb(
+  db: AppDb,
+  patientId: string
+): { db: AppDb; result: PatientRemoveResult } {
+  const patient = db.patients.find((item) => item.id === patientId);
+  if (!patient) {
+    return {
+      db,
+      result: {
+        patientId,
+        removed: false,
+        removedScheduleCount: 0,
+        blockedReason: "找不到指定個案"
+      }
+    };
+  }
+
+  const patientSchedules = db.visit_schedules.filter((schedule) => schedule.patient_id === patientId);
+  const activeSchedules = patientSchedules.filter((schedule) =>
+    ACTIVE_VISIT_STATUSES.includes(schedule.status as (typeof ACTIVE_VISIT_STATUSES)[number])
+  );
+
+  if (activeSchedules.length > 0) {
+    return {
+      db,
+      result: {
+        patientId,
+        removed: false,
+        removedScheduleCount: patientSchedules.length,
+        blockedReason: "此個案仍有進行中的訪視流程"
+      }
+    };
+  }
+
+  const scheduleIds = new Set(patientSchedules.map((schedule) => schedule.id));
+  const caregiverIds = new Set(
+    db.caregivers
+      .filter((caregiver) => caregiver.patient_id === patientId)
+      .map((caregiver) => caregiver.id)
+  );
+  const nextSavedRoutePlans = db.saved_route_plans
+    .map((routePlan) => {
+      const nextRouteItems = reindexRouteItems(
+        routePlan.route_items.filter((item) => item.patient_id !== patientId)
+      );
+      return {
+        ...routePlan,
+        route_items: nextRouteItems,
+        schedule_ids: nextRouteItems
+          .map((item) => item.schedule_id)
+          .filter((scheduleId): scheduleId is string => Boolean(scheduleId))
+      };
+    })
+    .filter((routePlan) => routePlan.route_items.length > 0);
+
+  return {
+    db: {
+      ...db,
+      patients: db.patients.filter((item) => item.id !== patientId),
+      caregivers: db.caregivers.filter((caregiver) => caregiver.patient_id !== patientId),
+      caregiver_chat_bindings: db.caregiver_chat_bindings.filter(
+        (binding) => !caregiverIds.has(binding.caregiver_id)
+      ),
+      visit_schedules: db.visit_schedules.filter((schedule) => schedule.patient_id !== patientId),
+      saved_route_plans: nextSavedRoutePlans,
+      visit_records: db.visit_records.filter(
+        (record) => !scheduleIds.has(record.visit_schedule_id)
+      ),
+      contact_logs: db.contact_logs.filter((log) => log.patient_id !== patientId),
+      notification_tasks: db.notification_tasks.filter((task) => task.patient_id !== patientId),
+      reschedule_actions: db.reschedule_actions.filter(
+        (action) => !scheduleIds.has(action.visit_schedule_id)
+      ),
+      reminders: db.reminders.filter(
+        (reminder) =>
+          !reminder.related_visit_schedule_id ||
+          !scheduleIds.has(reminder.related_visit_schedule_id)
+      ),
+      notification_center_items: db.notification_center_items.filter(
+        (item) =>
+          item.linked_patient_id !== patientId &&
+          (!item.linked_visit_schedule_id || !scheduleIds.has(item.linked_visit_schedule_id))
+      ),
+      doctor_location_logs: db.doctor_location_logs.filter(
+        (log) => !log.linked_visit_schedule_id || !scheduleIds.has(log.linked_visit_schedule_id)
+      )
+    },
+    result: {
+      patientId,
+      removed: true,
+      removedScheduleCount: patientSchedules.length,
+      blockedReason: null
+    }
+  };
 }
 
 export function createPatientRepository(
@@ -462,95 +559,40 @@ export function createPatientRepository(
       };
 
       updateDb((db) => {
-        const patient = db.patients.find((item) => item.id === patientId);
-        if (!patient) {
-          result = {
-            patientId,
-            removed: false,
-            removedScheduleCount: 0,
-            blockedReason: "找不到指定個案"
-          };
-          return db;
-        }
-
-        const patientSchedules = db.visit_schedules.filter((schedule) => schedule.patient_id === patientId);
-        const activeSchedules = patientSchedules.filter((schedule) =>
-          ACTIVE_VISIT_STATUSES.includes(schedule.status as (typeof ACTIVE_VISIT_STATUSES)[number])
-        );
-
-        if (activeSchedules.length > 0) {
-          result = {
-            patientId,
-            removed: false,
-            removedScheduleCount: patientSchedules.length,
-            blockedReason: "此個案仍有進行中的訪視流程"
-          };
-          return db;
-        }
-
-        const scheduleIds = new Set(patientSchedules.map((schedule) => schedule.id));
-        const caregiverIds = new Set(
-          db.caregivers
-            .filter((caregiver) => caregiver.patient_id === patientId)
-            .map((caregiver) => caregiver.id)
-        );
-        const nextSavedRoutePlans = db.saved_route_plans
-          .map((routePlan) => {
-            const nextRouteItems = reindexRouteItems(
-              routePlan.route_items.filter((item) => item.patient_id !== patientId)
-            );
-            return {
-              ...routePlan,
-              route_items: nextRouteItems,
-              schedule_ids: nextRouteItems
-                .map((item) => item.schedule_id)
-                .filter((scheduleId): scheduleId is string => Boolean(scheduleId))
-            };
-          })
-          .filter((routePlan) => routePlan.route_items.length > 0);
-
-        result = {
-          patientId,
-          removed: true,
-          removedScheduleCount: patientSchedules.length,
-          blockedReason: null
-        };
-
-        return {
-          ...db,
-          patients: db.patients.filter((item) => item.id !== patientId),
-          caregivers: db.caregivers.filter((caregiver) => caregiver.patient_id !== patientId),
-          caregiver_chat_bindings: db.caregiver_chat_bindings.filter(
-            (binding) => !caregiverIds.has(binding.caregiver_id)
-          ),
-          visit_schedules: db.visit_schedules.filter((schedule) => schedule.patient_id !== patientId),
-          saved_route_plans: nextSavedRoutePlans,
-          visit_records: db.visit_records.filter(
-            (record) => !scheduleIds.has(record.visit_schedule_id)
-          ),
-          contact_logs: db.contact_logs.filter((log) => log.patient_id !== patientId),
-          notification_tasks: db.notification_tasks.filter((task) => task.patient_id !== patientId),
-          reschedule_actions: db.reschedule_actions.filter(
-            (action) => !scheduleIds.has(action.visit_schedule_id)
-          ),
-          reminders: db.reminders.filter(
-            (reminder) =>
-              !reminder.related_visit_schedule_id ||
-              !scheduleIds.has(reminder.related_visit_schedule_id)
-          ),
-          notification_center_items: db.notification_center_items.filter(
-            (item) =>
-              item.linked_patient_id !== patientId &&
-              (!item.linked_visit_schedule_id || !scheduleIds.has(item.linked_visit_schedule_id))
-          ),
-          doctor_location_logs: db.doctor_location_logs.filter(
-            (log) =>
-              !log.linked_visit_schedule_id || !scheduleIds.has(log.linked_visit_schedule_id)
-          )
-        };
+        const removal = removePatientFromDb(db, patientId);
+        result = removal.result;
+        return removal.db;
       });
 
       return result;
+    },
+    removePatients(patientIds) {
+      const results: PatientRemoveResult[] = [];
+
+      updateDb((db) => {
+        let nextDb = db;
+        patientIds.forEach((patientId) => {
+          const removal = removePatientFromDb(nextDb, patientId);
+          nextDb = removal.db;
+          results.push(removal.result);
+        });
+        return nextDb;
+      });
+
+      return results.reduce<PatientBatchRemoveResult>(
+        (summary, result) => ({
+          results: summary.results,
+          removedCount: summary.removedCount + (result.removed ? 1 : 0),
+          blockedCount: summary.blockedCount + (result.removed ? 0 : 1),
+          removedScheduleCount: summary.removedScheduleCount + (result.removed ? result.removedScheduleCount : 0)
+        }),
+        {
+          results,
+          removedCount: 0,
+          blockedCount: 0,
+          removedScheduleCount: 0
+        }
+      );
     },
     updateCaregiver(caregiverId, patch) {
       updateDb((db) => {

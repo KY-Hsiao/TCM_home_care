@@ -2258,6 +2258,55 @@ export function AdminPatientsPage() {
     setEditorOpen(false);
   };
 
+  const batchDeletePatients = (targetIds: string[]) => {
+    if (targetIds.length === 0) {
+      setRecentAction("請先勾選個案。");
+      return;
+    }
+
+    const targetPatients = targetIds
+      .map((patientId) => patients.find((patient) => patient.id === patientId))
+      .filter((patient): patient is Patient => Boolean(patient));
+    if (targetPatients.length === 0) {
+      setRecentAction("找不到可刪除的個案。");
+      setSelectedPatientIds([]);
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `確定要批次刪除 ${targetPatients.length} 位個案嗎？相關排程、訪視紀錄與流程資料也會一併移除。`
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    const result = repositories.patientRepository.removePatients(
+      targetPatients.map((patient) => patient.id)
+    );
+    const removedPatientIds = result.results
+      .filter((item) => item.removed)
+      .map((item) => item.patientId);
+    const firstBlockedResult = result.results.find((item) => !item.removed);
+    const firstBlockedPatient = firstBlockedResult
+      ? targetPatients.find((patient) => patient.id === firstBlockedResult.patientId)
+      : undefined;
+    const firstBlockedReason =
+      firstBlockedResult && firstBlockedPatient
+        ? `${maskPatientName(firstBlockedPatient.name)}：${firstBlockedResult.blockedReason ?? "未提供原因"}`
+        : "";
+
+    setSelectedPatientIds((current) => current.filter((id) => !removedPatientIds.includes(id)));
+    if (selectedPatient && removedPatientIds.includes(selectedPatient.id)) {
+      syncDraft(patients.find((patient) => !removedPatientIds.includes(patient.id)));
+      setEditorOpen(false);
+    }
+    setRecentAction(
+      `批次刪除完成：已刪除 ${result.removedCount} 位個案，並清除 ${result.removedScheduleCount} 筆相關排程${
+        result.blockedCount > 0 ? `，略過 ${result.blockedCount} 位。${firstBlockedReason}` : ""
+      }。`
+    );
+  };
+
   const deleteSelectedPatient = () => deletePatient(selectedPatient);
 
   const handleCsvImport = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -2397,6 +2446,13 @@ export function AdminPatientsPage() {
               className="rounded-full bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-700 ring-1 ring-slate-300"
             >
               結案
+            </button>
+            <button
+              type="button"
+              onClick={() => batchDeletePatients(selectedPatientIds)}
+              className="rounded-full bg-rose-50 px-4 py-2 text-sm font-semibold text-rose-700 ring-1 ring-rose-200"
+            >
+              批次刪除
             </button>
             <button
               type="button"

@@ -1832,6 +1832,24 @@ describe("AdminPages", () => {
     ).toBe(false);
   });
 
+  it("AdminPatientsPage 可批次刪除勾選個案", () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    renderWithProviders(<AdminPatientsPage />);
+
+    fireEvent.click(screen.getByLabelText("何○惜 勾選"));
+    fireEvent.click(screen.getByLabelText("彭○傑 勾選"));
+    fireEvent.click(screen.getByRole("button", { name: "批次刪除" }));
+
+    expect(screen.getByRole("status")).toHaveTextContent("批次刪除完成：已刪除 2 位個案");
+    expect(screen.getByText("目前已勾選 0 位個案")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "編輯 何○惜" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "編輯 彭○傑" })).not.toBeInTheDocument();
+    const storedDb = JSON.parse(window.localStorage.getItem(MOCK_DB_STORAGE_KEY) ?? "{}");
+    expect(storedDb.patients.some((patient: { id: string }) => patient.id === "pat-011")).toBe(false);
+    expect(storedDb.patients.some((patient: { id: string }) => patient.id === "pat-012")).toBe(false);
+  });
+
   it("AdminPatientsPage 不允許刪除已經開始移動或治療中的個案", () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
 
