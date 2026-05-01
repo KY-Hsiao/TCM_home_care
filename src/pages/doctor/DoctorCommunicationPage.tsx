@@ -69,22 +69,8 @@ export function DoctorTeamCommunicationPage() {
       subject: input.subject,
       content: input.content,
       outcome: input.outcome,
-      messageType:
-        input.subject.startsWith("語音通話邀請｜")
-          ? "voice_invite"
-          : input.subject.startsWith("語音通話已接聽｜")
-            ? "voice_accept"
-            : input.subject.startsWith("語音通話已結束｜")
-              ? "voice_end"
-              : "text",
-      callStatus:
-        input.subject.startsWith("語音通話邀請｜")
-          ? "ringing"
-          : input.subject.startsWith("語音通話已接聽｜")
-            ? "connected"
-            : input.subject.startsWith("語音通話已結束｜")
-              ? "ended"
-              : null,
+      messageType: "text",
+      callStatus: null,
       contactedAt: now
     });
   };

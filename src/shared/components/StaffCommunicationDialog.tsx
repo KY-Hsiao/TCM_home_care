@@ -54,16 +54,6 @@ type StaffCommunicationPanelProps = {
   onClose?: () => void;
 };
 
-function formatCallDuration(totalSeconds: number) {
-  const minutes = Math.floor(totalSeconds / 60)
-    .toString()
-    .padStart(2, "0");
-  const seconds = Math.floor(totalSeconds % 60)
-    .toString()
-    .padStart(2, "0");
-  return `${minutes}:${seconds}`;
-}
-
 function resolveLogDirection(log: TeamCommunicationMessage, currentUserLabel: string) {
   if (log.sender_role) {
     return log.outcome.startsWith(`${currentUserLabel} `) || log.sender_role === "admin" && currentUserLabel === "行政人員"
@@ -73,88 +63,9 @@ function resolveLogDirection(log: TeamCommunicationMessage, currentUserLabel: st
   return log.outcome.startsWith(`${currentUserLabel} `) ? "outgoing" : "incoming";
 }
 
-const voiceCallInvitePrefix = "語音通話邀請｜";
-const voiceCallAcceptedPrefix = "語音通話已接聽｜";
-const voiceCallEndedPrefix = "語音通話已結束｜";
-
-type CallSessionStatus = "idle" | "outgoing_ringing" | "incoming_ringing" | "connected" | "ended";
-
-type CallSession = {
-  status: CallSessionStatus;
-  inviteLog: TeamCommunicationMessage | null;
-  acceptedLog: TeamCommunicationMessage | null;
-  endedLog: TeamCommunicationMessage | null;
-};
-
-function resolveCallEventType(subject: string) {
-  if (subject.startsWith(voiceCallInvitePrefix)) {
-    return "invite";
-  }
-  if (subject.startsWith(voiceCallAcceptedPrefix)) {
-    return "accepted";
-  }
-  if (subject.startsWith(voiceCallEndedPrefix)) {
-    return "ended";
-  }
-  return null;
-}
-
-function resolveCallSession(logs: TeamCommunicationMessage[], currentUserLabel: string): CallSession {
-  const orderedCallLogs = [...logs]
-    .filter((log) => log.channel === "phone" && resolveCallEventType(log.subject))
-    .sort(
-      (left, right) =>
-        new Date(left.contacted_at).getTime() - new Date(right.contacted_at).getTime()
-    );
-
-  let session: CallSession = {
-    status: "idle",
-    inviteLog: null,
-    acceptedLog: null,
-    endedLog: null
-  };
-
-  orderedCallLogs.forEach((log) => {
-    const eventType = resolveCallEventType(log.subject);
-    if (eventType === "invite") {
-      session = {
-        status:
-          resolveLogDirection(log, currentUserLabel) === "outgoing"
-            ? "outgoing_ringing"
-            : "incoming_ringing",
-        inviteLog: log,
-        acceptedLog: null,
-        endedLog: null
-      };
-      return;
-    }
-
-    if (eventType === "accepted" && session.inviteLog) {
-      session = {
-        ...session,
-        status: "connected",
-        acceptedLog: log,
-        endedLog: null
-      };
-      return;
-    }
-
-    if (eventType === "ended" && session.inviteLog) {
-      session = {
-        ...session,
-        status: "ended",
-        endedLog: log
-      };
-    }
-  });
-
-  return session;
-}
-
 export function StaffCommunicationPanel({
   title,
   counterpartLabel,
-  counterpartPhone,
   currentUserLabel,
   contextLabel,
   doctorId,
@@ -171,52 +82,11 @@ export function StaffCommunicationPanel({
   onClose,
   onCreateLog
 }: StaffCommunicationPanelProps) {
-  const [activeTab, setActiveTab] = useState<"text" | "call">("text");
   const [draftMessage, setDraftMessage] = useState("");
   const [feedback, setFeedback] = useState<string | null>(null);
-  const [nowTick, setNowTick] = useState(() => Date.now());
   const conversationBottomRef = useRef<HTMLDivElement | null>(null);
   const openedConversationKeyRef = useRef<string | null>(null);
   const displayLogs = useMemo(() => [...logs].slice(0, 30).reverse(), [logs]);
-  const callSession = useMemo(
-    () => resolveCallSession(logs, currentUserLabel),
-    [currentUserLabel, logs]
-  );
-  const waitingSeconds =
-    callSession.status === "outgoing_ringing" || callSession.status === "incoming_ringing"
-      ? Math.max(
-          0,
-          Math.floor((nowTick - new Date(callSession.inviteLog?.contacted_at ?? nowTick).getTime()) / 1000)
-        )
-      : 0;
-  const callDurationSeconds =
-    callSession.status === "connected"
-      ? Math.max(
-          0,
-          Math.floor((nowTick - new Date(callSession.acceptedLog?.contacted_at ?? nowTick).getTime()) / 1000)
-        )
-      : callSession.status === "ended" && callSession.acceptedLog && callSession.endedLog
-        ? Math.max(
-            0,
-            Math.floor(
-              (new Date(callSession.endedLog.contacted_at).getTime() -
-                new Date(callSession.acceptedLog.contacted_at).getTime()) /
-                1000
-            )
-          )
-        : 0;
-
-  useEffect(() => {
-    if (!["outgoing_ringing", "incoming_ringing", "connected"].includes(callSession.status)) {
-      return;
-    }
-
-    const intervalId = window.setInterval(() => {
-      setNowTick(Date.now());
-    }, 1000);
-
-    return () => window.clearInterval(intervalId);
-  }, [callSession.status]);
 
   useEffect(() => {
     if (typeof conversationBottomRef.current?.scrollIntoView === "function") {
@@ -225,7 +95,7 @@ export function StaffCommunicationPanel({
         block: "end"
       });
     }
-  }, [displayLogs, activeTab]);
+  }, [displayLogs]);
 
   useEffect(() => {
     const conversationKey = `${doctorId}:${adminUserId}`;
@@ -263,68 +133,6 @@ export function StaffCommunicationPanel({
     }
   };
 
-  const handleStartCall = async () => {
-    if (callSession.status === "outgoing_ringing" || callSession.status === "incoming_ringing") {
-      setFeedback("目前已有一筆語音通話邀請尚未處理。");
-      return;
-    }
-    if (callSession.status === "connected") {
-      setFeedback("目前已在通話中，請先結束目前通話。");
-      return;
-    }
-    try {
-      await onCreateLog({
-        channel: "phone",
-        subject: `${voiceCallInvitePrefix}${contextLabel}`,
-        content: `${currentUserLabel} 在團隊通訊中發起與 ${counterpartLabel} 的語音通話。請前往團隊通訊頁面立即回應。`,
-        outcome: counterpartPhone
-          ? `${currentUserLabel} 已發起語音通話邀請，對象電話：${counterpartPhone}`
-          : `已在團隊通訊內啟動語音通話流程，等待 ${counterpartLabel} 接聽。`
-      });
-      setActiveTab("call");
-      setNowTick(Date.now());
-      setFeedback(`已送出語音通話邀請，等待 ${counterpartLabel} 接聽。`);
-    } catch (error) {
-      setFeedback(error instanceof Error ? error.message : "語音通話邀請送出失敗，請稍後再試。");
-    }
-  };
-
-  const handleAcceptCall = async () => {
-    if (callSession.status !== "incoming_ringing") {
-      return;
-    }
-    try {
-      await onCreateLog({
-        channel: "phone",
-        subject: `${voiceCallAcceptedPrefix}${contextLabel}`,
-        content: `${currentUserLabel} 已接受 ${counterpartLabel} 發起的語音通話邀請，開始建立通話連線。`,
-        outcome: `${currentUserLabel} 已接聽語音通話，正在與 ${counterpartLabel} 通話。`
-      });
-      setActiveTab("call");
-      setNowTick(Date.now());
-      setFeedback("已接受語音通話邀請，正在建立通話連線。");
-    } catch (error) {
-      setFeedback(error instanceof Error ? error.message : "接受語音邀請失敗，請稍後再試。");
-    }
-  };
-
-  const handleEndCall = async () => {
-    if (callSession.status !== "connected" && callSession.status !== "outgoing_ringing" && callSession.status !== "incoming_ringing") {
-      return;
-    }
-    try {
-      await onCreateLog({
-        channel: "phone",
-        subject: `${voiceCallEndedPrefix}${contextLabel}`,
-        content: `${currentUserLabel} 已結束與 ${counterpartLabel} 的語音通話。`,
-        outcome: `${currentUserLabel} 已結束本次語音通話。`
-      });
-      setFeedback(`語音通話已結束，本次通話 ${formatCallDuration(callDurationSeconds)}。`);
-    } catch (error) {
-      setFeedback(error instanceof Error ? error.message : "結束語音通話失敗，請稍後再試。");
-    }
-  };
-
   return (
     <div className="flex h-full min-h-0 w-full flex-col overflow-hidden rounded-[28px] bg-[#f4f7f1] shadow-2xl lg:rounded-[32px]">
       <div className="shrink-0 border-b border-slate-200 bg-white/95 px-4 py-3 backdrop-blur sm:px-5 sm:py-4">
@@ -344,31 +152,6 @@ export function StaffCommunicationPanel({
             ) : null}
           </div>
         </div>
-
-        <div className="mt-3 flex flex-wrap gap-2 sm:mt-4">
-          <button
-            type="button"
-            onClick={() => setActiveTab("text")}
-            className={`rounded-full px-4 py-2 text-sm font-semibold ${
-              activeTab === "text"
-                ? "bg-brand-forest text-white"
-                : "bg-white text-brand-ink ring-1 ring-slate-200"
-            }`}
-          >
-            打字訊息
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab("call")}
-            className={`rounded-full px-4 py-2 text-sm font-semibold ${
-              activeTab === "call"
-                ? "bg-brand-coral text-white"
-                : "bg-white text-brand-ink ring-1 ring-slate-200"
-            }`}
-          >
-            語音通話
-          </button>
-        </div>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto bg-[linear-gradient(180deg,#eef6ef_0%,#f8faf8_100%)] px-4 py-3 sm:px-5 sm:py-4">
@@ -382,35 +165,6 @@ export function StaffCommunicationPanel({
             最後同步：{formatDateTimeFull(lastSyncedAt)}
           </div>
         ) : null}
-        {callSession.status === "incoming_ringing" ? (
-          <div className="sticky top-0 z-10 mb-4 rounded-3xl border-2 border-rose-300 bg-rose-50 px-4 py-4 text-sm text-rose-800 shadow-sm">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <p className="font-semibold">有語音通話邀請</p>
-                <p className="mt-1 text-xs text-rose-700">
-                  {counterpartLabel} 正在邀請你接聽語音通話，已等待 {formatCallDuration(waitingSeconds)}。
-                </p>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={handleAcceptCall}
-                  className="rounded-full bg-rose-600 px-4 py-2 text-sm font-semibold text-white"
-                >
-                  接受語音邀請
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setActiveTab("call")}
-                  className="rounded-full border border-rose-200 bg-white px-4 py-2 text-sm font-semibold text-rose-700"
-                >
-                  稍後處理
-                </button>
-              </div>
-            </div>
-          </div>
-        ) : null}
-
         {displayLogs.length ? (
           <div className="space-y-3">
             {displayLogs.map((log) => {
@@ -472,100 +226,27 @@ export function StaffCommunicationPanel({
           </div>
         ) : null}
 
-        {activeTab === "text" ? (
-          <div className="space-y-3">
-            <label className="block text-sm">
-              <span className="mb-1 block font-medium text-brand-ink">訊息內容</span>
-              <textarea
-                value={draftMessage}
-                onChange={(event) => setDraftMessage(event.target.value)}
-                rows={3}
-                className="w-full rounded-3xl border border-slate-200 px-4 py-3"
-                placeholder={`直接輸入要傳給 ${counterpartLabel} 的交辦、回報或追蹤內容`}
-              />
-            </label>
-            <div className="flex justify-end">
-              <button
-                type="button"
-                onClick={handleSendMessage}
-                className="w-full rounded-full bg-brand-forest px-5 py-3 text-sm font-semibold text-white sm:w-auto"
-              >
-                送出站內訊息
-              </button>
-            </div>
+        <div className="space-y-3">
+          <label className="block text-sm">
+            <span className="mb-1 block font-medium text-brand-ink">訊息內容</span>
+            <textarea
+              value={draftMessage}
+              onChange={(event) => setDraftMessage(event.target.value)}
+              rows={3}
+              className="w-full rounded-3xl border border-slate-200 px-4 py-3"
+              placeholder={`直接輸入要傳給 ${counterpartLabel} 的交辦、回報或追蹤內容`}
+            />
+          </label>
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={handleSendMessage}
+              className="w-full rounded-full bg-brand-forest px-5 py-3 text-sm font-semibold text-white sm:w-auto"
+            >
+              送出站內訊息
+            </button>
           </div>
-        ) : (
-          <div className="space-y-3">
-              <div className="rounded-3xl border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-600">
-                <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-                  <div>
-                    <p className="text-xs text-slate-500">目前狀態</p>
-                    <p className="mt-1 font-semibold text-brand-ink">
-                    {callSession.status === "connected"
-                      ? "通話進行中"
-                      : callSession.status === "outgoing_ringing"
-                        ? "等待對方接聽"
-                        : callSession.status === "incoming_ringing"
-                          ? "有來電邀請"
-                          : callSession.status === "ended"
-                            ? "通話已結束"
-                            : "尚未開始"}
-                  </p>
-                  </div>
-                  <div className="sm:text-right">
-                  <p className="text-xs text-slate-500">
-                    {callSession.status === "connected" ? "通話時間" : "等待時間"}
-                  </p>
-                  <p className="mt-1 font-semibold text-brand-ink">
-                    {formatCallDuration(
-                      callSession.status === "connected" || callSession.status === "ended"
-                        ? callDurationSeconds
-                        : waitingSeconds
-                    )}
-                  </p>
-                  </div>
-                </div>
-              <p className="mt-3 text-sm text-slate-600">
-                語音通話會留在目前團隊通訊畫面內處理，不會另開外部介面；接受方可直接在上方邀請列接通。
-              </p>
-            </div>
-            <div className="flex justify-end">
-              {callSession.status === "connected" ? (
-                <button
-                  type="button"
-                  onClick={handleEndCall}
-                  className="w-full rounded-full bg-slate-900 px-5 py-3 text-sm font-semibold text-white sm:w-auto"
-                >
-                  結束通話
-                </button>
-              ) : callSession.status === "incoming_ringing" ? (
-                <button
-                  type="button"
-                  onClick={handleAcceptCall}
-                  className="w-full rounded-full bg-rose-600 px-5 py-3 text-sm font-semibold text-white sm:w-auto"
-                >
-                  接受語音邀請
-                </button>
-              ) : callSession.status === "outgoing_ringing" ? (
-                <button
-                  type="button"
-                  onClick={handleEndCall}
-                  className="w-full rounded-full border border-slate-300 bg-white px-5 py-3 text-sm font-semibold text-slate-700 sm:w-auto"
-                >
-                  取消邀請
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={handleStartCall}
-                  className="w-full rounded-full bg-brand-coral px-5 py-3 text-sm font-semibold text-white sm:w-auto"
-                >
-                  開始語音通話
-                </button>
-              )}
-            </div>
-          </div>
-        )}
+        </div>
       </div>
     </div>
   );

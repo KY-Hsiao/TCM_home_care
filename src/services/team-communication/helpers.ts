@@ -2,42 +2,20 @@ import type { NotificationCenterItem } from "../../domain/models";
 import type { ContactLog } from "../../domain/models";
 import type { TeamCommunicationMessage, TeamCommunicationMessageType, TeamCommunicationRole } from "./types";
 
-const voiceCallInvitePrefix = "語音通話邀請｜";
-const voiceCallAcceptedPrefix = "語音通話已接聽｜";
-const voiceCallEndedPrefix = "語音通話已結束｜";
-
 export function resolveMessageTypeFromSubject(subject: string): TeamCommunicationMessageType {
-  if (subject.startsWith(voiceCallInvitePrefix)) {
-    return "voice_invite";
-  }
-  if (subject.startsWith(voiceCallAcceptedPrefix)) {
-    return "voice_accept";
-  }
-  if (subject.startsWith(voiceCallEndedPrefix)) {
-    return "voice_end";
-  }
+  void subject;
   return "text";
 }
 
 export function resolveCallStatusFromMessageType(messageType: TeamCommunicationMessageType) {
-  if (messageType === "voice_invite") {
-    return "ringing" as const;
-  }
-  if (messageType === "voice_accept") {
-    return "connected" as const;
-  }
-  if (messageType === "voice_end") {
-    return "ended" as const;
-  }
+  void messageType;
   return null;
 }
 
 export function isTeamCommunicationNotification(item: NotificationCenterItem) {
   return (
     ["manual_notice", "system_notification"].includes(item.source_type) &&
-    (item.title.startsWith("院內對話｜") ||
-      item.title.startsWith("語音通話邀請｜") ||
-      item.content.includes("團隊通訊"))
+    (item.title.startsWith("院內對話｜") || item.content.includes("團隊通訊"))
   );
 }
 

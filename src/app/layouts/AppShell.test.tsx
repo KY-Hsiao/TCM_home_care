@@ -558,7 +558,7 @@ describe("AppShell", () => {
     });
   });
 
-  it("醫師端發起語音通話時會同步通知行政回應", async () => {
+  it("醫師端團隊通訊視窗只保留文字訊息", () => {
     window.localStorage.setItem(
       SESSION_STORAGE_KEY,
       JSON.stringify({
@@ -573,23 +573,11 @@ describe("AppShell", () => {
     renderShell("/doctor/navigation", <DoctorLocationPage />);
 
     fireEvent.click(screen.getByRole("button", { name: "團隊通訊" }));
-    fireEvent.click(screen.getByRole("button", { name: "語音通話" }));
-    fireEvent.click(screen.getByRole("button", { name: "開始語音通話" }));
 
-    await waitFor(() =>
-      expect(screen.getByRole("status")).toHaveTextContent("已送出語音通話邀請")
-    );
-    const storedDb = JSON.parse(window.localStorage.getItem(MOCK_DB_STORAGE_KEY) ?? "{}");
-    expect(
-      (storedDb.notification_center_items ?? []).some(
-        (item: { role: string; owner_user_id: string; title: string; content: string; source_type: string }) =>
-          item.role === "admin" &&
-          item.owner_user_id === "admin-001" &&
-          item.source_type === "system_notification" &&
-          item.title.includes("語音通話邀請｜") &&
-          item.content.includes("請打開團隊通訊頁面立即回應。")
-      )
-    ).toBe(true);
+    expect(screen.getByLabelText("訊息內容")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "送出站內訊息" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "語音通話" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "開始語音通話" })).not.toBeInTheDocument();
   });
 
   it("醫師頁會保留快捷摘要，並以視窗顯示定位與案件摘要", () => {

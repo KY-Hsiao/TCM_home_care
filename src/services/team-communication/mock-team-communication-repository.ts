@@ -34,12 +34,9 @@ function buildNotificationPayload(input: TeamCommunicationCreateInput) {
     id: `nc-staff-${input.id}`,
     role: ownerRole,
     owner_user_id: input.receiverUserId,
-    source_type: input.channel === "phone" ? "system_notification" : "manual_notice",
+    source_type: "manual_notice",
     title: input.subject,
-    content:
-      input.channel === "phone"
-        ? `${input.content}\n請打開團隊通訊頁面立即回應。`
-        : input.content,
+    content: input.content,
     linked_patient_id: input.patientId,
     linked_visit_schedule_id: input.visitScheduleId,
     linked_doctor_id: input.doctorId,
@@ -70,7 +67,7 @@ function createMessageFromNotification(input: {
     caregiver_id: null,
     doctor_id: input.doctorId,
     admin_user_id: input.adminUserId,
-    channel: input.item.source_type === "system_notification" ? "phone" : "web_notice",
+    channel: "web_notice",
     subject: input.item.title,
     content: input.item.content,
     outcome: `${senderLabel} 已送出站內訊息，等待查看。`,
@@ -82,20 +79,8 @@ function createMessageFromNotification(input: {
     receiver_role: receiverRole,
     receiver_user_id:
       receiverRole === "admin" ? input.adminUserId : input.item.owner_user_id ?? input.doctorId,
-    message_type: input.item.title.startsWith("語音通話邀請｜")
-      ? "voice_invite"
-      : input.item.title.startsWith("語音通話已接聽｜")
-        ? "voice_accept"
-        : input.item.title.startsWith("語音通話已結束｜")
-          ? "voice_end"
-          : "text",
-    call_status: input.item.title.startsWith("語音通話邀請｜")
-      ? "ringing"
-      : input.item.title.startsWith("語音通話已接聽｜")
-        ? "connected"
-        : input.item.title.startsWith("語音通話已結束｜")
-          ? "ended"
-          : null,
+    message_type: "text",
+    call_status: null,
     is_read: !input.item.is_unread,
     read_at: null
   };

@@ -2,17 +2,9 @@ import type { ContactLog } from "../../domain/models";
 
 export type TeamCommunicationRole = "doctor" | "admin";
 
-export type TeamCommunicationMessageType =
-  | "text"
-  | "voice_invite"
-  | "voice_accept"
-  | "voice_end";
+export type TeamCommunicationMessageType = "text";
 
-export type TeamCommunicationCallStatus =
-  | "ringing"
-  | "connected"
-  | "ended"
-  | null;
+export type TeamCommunicationCallStatus = null;
 
 export type TeamCommunicationMessage = ContactLog & {
   sender_role: TeamCommunicationRole;
