@@ -295,6 +295,8 @@ export function useTeamCommunicationUnreadCount(input: {
   repositoryRef.current = repository;
   const refreshRequestIdRef = useRef(0);
   const [count, setCount] = useState(0);
+  const countRef = useRef(count);
+  countRef.current = count;
 
   const refresh = useCallback(async () => {
     if (!enabled) {
@@ -317,7 +319,10 @@ export function useTeamCommunicationUnreadCount(input: {
       if (requestId !== refreshRequestIdRef.current) {
         return;
       }
-      setCount(nextCount);
+      if (countRef.current !== nextCount) {
+        countRef.current = nextCount;
+        setCount(nextCount);
+      }
     } catch {
       // 保留舊值，避免未讀燈在短暫網路失敗時閃爍歸零。
     }
@@ -334,7 +339,11 @@ export function useTeamCommunicationUnreadCount(input: {
         (!input.doctorId || detail.doctorId === input.doctorId) &&
         (!input.adminUserId || detail.adminUserId === input.adminUserId)
       ) {
-        setCount((current) => (input.doctorId ? 0 : Math.max(0, current - 1)));
+        setCount((current) => {
+          const nextCount = input.doctorId ? 0 : Math.max(0, current - 1);
+          countRef.current = nextCount;
+          return nextCount;
+        });
       }
       void refresh();
     };
