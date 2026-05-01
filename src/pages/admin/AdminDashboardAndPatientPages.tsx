@@ -39,6 +39,21 @@ const trackingMapPadding = 56;
 const trackingMapMinZoom = 11;
 const trackingMapMaxZoom = 18;
 const trackingLocationRouteDistanceThresholdKm = 8;
+const inactiveTrackingScheduleStatuses = new Set<VisitSchedule["status"]>([
+  "paused",
+  "completed",
+  "cancelled",
+  "rescheduled",
+  "followup_pending"
+]);
+const currentTrackingScheduleStatuses = new Set<VisitSchedule["status"]>([
+  "tracking",
+  "on_the_way",
+  "proximity_pending",
+  "arrived",
+  "in_treatment",
+  "issue_pending"
+]);
 
 type RouteTimeSlot = (typeof routeTimeSlotOptions)[number];
 type TrackingRouteOption = {
@@ -137,6 +152,7 @@ type PatientImportRow = {
   doctorRaw: string;
   serviceSlot: string;
   notes: string;
+  reminderTags: string[];
 };
 
 function normalizeHomeCareServiceSlot(input: string) {
@@ -157,6 +173,15 @@ function isHomeCarePatientList(rows: string[][]) {
 
 function normalizeImportedPhone(input: string) {
   return /line/i.test(input) ? "" : input.trim();
+}
+
+function buildImportedReminderTags(input: { contactText?: string; notes?: string; serviceNeeds?: string[] }) {
+  const tags = new Set(input.serviceNeeds ?? []);
+  const text = `${input.contactText ?? ""} ${input.notes ?? ""}`;
+  if (/line|聯繫|聯絡|通知|電話/i.test(text)) {
+    tags.add("家屬聯繫");
+  }
+  return Array.from(tags);
 }
 
 function buildHomeCarePatientImportRows(rows: string[][]): PatientImportRow[] {
@@ -200,7 +225,8 @@ function buildHomeCarePatientImportRows(rows: string[][]): PatientImportRow[] {
         status: notes.includes("結案") ? "closed" : "active",
         doctorRaw: "",
         serviceSlot,
-        notes: [notes, contactText && !phone ? `原表連絡電話：${contactText}` : ""].filter(Boolean).join("；")
+        notes: [notes, contactText && !phone ? `原表連絡電話：${contactText}` : ""].filter(Boolean).join("；"),
+        reminderTags: buildImportedReminderTags({ contactText, notes })
       });
     });
   });
@@ -215,6 +241,9 @@ function buildLegacyPatientImportRows(header: string[], bodyRows: string[][]): P
 
   return bodyRows.map((row, index) => {
     const [name, diagnosis, serviceNeedsRaw, address, statusRaw, doctorRaw, serviceSlot] = row;
+    const serviceNeeds = serviceNeedsRaw
+      ? serviceNeedsRaw.split(/[|、,]/).map((item) => item.trim()).filter(Boolean)
+      : [];
     return {
       rowNumber: index + 2,
       name: name?.trim() ?? "",
@@ -222,13 +251,12 @@ function buildLegacyPatientImportRows(header: string[], bodyRows: string[][]): P
       phone: "",
       address: address?.trim() ?? "",
       diagnosis: diagnosis?.trim() ?? "",
-      serviceNeeds: serviceNeedsRaw
-        ? serviceNeedsRaw.split(/[|、,]/).map((item) => item.trim()).filter(Boolean)
-        : [],
+      serviceNeeds,
       status: normalizePatientStatus(statusRaw || "服務中"),
       doctorRaw: doctorRaw?.trim() ?? "",
       serviceSlot: serviceSlot?.trim() ?? "",
-      notes: ""
+      notes: "",
+      reminderTags: buildImportedReminderTags({ serviceNeeds })
     };
   });
 }
@@ -390,6 +418,51 @@ function sortTrackingSchedules(schedules: VisitSchedule[]) {
         (left.route_order ?? Number.MAX_SAFE_INTEGER) - (right.route_order ?? Number.MAX_SAFE_INTEGER) ||
         new Date(left.scheduled_start_at).getTime() - new Date(right.scheduled_start_at).getTime()
     );
+}
+
+function isActiveTrackingSchedule(schedule: Pick<VisitSchedule, "status">) {
+  return !inactiveTrackingScheduleStatuses.has(schedule.status);
+}
+
+function isCurrentTrackingSchedule(schedule: Pick<VisitSchedule, "status">) {
+  return currentTrackingScheduleStatuses.has(schedule.status);
+}
+
+function hasScheduleCoordinates(
+  schedule: VisitSchedule | undefined
+): schedule is VisitSchedule & { home_latitude_snapshot: number; home_longitude_snapshot: number } {
+  return (
+    schedule !== undefined &&
+    schedule.home_latitude_snapshot !== null &&
+    schedule.home_longitude_snapshot !== null
+  );
+}
+
+function getLatestActiveTrackingRouteSchedules(schedules: VisitSchedule[]) {
+  const latestSchedule = schedules
+    .filter(isActiveTrackingSchedule)
+    .slice()
+    .sort(
+      (left, right) =>
+        new Date(right.scheduled_start_at).getTime() - new Date(left.scheduled_start_at).getTime() ||
+        routeTimeSlotOptions.indexOf(resolveTrackingTimeSlot(right)) -
+          routeTimeSlotOptions.indexOf(resolveTrackingTimeSlot(left))
+    )[0];
+
+  if (!latestSchedule) {
+    return [];
+  }
+
+  const latestRouteDate = latestSchedule.scheduled_start_at.slice(0, 10);
+  const latestRouteTimeSlot = resolveTrackingTimeSlot(latestSchedule);
+  return sortTrackingSchedules(
+    schedules.filter(
+      (schedule) =>
+        isActiveTrackingSchedule(schedule) &&
+        schedule.scheduled_start_at.slice(0, 10) === latestRouteDate &&
+        resolveTrackingTimeSlot(schedule) === latestRouteTimeSlot
+    )
+  );
 }
 
 function isTrackingLogNearRoute(
@@ -985,6 +1058,10 @@ export function AdminDoctorTrackingPage() {
     centerLongitude: number;
     zoom: number;
   } | null>(null);
+  const activeTrackingPatientIds = useMemo(
+    () => new Set(db.patients.filter((patient) => patient.status === "active").map((patient) => patient.id)),
+    [db.patients]
+  );
   const trackingRouteOptions = useMemo<TrackingRouteOption[]>(() => {
     const routeOptionMap = new Map<
       string,
@@ -1000,6 +1077,27 @@ export function AdminDoctorTrackingPage() {
 
     if (savedRoutePlans.length) {
       savedRoutePlans.forEach((routePlan) => {
+        const scheduleIdSchedules = routePlan.schedule_ids
+          .map((scheduleId) => schedulesById.get(scheduleId))
+          .filter(
+            (schedule): schedule is VisitSchedule =>
+              schedule !== undefined &&
+              isActiveTrackingSchedule(schedule) &&
+              activeTrackingPatientIds.has(schedule.patient_id)
+          );
+        const fallbackSchedules = allSchedules.filter(
+          (schedule) =>
+            schedule.visit_type !== "回院病歷" &&
+            isActiveTrackingSchedule(schedule) &&
+            activeTrackingPatientIds.has(schedule.patient_id) &&
+            schedule.assigned_doctor_id === routePlan.doctor_id &&
+            schedule.scheduled_start_at.slice(0, 10) === routePlan.route_date &&
+            resolveTrackingTimeSlot(schedule) === routePlan.service_time_slot
+        );
+        const routeSchedules = scheduleIdSchedules.length ? scheduleIdSchedules : fallbackSchedules;
+        if (!routeSchedules.length) {
+          return;
+        }
         const routeKey = `${routePlan.route_date}|${routePlan.service_time_slot}`;
         const current = routeOptionMap.get(routeKey) ?? {
           doctorIds: new Set<string>(),
@@ -1013,7 +1111,12 @@ export function AdminDoctorTrackingPage() {
       });
     } else {
       allSchedules
-        .filter((schedule) => schedule.visit_type !== "回院病歷")
+        .filter(
+          (schedule) =>
+            schedule.visit_type !== "回院病歷" &&
+            isActiveTrackingSchedule(schedule) &&
+            activeTrackingPatientIds.has(schedule.patient_id)
+        )
         .forEach((schedule) => {
           const routeKey = `${schedule.scheduled_start_at.slice(0, 10)}|${resolveTrackingTimeSlot(schedule)}`;
           const current = routeOptionMap.get(routeKey) ?? {
@@ -1031,7 +1134,12 @@ export function AdminDoctorTrackingPage() {
         const linkedSchedule = log.linked_visit_schedule_id
           ? schedulesById.get(log.linked_visit_schedule_id)
           : undefined;
-        if (linkedSchedule?.visit_type === "回院病歷") {
+        if (
+          linkedSchedule &&
+          (linkedSchedule.visit_type === "回院病歷" ||
+            !isActiveTrackingSchedule(linkedSchedule) ||
+            !activeTrackingPatientIds.has(linkedSchedule.patient_id))
+        ) {
           return;
         }
         const routeDateFromLog = linkedSchedule
@@ -1089,7 +1197,7 @@ export function AdminDoctorTrackingPage() {
           routeTimeSlotOptions.indexOf(left.timeSlot) - routeTimeSlotOptions.indexOf(right.timeSlot)
         );
       });
-  }, [remoteRecentLocationLogs, repositories.visitRepository, services.doctorLocationSync.mode]);
+  }, [activeTrackingPatientIds, remoteRecentLocationLogs, repositories.visitRepository, services.doctorLocationSync.mode]);
 
   useEffect(() => {
     if (services.doctorLocationSync.mode !== "api_polling") {
@@ -1174,9 +1282,16 @@ export function AdminDoctorTrackingPage() {
         const doctor = db.doctors.find((item) => item.id === routePlan.doctor_id);
         const schedules = routePlan.schedule_ids
           .map((scheduleId) => schedulesById.get(scheduleId))
-          .filter((schedule): schedule is VisitSchedule => Boolean(schedule));
+          .filter(
+            (schedule): schedule is VisitSchedule =>
+              schedule !== undefined &&
+              isActiveTrackingSchedule(schedule) &&
+              activeTrackingPatientIds.has(schedule.patient_id)
+          );
         const fallbackSchedules = allSchedules.filter(
           (schedule) =>
+            isActiveTrackingSchedule(schedule) &&
+            activeTrackingPatientIds.has(schedule.patient_id) &&
             schedule.assigned_doctor_id === routePlan.doctor_id &&
             schedule.scheduled_start_at.slice(0, 10) === routePlan.route_date &&
             resolveTrackingTimeSlot(schedule) === routePlan.service_time_slot
@@ -1204,7 +1319,7 @@ export function AdminDoctorTrackingPage() {
         routeTimeSlotOptions.indexOf(left.timeSlot) - routeTimeSlotOptions.indexOf(right.timeSlot) ||
         left.doctorName.localeCompare(right.doctorName, "zh-Hant")
     );
-  }, [db.doctors, repositories.visitRepository]);
+  }, [activeTrackingPatientIds, db.doctors, repositories.visitRepository]);
 
   useEffect(() => {
     if (!routeDistributionOptions.length) {
@@ -1231,15 +1346,20 @@ export function AdminDoctorTrackingPage() {
         const allDoctorSchedules = repositories.visitRepository
           .getSchedules({ doctorId: doctor.id })
           .filter((schedule) => schedule.visit_type !== "回院病歷");
+        const activeDoctorSchedules = allDoctorSchedules.filter(
+          (schedule) => isActiveTrackingSchedule(schedule) && activeTrackingPatientIds.has(schedule.patient_id)
+        );
         const routeSchedules = sortTrackingSchedules(
-          allDoctorSchedules.filter(
+          activeDoctorSchedules.filter(
             (schedule) =>
               schedule.scheduled_start_at.slice(0, 10) === routeDate &&
               resolveTrackingTimeSlot(schedule) === routeTimeSlot
           )
         );
+        const latestActiveRouteSchedules = getLatestActiveTrackingRouteSchedules(activeDoctorSchedules);
+        const displayRouteSchedules = routeSchedules.length ? routeSchedules : latestActiveRouteSchedules;
 
-        const routeScheduleIds = new Set(routeSchedules.map((schedule) => schedule.id));
+        const routeScheduleIds = new Set(displayRouteSchedules.map((schedule) => schedule.id));
         const doctorLocationLogs = (
           services.doctorLocationSync.mode === "api_polling"
             ? [...remoteRecentLocationLogs, ...remoteLocationLogs].filter((log) => log.doctor_id === doctor.id)
@@ -1251,41 +1371,49 @@ export function AdminDoctorTrackingPage() {
           ? resolveTrackingLocationLogs({
               routeDate,
               routeTimeSlot,
-              routeSchedules,
+              routeSchedules: displayRouteSchedules,
               routeScheduleIds,
               locationLogs: doctorLocationLogs
             })
-          : doctorLocationLogs;
+          : displayRouteSchedules.length
+            ? resolveTrackingLocationLogs({
+                routeDate: displayRouteSchedules[0].scheduled_start_at.slice(0, 10),
+                routeTimeSlot: resolveTrackingTimeSlot(displayRouteSchedules[0]),
+                routeSchedules: displayRouteSchedules,
+                routeScheduleIds,
+                locationLogs: doctorLocationLogs
+              })
+            : doctorLocationLogs;
         const latestLocation = locationLogs[0];
         const locationStatus = resolveLocationSyncStatus(latestLocation);
+        const linkedActiveSchedule =
+          latestLocation?.linked_visit_schedule_id && routeScheduleIds.has(latestLocation.linked_visit_schedule_id)
+            ? allDoctorSchedules.find(
+                (schedule) =>
+                  schedule.id === latestLocation.linked_visit_schedule_id &&
+                  isActiveTrackingSchedule(schedule) &&
+                  activeTrackingPatientIds.has(schedule.patient_id)
+              )
+            : undefined;
         const activeSchedule =
-          (latestLocation?.linked_visit_schedule_id
-            ? allDoctorSchedules.find((schedule) => schedule.id === latestLocation.linked_visit_schedule_id)
-            : undefined) ??
-          routeSchedules.find((schedule) =>
-            ["tracking", "on_the_way", "proximity_pending", "arrived", "in_treatment", "issue_pending"].includes(
-              schedule.status
-            )
-          ) ??
-          routeSchedules.find((schedule) => !["completed", "cancelled", "paused"].includes(schedule.status)) ??
-          routeSchedules[0] ??
-          sortTrackingSchedules(allDoctorSchedules.filter((schedule) => !["completed", "cancelled", "paused"].includes(schedule.status)))[0] ??
-          sortTrackingSchedules(allDoctorSchedules)[0];
+          linkedActiveSchedule ??
+          displayRouteSchedules.find(isCurrentTrackingSchedule) ??
+          displayRouteSchedules[0];
         const activePatient = activeSchedule
           ? db.patients.find((patient) => patient.id === activeSchedule.patient_id)
           : undefined;
-        const passedStops = routeSchedules.filter((schedule) =>
+        const passedStops = displayRouteSchedules.filter((schedule) =>
           activeSchedule
             ? (schedule.route_order ?? 0) < (activeSchedule.route_order ?? 0)
-            : ["completed", "cancelled"].includes(schedule.status)
+            : false
         );
-        const upcomingStops = routeSchedules.filter((schedule) =>
+        const upcomingStops = displayRouteSchedules.filter((schedule) =>
           activeSchedule
             ? (schedule.route_order ?? 0) > (activeSchedule.route_order ?? 0)
-            : !["completed", "cancelled"].includes(schedule.status)
+            : true
         );
         const currentDistanceKilometers =
-          latestLocation && activeSchedule
+          latestLocation && hasScheduleCoordinates(activeSchedule)
             ? estimateDistanceKilometersBetween(
                 latestLocation.latitude,
                 latestLocation.longitude,
@@ -1295,12 +1423,16 @@ export function AdminDoctorTrackingPage() {
             : null;
         const displayLocation = resolveTrackingDisplayLocation({
           latestLocation,
-          routeSchedules: routeSchedules.length ? routeSchedules : sortTrackingSchedules(allDoctorSchedules),
+          routeSchedules: displayRouteSchedules,
           activeSchedule
         });
+        const routeMapDate = displayRouteSchedules[0]?.scheduled_start_at.slice(0, 10) ?? routeDate;
+        const routeMapTimeSlot = displayRouteSchedules[0]
+          ? resolveTrackingTimeSlot(displayRouteSchedules[0])
+          : routeTimeSlot;
         const routeMapInput = buildTrackingRouteMapInput(
-          routeSchedules,
-          `${doctor.name} ${routeDate} ${routeTimeSlot}`
+          displayRouteSchedules,
+          `${doctor.name} ${routeMapDate} ${routeMapTimeSlot}`
         );
 
         return {
@@ -1312,7 +1444,7 @@ export function AdminDoctorTrackingPage() {
           displayLocation,
           locationLogs,
           locationStatus,
-          routeSchedules,
+          routeSchedules: displayRouteSchedules,
           activeSchedule,
           activePatientName: activePatient ? maskPatientName(activePatient.name) : null,
           passedStops,
@@ -1321,7 +1453,7 @@ export function AdminDoctorTrackingPage() {
           routeMapUrl: routeMapInput ? services.maps.buildRouteDirectionsUrl(routeMapInput) : null
         } satisfies DoctorTrackingSummary;
       });
-  }, [db.doctors, db.patients, remoteLocationLogs, remoteRecentLocationLogs, repositories, routeDate, routeTimeSlot, services.doctorLocationSync.mode, services.maps]);
+  }, [activeTrackingPatientIds, db.doctors, db.patients, remoteLocationLogs, remoteRecentLocationLogs, repositories, routeDate, routeTimeSlot, services.doctorLocationSync.mode, services.maps]);
 
   useEffect(() => {
     if (!trackingRouteOptions.length) {
@@ -2052,7 +2184,7 @@ export function AdminDoctorTrackingPage() {
 }
 
 export function AdminPatientsPage() {
-  const { repositories, db } = useAppContext();
+  const { repositories, db, services } = useAppContext();
   const patients = repositories.patientRepository.getPatients();
   const displayPatients = useMemo(
     () =>
@@ -2381,11 +2513,15 @@ export function AdminPatientsPage() {
     const skippedReasons: string[] = [];
 
     const defaultDoctor = db.doctors[0];
-    importRows.forEach((row, index) => {
+    let geocodedCount = 0;
+    let geocodeFailedCount = 0;
+    const geocodeFailureReasons: string[] = [];
+
+    for (const [index, row] of importRows.entries()) {
       if (!row.name || !row.address || !row.serviceSlot) {
         skippedCount += 1;
         skippedReasons.push(`第 ${row.rowNumber} 列缺少姓名、地址或服務時段`);
-        return;
+        continue;
       }
 
       const doctor =
@@ -2395,13 +2531,14 @@ export function AdminPatientsPage() {
       if (!doctor) {
         skippedCount += 1;
         skippedReasons.push(`第 ${row.rowNumber} 列找不到可用醫師`);
-        return;
+        continue;
       }
 
       const patientToImport = buildPatientDraft();
+      const patientId = `pat-import-${Date.now()}-${index}`;
       repositories.patientRepository.upsertPatient({
         ...patientToImport,
-        id: `pat-import-${Date.now()}-${index}`,
+        id: patientId,
         name: anonymizePatientName(row.name),
         chart_number: row.chartNumber,
         phone: row.phone,
@@ -2414,16 +2551,51 @@ export function AdminPatientsPage() {
         preferred_doctor_id: doctor.id,
         preferred_service_slot: row.serviceSlot,
         status: row.status,
-        notes: row.notes
+        notes: row.notes,
+        reminder_tags: row.reminderTags
       });
 
-      importedCount += 1;
-    });
+      if (row.status === "active") {
+        const geocodedAddress = await services.maps.geocodeAddress({ address: row.address });
+        if (geocodedAddress) {
+          repositories.patientRepository.updatePatientCoordinates(patientId, {
+            homeLatitude: geocodedAddress.latitude,
+            homeLongitude: geocodedAddress.longitude,
+            geocodingStatus: "resolved",
+            googleMapsLink: services.maps.buildPatientMapUrl({
+              address: geocodedAddress.formattedAddress,
+              latitude: geocodedAddress.latitude,
+              longitude: geocodedAddress.longitude
+            })
+          });
+          geocodedCount += 1;
+        } else {
+          repositories.patientRepository.updatePatientCoordinates(patientId, {
+            homeLatitude: null,
+            homeLongitude: null,
+            geocodingStatus: "failed"
+          });
+          const geocodeFailureReason = services.maps.getLastGeocodeError();
+          if (geocodeFailureReason) {
+            geocodeFailureReasons.push(geocodeFailureReason);
+          }
+          geocodeFailedCount += 1;
+        }
+      }
 
+      importedCount += 1;
+    }
+
+    const geocodingText =
+      geocodedCount > 0 || geocodeFailedCount > 0
+        ? ` Google Map 已補上 ${geocodedCount} 筆座標${
+            geocodeFailedCount > 0 ? `，${geocodeFailedCount} 筆仍找不到座標` : ""
+          }${geocodeFailureReasons.length > 0 ? `，原因：${geocodeFailureReasons[0]}` : ""}。`
+        : "";
     setRecentAction(
       skippedReasons.length > 0
-        ? `${isSpreadsheet ? "Excel" : "CSV"} 匯入完成：成功 ${importedCount} 筆，略過 ${skippedCount} 筆。${skippedReasons[0]}`
-        : `${isSpreadsheet ? "Excel" : "CSV"} 匯入完成：成功 ${importedCount} 筆。`
+        ? `${isSpreadsheet ? "Excel" : "CSV"} 匯入完成：成功 ${importedCount} 筆，略過 ${skippedCount} 筆。${skippedReasons[0]}${geocodingText}`
+        : `${isSpreadsheet ? "Excel" : "CSV"} 匯入完成：成功 ${importedCount} 筆。${geocodingText}`
     );
     event.target.value = "";
   };
@@ -2583,7 +2755,19 @@ export function AdminPatientsPage() {
                         {patient.primary_diagnosis || "未設定"}
                       </td>
                       <td className={`px-4 py-3 ${isClosedPatient ? "text-slate-400" : "text-slate-600"}`}>
-                        {patient.service_needs.join("、") || "未設定"}
+                        <p>{patient.service_needs.join("、") || "未設定"}</p>
+                        {patient.reminder_tags.length > 0 ? (
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            {patient.reminder_tags.map((tag) => (
+                              <span
+                                key={tag}
+                                className="rounded-full bg-brand-sand px-2 py-0.5 text-[11px] font-semibold text-brand-forest"
+                              >
+                                {tag}
+                              </span>
+                            ))}
+                          </div>
+                        ) : null}
                       </td>
                       <td className={`px-4 py-3 ${isClosedPatient ? "text-slate-400" : "text-slate-600"}`}>
                         {patient.preferred_service_slot || "未設定"}
@@ -2609,6 +2793,13 @@ export function AdminPatientsPage() {
                           >
                             編輯
                           </button>
+                          <Link
+                            to={`/admin/family-line?patientId=${encodeURIComponent(patient.id)}`}
+                            aria-label={`${maskedName} 家屬聯繫`}
+                            className="rounded-full bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-200"
+                          >
+                            家屬聯繫
+                          </Link>
                           <button
                             type="button"
                             onClick={() => deletePatient(patient)}

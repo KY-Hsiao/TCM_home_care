@@ -4,9 +4,9 @@ import type { RouteMapInput } from "../../services/types";
 
 const previewCanvasWidth = 640;
 const previewCanvasHeight = 480;
-const previewCanvasPadding = 56;
-const previewDrawableWidth = previewCanvasWidth - previewCanvasPadding * 2;
-const previewDrawableHeight = previewCanvasHeight - previewCanvasPadding * 2;
+const previewMapTileSize = 256;
+const previewMapMinLatitude = -85.05112878;
+const previewMapMaxLatitude = 85.05112878;
 const defaultPreviewZoomIndex = 1;
 
 const previewZoomPresets = [
@@ -27,6 +27,21 @@ type PreviewDragState = {
   startClientY: number;
   startOffset: PreviewPanOffset;
 };
+
+function clampPreviewLatitude(latitude: number) {
+  return Math.max(previewMapMinLatitude, Math.min(previewMapMaxLatitude, latitude));
+}
+
+function previewLongitudeToWorld(longitude: number, zoom: number) {
+  const scale = previewMapTileSize * 2 ** zoom;
+  return ((longitude + 180) / 360) * scale;
+}
+
+function previewLatitudeToWorld(latitude: number, zoom: number) {
+  const scale = previewMapTileSize * 2 ** zoom;
+  const sinLatitude = Math.sin((clampPreviewLatitude(latitude) * Math.PI) / 180);
+  return (0.5 - Math.log((1 + sinLatitude) / (1 - sinLatitude)) / (4 * Math.PI)) * scale;
+}
 
 function buildPreviewPoints(route: RouteMapInput) {
   return [
@@ -92,44 +107,78 @@ function buildPreviewBounds(route: RouteMapInput, rangeScale: number) {
   };
 }
 
-function buildPreviewCanvasState(route: RouteMapInput, rangeScale: number, panOffset: PreviewPanOffset) {
+function buildPreviewCanvasState(
+  route: RouteMapInput,
+  rangeScale: number,
+  panOffset: PreviewPanOffset,
+  zoomOffset: number
+) {
   const bounds = buildPreviewBounds(route, rangeScale);
   if (!bounds) {
     return null;
   }
 
-  const centerLongitude =
-    bounds.longitudeCenter - (panOffset.x / previewDrawableWidth) * bounds.longitudeSpan;
-  const centerLatitude =
-    bounds.latitudeCenter + (panOffset.y / previewDrawableHeight) * bounds.latitudeSpan;
-  const scaledMinLatitude = centerLatitude - bounds.latitudeSpan / 2;
-  const scaledMinLongitude = centerLongitude - bounds.longitudeSpan / 2;
+  const zoom = Math.min(18, Math.max(3, resolvePreviewMapZoom(bounds.points) + zoomOffset));
+  const baseCenterWorldX = previewLongitudeToWorld(bounds.longitudeCenter, zoom);
+  const baseCenterWorldY = previewLatitudeToWorld(bounds.latitudeCenter, zoom);
+  const centerWorldX = baseCenterWorldX - panOffset.x;
+  const centerWorldY = baseCenterWorldY - panOffset.y;
+  const leftWorld = centerWorldX - previewCanvasWidth / 2;
+  const topWorld = centerWorldY - previewCanvasHeight / 2;
+  const tileCount = 2 ** zoom;
+  const minTileX = Math.floor(leftWorld / previewMapTileSize);
+  const maxTileX = Math.floor((leftWorld + previewCanvasWidth) / previewMapTileSize);
+  const minTileY = Math.floor(topWorld / previewMapTileSize);
+  const maxTileY = Math.floor((topWorld + previewCanvasHeight) / previewMapTileSize);
+  const tiles: Array<{ key: string; href: string; x: number; y: number }> = [];
+
+  for (let tileY = minTileY; tileY <= maxTileY; tileY += 1) {
+    if (tileY < 0 || tileY >= tileCount) {
+      continue;
+    }
+
+    for (let tileX = minTileX; tileX <= maxTileX; tileX += 1) {
+      const wrappedTileX = ((tileX % tileCount) + tileCount) % tileCount;
+      tiles.push({
+        key: `${zoom}-${wrappedTileX}-${tileY}-${tileX}`,
+        href: `https://tile.openstreetmap.org/${zoom}/${wrappedTileX}/${tileY}.png`,
+        x: tileX * previewMapTileSize - leftWorld,
+        y: tileY * previewMapTileSize - topWorld
+      });
+    }
+  }
 
   return {
-    centerLatitude,
-    centerLongitude,
+    zoom,
+    tiles,
     points: bounds.points.map((point) => ({
       ...point,
-      x:
-        previewCanvasPadding +
-        ((point.longitude - scaledMinLongitude) / bounds.longitudeSpan) * previewDrawableWidth,
-      y:
-        previewCanvasHeight -
-        previewCanvasPadding -
-        ((point.latitude - scaledMinLatitude) / bounds.latitudeSpan) * previewDrawableHeight
+      x: previewLongitudeToWorld(point.longitude, zoom) - leftWorld,
+      y: previewLatitudeToWorld(point.latitude, zoom) - topWorld
     }))
   };
 }
 
-function buildCenterOffsetForPoint(route: RouteMapInput, rangeScale: number, target: { latitude: number; longitude: number }) {
+function buildCenterOffsetForPoint(
+  route: RouteMapInput,
+  rangeScale: number,
+  target: { latitude: number; longitude: number },
+  zoomOffset: number
+) {
   const bounds = buildPreviewBounds(route, rangeScale);
   if (!bounds) {
     return { x: 0, y: 0 };
   }
 
+  const zoom = Math.min(18, Math.max(3, resolvePreviewMapZoom(bounds.points) + zoomOffset));
+  const baseCenterWorldX = previewLongitudeToWorld(bounds.longitudeCenter, zoom);
+  const baseCenterWorldY = previewLatitudeToWorld(bounds.latitudeCenter, zoom);
+  const targetWorldX = previewLongitudeToWorld(target.longitude, zoom);
+  const targetWorldY = previewLatitudeToWorld(target.latitude, zoom);
+
   return {
-    x: ((bounds.longitudeCenter - target.longitude) / bounds.longitudeSpan) * previewDrawableWidth,
-    y: ((target.latitude - bounds.latitudeCenter) / bounds.latitudeSpan) * previewDrawableHeight
+    x: baseCenterWorldX - targetWorldX,
+    y: baseCenterWorldY - targetWorldY
   };
 }
 
@@ -179,23 +228,6 @@ function resolvePreviewMapZoom(points: Array<{ latitude: number; longitude: numb
   return 16;
 }
 
-function buildPreviewMapBackgroundUrl(input: {
-  centerLatitude: number;
-  centerLongitude: number;
-  points: Array<{ latitude: number; longitude: number }>;
-  zoomOffset: number;
-}) {
-  if (!input.points.length) {
-    return null;
-  }
-
-  const zoom = Math.min(18, Math.max(3, resolvePreviewMapZoom(input.points) + input.zoomOffset));
-
-  return `https://maps.google.com/maps?q=${encodeURIComponent(
-    `${input.centerLatitude},${input.centerLongitude}`
-  )}&z=${zoom}&output=embed`;
-}
-
 type RouteMapPreviewCardProps = {
   route: RouteMapInput | null;
   emptyText?: string;
@@ -232,18 +264,10 @@ export function RouteMapPreviewCard({
 
   const previewState = services.maps.getRoutePreviewState(route);
   const previewZoom = previewZoomPresets[previewZoomIndex];
-  const previewCanvasState = buildPreviewCanvasState(route, previewZoom.scale, previewPanOffset);
+  const previewCanvasState = buildPreviewCanvasState(route, previewZoom.scale, previewPanOffset, previewZoom.zoomOffset);
   const previewCanvasPoints = previewCanvasState?.points ?? [];
   const unresolvedPreviewPoints = buildUnresolvedPreviewPoints(route);
   const hasCanvasPreview = previewCanvasPoints.length >= 2;
-  const previewBackgroundMapUrl = previewCanvasState
-    ? buildPreviewMapBackgroundUrl({
-        centerLatitude: previewCanvasState.centerLatitude,
-        centerLongitude: previewCanvasState.centerLongitude,
-        points: previewCanvasPoints,
-        zoomOffset: previewZoom.zoomOffset
-      })
-    : null;
   const doctorCenterAvailable = route.origin.latitude !== null && route.origin.longitude !== null;
   const resetPreviewView = () => {
     setPreviewZoomIndex(defaultPreviewZoomIndex);
@@ -257,7 +281,7 @@ export function RouteMapPreviewCard({
       buildCenterOffsetForPoint(route, previewZoom.scale, {
         latitude: route.origin.latitude,
         longitude: route.origin.longitude
-      })
+      }, previewZoom.zoomOffset)
     );
   };
   const handlePreviewPointerDown = (event: PointerEvent<HTMLDivElement>) => {
@@ -393,15 +417,6 @@ export function RouteMapPreviewCard({
             onPointerUp={handlePreviewPointerUp}
             onPointerCancel={handlePreviewPointerUp}
           >
-            {previewBackgroundMapUrl ? (
-              <iframe
-                title={`${route.label} 頁內路線底圖`}
-                src={previewBackgroundMapUrl}
-                loading="lazy"
-                referrerPolicy="no-referrer-when-downgrade"
-                className="pointer-events-none absolute inset-0 h-full w-full bg-white"
-              />
-            ) : null}
             <svg
               viewBox="0 0 640 480"
               role="img"
@@ -413,6 +428,19 @@ export function RouteMapPreviewCard({
                   <feDropShadow dx="0" dy="2" stdDeviation="2" floodColor="#0f172a" floodOpacity="0.18" />
                 </filter>
               </defs>
+              <rect width={previewCanvasWidth} height={previewCanvasHeight} fill="#edf3ee" />
+              {previewCanvasState?.tiles.map((tile) => (
+                <image
+                  key={tile.key}
+                  href={tile.href}
+                  x={tile.x}
+                  y={tile.y}
+                  width={previewMapTileSize}
+                  height={previewMapTileSize}
+                  preserveAspectRatio="none"
+                />
+              ))}
+              <rect width={previewCanvasWidth} height={previewCanvasHeight} fill="rgba(255,255,255,0.2)" />
               <polyline
                 fill="none"
                 stroke="#2f6f5e"
@@ -484,14 +512,25 @@ export function RouteMapPreviewCard({
             <p className="mt-3 text-xs text-slate-500">需要實際導航時，請使用上方 Google 地圖完整路線連結。</p>
           ) : null}
         </div>
-      ) : previewState.embedUrl ? (
-        null
       ) : (
         <div className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-5 text-sm text-slate-600">
           <p className="font-medium text-brand-ink">頁內路線圖暫時無法產生</p>
           <p className="mt-2">
-            {previewState.fallbackReason ?? "目前只能從外部 Google 地圖查看整條路線。"}
+            {unresolvedPreviewPoints.length > 0
+              ? "目前可畫入地圖的座標不足，系統會先向 Google 查詢座標；仍失敗的站點會列在下方。"
+              : previewState.fallbackReason ?? "目前可畫入地圖的座標不足，請確認至少一個站點已有座標。"}
           </p>
+          {unresolvedPreviewPoints.length > 0 ? (
+            <div className="mt-3 grid gap-2 text-xs text-amber-800 sm:grid-cols-2">
+              {unresolvedPreviewPoints.map((point) => (
+                <div key={`${point.key}-missing-only`} className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2">
+                  <span className="font-semibold">{point.label}</span>
+                  <span className="ml-2 font-semibold">{point.pointName}</span>
+                  <span className="ml-2">缺少座標，未畫入預覽圖。</span>
+                </div>
+              ))}
+            </div>
+          ) : null}
         </div>
       )}
     </div>

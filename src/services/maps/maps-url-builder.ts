@@ -10,16 +10,11 @@ import { resolveLocationKeyword } from "../../shared/utils/location-keyword";
 const MAX_ROUTE_PREVIEW_WAYPOINTS = 9;
 
 type GoogleGeocodingResponse = {
-  status?: string;
-  results?: Array<{
-    formatted_address?: string;
-    geometry?: {
-      location?: {
-        lat?: number;
-        lng?: number;
-      };
-    };
-  }>;
+  latitude?: number;
+  longitude?: number;
+  formattedAddress?: string;
+  reason?: string;
+  error?: string;
 };
 
 function formatCoordinateQuery(latitude: number | null, longitude: number | null): string | null {
@@ -65,6 +60,7 @@ export function createMapsUrlBuilder(options?: { embedApiKey?: string | null }):
     import.meta.env.VITE_GOOGLE_MAPS_EMBED_API_KEY ??
     import.meta.env.VITE_GOOGLE_MAPS_API_KEY ??
     "";
+  let lastGeocodeError: string | null = null;
 
   return {
     buildPatientMapUrl({ address, locationKeyword, latitude, longitude }) {
@@ -149,45 +145,58 @@ export function createMapsUrlBuilder(options?: { embedApiKey?: string | null }):
     },
     async geocodeAddress({ address, signal }): Promise<GeocodedAddressResult | null> {
       const normalizedAddress = address.trim();
-      if (!embedApiKey || !normalizedAddress || typeof fetch !== "function") {
+      lastGeocodeError = null;
+      if (!normalizedAddress) {
+        lastGeocodeError = "缺少地址，無法補座標。";
+        return null;
+      }
+      if (typeof fetch !== "function") {
+        lastGeocodeError = "目前執行環境無法送出補座標 request。";
         return null;
       }
 
       try {
-        const url = new URL("https://maps.googleapis.com/maps/api/geocode/json");
-        url.searchParams.set("address", normalizedAddress);
-        url.searchParams.set("key", embedApiKey);
-        url.searchParams.set("language", "zh-TW");
-        url.searchParams.set("region", "tw");
-
-        const response = await fetch(url.toString(), { signal });
+        const response = await fetch("/api/maps/geocode", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ address: normalizedAddress }),
+          signal
+        });
+        const payload = (await response.json().catch(() => null)) as GoogleGeocodingResponse | null;
         if (!response.ok) {
+          lastGeocodeError =
+            payload?.error ??
+            (payload?.reason ? `Google Geocoding API 回傳 ${payload.reason}` : `補座標 API HTTP ${response.status}`);
           return null;
         }
 
-        const payload = (await response.json()) as GoogleGeocodingResponse;
-        const firstResult = payload.status === "OK" ? payload.results?.[0] : null;
-        const location = firstResult?.geometry?.location;
         if (
-          typeof location?.lat !== "number" ||
-          typeof location.lng !== "number" ||
-          !Number.isFinite(location.lat) ||
-          !Number.isFinite(location.lng)
+          typeof payload?.latitude !== "number" ||
+          typeof payload.longitude !== "number" ||
+          !Number.isFinite(payload.latitude) ||
+          !Number.isFinite(payload.longitude)
         ) {
+          lastGeocodeError = "補座標 API 回傳格式不完整。";
           return null;
         }
 
         return {
-          latitude: location.lat,
-          longitude: location.lng,
-          formattedAddress: firstResult?.formatted_address ?? normalizedAddress
+          latitude: payload.latitude,
+          longitude: payload.longitude,
+          formattedAddress: payload.formattedAddress ?? normalizedAddress
         };
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") {
           throw error;
         }
+        lastGeocodeError = error instanceof Error ? error.message : "補座標 API 呼叫失敗。";
         return null;
       }
+    },
+    getLastGeocodeError() {
+      return lastGeocodeError;
     },
     buildCoordinateLabel(latitude, longitude) {
       if (latitude === null || longitude === null) {

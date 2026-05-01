@@ -20,9 +20,9 @@ export const navigationByRole: Record<UserRole, NavItem[]> = {
     { to: "/admin/leave-requests", label: "待處理請假", description: "集中查看醫師請假申請、核准狀態與受影響案件" },
     { to: "/admin/doctor-tracking", label: "醫師追蹤", description: "查看 Google Map 追蹤圖、距離與站點進度" },
     { to: "/admin/team-communication", label: "團隊通訊", description: "直接與醫師進行院內協作通訊並查看聯絡紀錄" },
-    { to: "/admin/family-line", label: "家屬聯繫", description: "設定 LINE 家屬通知、自動提醒與群發公告" },
-    { to: "/admin/patients", label: "個案管理", description: "新增、編輯、指派醫師與狀態管理" },
+    { to: "/admin/family-line", label: "LINE 家屬聯繫", description: "設定 LINE 家屬通知、自動提醒與群發公告" },
     { to: "/admin/schedules", label: "排程管理", description: "查看排程、最短路線規劃與導航接力" },
+    { to: "/admin/patients", label: "個案管理", description: "新增、編輯、指派醫師與狀態管理" },
     { to: "/admin/staff", label: "角色設置", description: "管理系統人員身分、Google 帳號與服務設定" }
   ],
   caregiver: []

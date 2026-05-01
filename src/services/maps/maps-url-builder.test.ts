@@ -209,26 +209,17 @@ describe("maps url builder", () => {
     expect(state.fallbackReason).toContain("超過目前 Google 路線預覽上限");
   });
 
-  it("可透過 Google Geocoding API 取得地址座標", async () => {
+  it("可透過後端 geocoding API 取得地址座標", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
-        status: "OK",
-        results: [
-          {
-            formatted_address: "高雄市旗山區延平一路123號",
-            geometry: {
-              location: {
-                lat: 22.88612,
-                lng: 120.48234
-              }
-            }
-          }
-        ]
+        latitude: 22.88612,
+        longitude: 120.48234,
+        formattedAddress: "高雄市旗山區延平一路123號"
       })
     });
     vi.stubGlobal("fetch", fetchMock);
-    const maps = createMapsUrlBuilder({ embedApiKey: "demo-key" });
+    const maps = createMapsUrlBuilder();
 
     const result = await maps.geocodeAddress({ address: "高雄市旗山區延平一路 123 號" });
 
@@ -238,17 +229,37 @@ describe("maps url builder", () => {
       formattedAddress: "高雄市旗山區延平一路123號"
     });
     expect(fetchMock).toHaveBeenCalledWith(
-      expect.stringContaining("https://maps.googleapis.com/maps/api/geocode/json"),
-      expect.any(Object)
+      "/api/maps/geocode",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ address: "高雄市旗山區延平一路 123 號" })
+      })
     );
   });
 
-  it("未設定 API key 時不會送出 geocoding request", async () => {
-    const fetchMock = vi.fn();
+  it("後端 geocoding API 失敗時會保留可讀錯誤原因", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 422,
+      json: async () => ({
+        reason: "REQUEST_DENIED",
+        error: "Google Geocoding API 回傳 REQUEST_DENIED：API key 未啟用 Geocoding API"
+      })
+    });
     vi.stubGlobal("fetch", fetchMock);
-    const maps = createMapsUrlBuilder({ embedApiKey: "" });
+    const maps = createMapsUrlBuilder();
 
     await expect(maps.geocodeAddress({ address: "高雄市旗山區延平一路 123 號" })).resolves.toBeNull();
+    expect(maps.getLastGeocodeError()).toBe("Google Geocoding API 回傳 REQUEST_DENIED：API key 未啟用 Geocoding API");
+  });
+
+  it("地址空白時不會送出 geocoding request", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const maps = createMapsUrlBuilder();
+
+    await expect(maps.geocodeAddress({ address: " " })).resolves.toBeNull();
+    expect(maps.getLastGeocodeError()).toBe("缺少地址，無法補座標。");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });

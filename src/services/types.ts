@@ -276,6 +276,7 @@ export interface MapsUrlBuilder {
     address: string;
     signal?: AbortSignal;
   }): Promise<GeocodedAddressResult | null>;
+  getLastGeocodeError(): string | null;
   buildCoordinateLabel(latitude: number | null, longitude: number | null): string;
 }
 

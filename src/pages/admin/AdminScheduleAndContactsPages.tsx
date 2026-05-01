@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useAppContext } from "../../app/use-app-context";
 import type { NotificationCenterItem, SavedRoutePlan, VisitSchedule } from "../../domain/models";
 import type { RouteMapInput } from "../../services/types";
@@ -930,6 +930,7 @@ export function AdminSchedulesPage() {
   const [dragTargetPlannerPatientId, setDragTargetPlannerPatientId] = useState<string | null>(null);
   const [dismissedAutoScheduleCandidateIds, setDismissedAutoScheduleCandidateIds] = useState<string[]>([]);
   const [recentAction, setRecentAction] = useState<string | null>(null);
+  const autoGeocodingRequestKeyRef = useRef<string | null>(null);
 
   const doctors = repositories.patientRepository.getDoctors();
   const selectedDoctor = doctors.find((doctor) => doctor.id === selectedDoctorId);
@@ -1254,6 +1255,8 @@ export function AdminSchedulesPage() {
     setDraggingPlannerPatientId(null);
     setDragTargetPlannerPatientId(null);
     setPlannerRows([]);
+    setGeocodingMessage(null);
+    autoGeocodingRequestKeyRef.current = null;
     setRecentAction("已清除排程管理頁面內容。");
   };
 
@@ -1321,11 +1324,13 @@ export function AdminSchedulesPage() {
       return {
         rows: sourceRows,
         resolvedCount: 0,
-        failedCount: 0
+        failedCount: 0,
+        failureReasons: []
       };
     }
 
     setIsGeocodingPlannerRows(true);
+    setGeocodingMessage(`正在向 Google 查詢座標（${targetRows.length} 站）。`);
     setPlannerRows((current) =>
       current.map((row) =>
         targetRows.some((targetRow) => targetRow.patientId === row.patientId)
@@ -1343,13 +1348,13 @@ export function AdminSchedulesPage() {
         googleMapsLink: string;
       }
     >();
-    const failedPatientIds = new Set<string>();
+    const failedRows = new Map<string, string>();
 
     try {
       for (const row of targetRows) {
         const result = await services.maps.geocodeAddress({ address: row.address });
         if (!result) {
-          failedPatientIds.add(row.patientId);
+          failedRows.set(row.patientId, services.maps.getLastGeocodeError() ?? "Google 未回傳可用座標。");
           repositories.patientRepository.updatePatientCoordinates(row.patientId, {
             homeLatitude: null,
             homeLongitude: null,
@@ -1391,12 +1396,14 @@ export function AdminSchedulesPage() {
           geocodedAddress: resolvedRow.formattedAddress
         };
       }
-      if (failedPatientIds.has(row.patientId)) {
+      const failedReason = failedRows.get(row.patientId);
+      if (failedReason) {
         return {
           ...row,
           latitude: null,
           longitude: null,
-          geocodingStatus: "failed" as const
+          geocodingStatus: "failed" as const,
+          geocodedAddress: failedReason
         };
       }
       return row;
@@ -1414,12 +1421,14 @@ export function AdminSchedulesPage() {
             geocodedAddress: resolvedRow.formattedAddress
           };
         }
-        if (failedPatientIds.has(row.patientId)) {
+        const failedReason = failedRows.get(row.patientId);
+        if (failedReason) {
           return {
             ...row,
             latitude: null,
             longitude: null,
-            geocodingStatus: "failed"
+            geocodingStatus: "failed",
+            geocodedAddress: failedReason
           };
         }
         return row;
@@ -1429,7 +1438,8 @@ export function AdminSchedulesPage() {
     return {
       rows: nextRows,
       resolvedCount: resolvedRows.size,
-      failedCount: failedPatientIds.size
+      failedCount: failedRows.size,
+      failureReasons: [...new Set(failedRows.values())]
     };
   };
 
@@ -1440,13 +1450,47 @@ export function AdminSchedulesPage() {
       return result.rows;
     }
 
+    const failureReasonText = result.failureReasons.length > 0 ? ` 原因：${result.failureReasons[0]}` : "";
     const failedText =
       result.failedCount > 0
-        ? `仍有 ${result.failedCount} 位找不到座標，已保留在最後順位；需補座標後重新排程。`
+        ? `仍有 ${result.failedCount} 位找不到座標，已保留在最後順位；需補座標後重新排程。${failureReasonText}`
         : "全部已可納入地圖預覽與自動排序。";
     setGeocodingMessage(`已由 Google Map 補上 ${result.resolvedCount} 位個案座標。${failedText}`);
     return result.rows;
   };
+
+  const autoGeocodingRequestKey = useMemo(() => {
+    if (!selectedDoctorId || !routeDate || !effectiveSelectedWeekday || !selectedTimeSlot) {
+      return null;
+    }
+
+    const missingRows = checkedRows.filter((row) => !getPlannerRowCoordinate(row));
+    if (missingRows.length === 0) {
+      return null;
+    }
+
+    return [
+      selectedDoctorId,
+      routeDate,
+      effectiveSelectedWeekday,
+      selectedTimeSlot,
+      missingRows
+        .map((row) => `${row.patientId}:${row.address}:${row.checked ? "checked" : "unchecked"}`)
+        .join("|")
+    ].join("::");
+  }, [checkedRows, effectiveSelectedWeekday, routeDate, selectedDoctorId, selectedTimeSlot]);
+
+  useEffect(() => {
+    if (!autoGeocodingRequestKey || isGeocodingPlannerRows) {
+      return;
+    }
+    if (autoGeocodingRequestKeyRef.current === autoGeocodingRequestKey) {
+      return;
+    }
+
+    autoGeocodingRequestKeyRef.current = autoGeocodingRequestKey;
+    void geocodePlannerRows();
+  }, [autoGeocodingRequestKey, isGeocodingPlannerRows]);
 
   const autoSortPlannerRows = async () => {
     if (checkedRows.length < 2) {
@@ -1478,7 +1522,9 @@ export function AdminSchedulesPage() {
         : "可再拖曳微調。";
     const geocodingText =
       geocodingResult.resolvedCount > 0 || geocodingResult.failedCount > 0
-        ? `Google Map 已補上 ${geocodingResult.resolvedCount} 站座標，${geocodingResult.failedCount} 站仍找不到座標。`
+        ? `Google Map 已補上 ${geocodingResult.resolvedCount} 站座標，${geocodingResult.failedCount} 站仍找不到座標${
+            geocodingResult.failureReasons.length > 0 ? `，原因：${geocodingResult.failureReasons[0]}` : ""
+          }。`
         : "";
     setRecentAction(
       [geocodingText, strategyText, distanceText, unresolvedText].filter(Boolean).join(" ")
@@ -1512,7 +1558,7 @@ export function AdminSchedulesPage() {
     setRecentAction(result.message);
   };
 
-  const buildRoutePlanDraft = () => {
+  const buildRoutePlanDraft = (sourcePlannerRows = plannerRows) => {
     if (!selectedDoctorId || !effectiveSelectedWeekday || !selectedTimeSlot) {
       setRecentAction("請先選擇醫師、星期與上午/下午。");
       return null;
@@ -1521,7 +1567,7 @@ export function AdminSchedulesPage() {
       setRecentAction("請先輸入此次路線日期。");
       return null;
     }
-    if (plannerRows.length === 0) {
+    if (sourcePlannerRows.length === 0) {
       setRecentAction("目前沒有可加入路線的個案。");
       return null;
     }
@@ -1543,7 +1589,7 @@ export function AdminSchedulesPage() {
       normalizedEndAddress === routeEndLocation.address ? routeEndLocation.latitude : null;
     const endLongitude =
       normalizedEndAddress === routeEndLocation.address ? routeEndLocation.longitude : null;
-    const activePlannerRows = sortPlannerRows(plannerRows).filter((row) => {
+    const activePlannerRows = sortPlannerRows(sourcePlannerRows).filter((row) => {
       const patient = patientsById.get(row.patientId);
       return patient?.status === "active";
     });
@@ -1591,19 +1637,46 @@ export function AdminSchedulesPage() {
     } satisfies SavedRoutePlan;
   };
 
-  const saveRoutePlan = () => {
-    const routePlanDraft = buildRoutePlanDraft();
+  const preparePlannerRowsForRoutePlan = async () => {
+    const geocodingResult = await resolveMissingPlannerCoordinates(plannerRows);
+    const geocodingText =
+      geocodingResult.resolvedCount > 0 || geocodingResult.failedCount > 0
+        ? `Google Map 已補上 ${geocodingResult.resolvedCount} 站座標${
+            geocodingResult.failedCount > 0 ? `，${geocodingResult.failedCount} 站仍找不到座標` : ""
+          }${geocodingResult.failureReasons.length > 0 ? `，原因：${geocodingResult.failureReasons[0]}` : ""}。`
+        : "";
+
+    return {
+      rows: geocodingResult.rows,
+      geocodingText
+    };
+  };
+
+  const savePreparedRoutePlan = (sourceRows: PlannerRow[], geocodingText = "") => {
+    const routePlanDraft = buildRoutePlanDraft(sourceRows);
     if (!routePlanDraft) {
       return null;
     }
     repositories.visitRepository.upsertSavedRoutePlan(routePlanDraft);
     setSelectedSavedRoutePlanId(routePlanDraft.id);
-    setRecentAction("已儲存路線，之後可從已儲存的路線完整還原。");
+    setRecentAction(`${geocodingText}已儲存路線，之後可從已儲存的路線完整還原。`);
     return routePlanDraft.id;
   };
 
-  const executeRoutePlan = () => {
-    const routePlanDraft = buildRoutePlanDraft();
+  const saveRoutePlan = () => {
+    if (missingCheckedCoordinateCount === 0) {
+      return savePreparedRoutePlan(plannerRows);
+    }
+
+    void (async () => {
+      const prepared = await preparePlannerRowsForRoutePlan();
+      savePreparedRoutePlan(prepared.rows, prepared.geocodingText);
+    })();
+    return null;
+  };
+
+  const executePreparedRoutePlan = (sourceRows: PlannerRow[], geocodingText = "") => {
+    const routePlanDraft = buildRoutePlanDraft(sourceRows);
     if (!routePlanDraft) {
       return;
     }
@@ -1614,7 +1687,21 @@ export function AdminSchedulesPage() {
     }
     setSelectedSavedRoutePlanId(executed.id);
     setPlannerRows(buildPlannerRowsFromRoutePlan(executed, patientsById));
-    setRecentAction(`已實行 ${executed.route_name}，醫師端會以這條路線作為本次執行清單。`);
+    setRecentAction(
+      `${geocodingText}已實行 ${executed.route_name}，醫師端會以這條路線作為本次執行清單。`
+    );
+  };
+
+  const executeRoutePlan = () => {
+    if (missingCheckedCoordinateCount === 0) {
+      executePreparedRoutePlan(plannerRows);
+      return;
+    }
+
+    void (async () => {
+      const prepared = await preparePlannerRowsForRoutePlan();
+      executePreparedRoutePlan(prepared.rows, prepared.geocodingText);
+    })();
   };
 
   const deleteRoutePlan = () => {
@@ -2043,16 +2130,18 @@ export function AdminSchedulesPage() {
                 <button
                   type="button"
                   onClick={saveRoutePlan}
+                  disabled={isGeocodingPlannerRows}
                   className="rounded-full bg-brand-forest px-4 py-3 text-sm font-semibold text-white"
                 >
-                  儲存路線
+                  {isGeocodingPlannerRows ? "座標查詢中" : "儲存路線"}
                 </button>
                 <button
                   type="button"
                   onClick={executeRoutePlan}
+                  disabled={isGeocodingPlannerRows}
                   className="rounded-full bg-brand-coral px-4 py-3 text-sm font-semibold text-white"
                 >
-                  實行路線
+                  {isGeocodingPlannerRows ? "座標查詢中" : "實行路線"}
                 </button>
                 <button
                   type="button"
@@ -2119,7 +2208,7 @@ export function AdminSchedulesPage() {
               />
               {geocodingMessage ? (
                 <div
-                  role="status"
+                  aria-live="polite"
                   className="mt-3 rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-800"
                 >
                   {geocodingMessage}
@@ -2205,7 +2294,9 @@ export function AdminSchedulesPage() {
                           </p>
                         ) : row.geocodingStatus === "failed" || !getPlannerRowCoordinate(row) ? (
                           <p className="mt-1 text-xs font-semibold text-amber-700">
-                            缺少座標，若 Google 仍找不到，會排到最後；需補座標後重新排程。
+                            {row.geocodingStatus === "failed" && row.geocodedAddress
+                              ? `缺少座標：${row.geocodedAddress}`
+                              : "缺少座標，若 Google 仍找不到，會排到最後；需補座標後重新排程。"}
                           </p>
                         ) : null}
                       </div>

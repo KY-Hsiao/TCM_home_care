@@ -130,9 +130,9 @@ describe("AppShell", () => {
       "待處理請假",
       "醫師追蹤",
       "團隊通訊",
-      "家屬聯繫",
-      "個案管理",
+      "LINE 家屬聯繫",
       "排程管理",
+      "個案管理",
       "角色設置"
     ]);
   });
@@ -151,7 +151,7 @@ describe("AppShell", () => {
 
     renderShell("/admin/family-line", <AdminFamilyLinePage />);
 
-    expect(within(screen.getByRole("navigation")).getByRole("link", { name: /家屬聯繫/ })).toBeInTheDocument();
+    expect(within(screen.getByRole("navigation")).getByRole("link", { name: /LINE 家屬聯繫/ })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "LINE 自動發送設定" })).toBeInTheDocument();
     expect(screen.getByLabelText("目前編輯範本")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "送出 LINE 群發" })).toBeInTheDocument();

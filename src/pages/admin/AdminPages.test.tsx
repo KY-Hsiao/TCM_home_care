@@ -20,9 +20,9 @@ import {
   AdminTeamCommunicationPage
 } from "./AdminPages";
 
-function renderWithProviders(page: ReactNode) {
+function renderWithProviders(page: ReactNode, initialEntries = ["/"]) {
   return render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={initialEntries}>
       <AppProviders>{page}</AppProviders>
     </MemoryRouter>
   );
@@ -398,8 +398,8 @@ describe("AdminPages", () => {
     ).toBe(true);
   });
 
-  it("AdminSchedulesPage 會顯示帶背景地圖的頁內路線預覽與外部 Google 路線按鈕", () => {
-    renderWithProviders(<AdminSchedulesPage />);
+  it("AdminSchedulesPage 會顯示同座標系背景地圖的頁內路線預覽與外部 Google 路線按鈕", () => {
+    const { container } = renderWithProviders(<AdminSchedulesPage />);
 
     selectScheduleFilters();
     const routeEndpointsDialog = openRouteEndpointsDialog();
@@ -419,7 +419,7 @@ describe("AdminPages", () => {
     expect(screen.getByRole("button", { name: "回預設" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "放大" }));
     expect(screen.getByText("目前視野：近距")).toBeInTheDocument();
-    expect(screen.getByTitle(/頁內路線底圖/)).toBeInTheDocument();
+    expect(container.querySelector('svg image[href*="tile.openstreetmap.org"]')).toBeInTheDocument();
     expect(screen.getByRole("img", { name: /頁內路線圖預覽/ })).toBeInTheDocument();
     const routeLink = screen.getByRole("link", { name: "用 Google 地圖開啟完整路線" });
     expect(routeLink).toHaveAttribute("href", expect.stringContaining("waypoints="));
@@ -432,6 +432,65 @@ describe("AdminPages", () => {
     expect(routeLink).not.toHaveAttribute(
       "href",
       expect.stringContaining(encodeURIComponent("高雄市旗山區延平一路 128 號"))
+    );
+  });
+
+  it("AdminSchedulesPage 選定排程後會自動用 Google 補座標並寫回個案與未完成排程", async () => {
+    const customDb = createSeedDb();
+    customDb.patients = customDb.patients.map((patient) =>
+      patient.id === "pat-001"
+        ? {
+            ...patient,
+            home_latitude: null,
+            home_longitude: null,
+            geocoding_status: "missing" as const
+          }
+        : patient
+    );
+    customDb.visit_schedules = customDb.visit_schedules.map((schedule) =>
+      schedule.patient_id === "pat-001"
+        ? {
+            ...schedule,
+            home_latitude_snapshot: null,
+            home_longitude_snapshot: null,
+            geofence_status: "coordinate_missing" as const
+          }
+        : schedule
+    );
+    window.localStorage.setItem(MOCK_DB_STORAGE_KEY, JSON.stringify(customDb));
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        latitude: 22.88612,
+        longitude: 120.48234,
+        formattedAddress: "高雄市旗山區延平一路128號"
+      })
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderWithProviders(<AdminSchedulesPage />);
+    selectScheduleFilters();
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect(screen.getByText(/已由 Google Map 補上/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText(/已補座標：高雄市旗山區延平一路128號/)).toBeInTheDocument());
+    expect(screen.getByRole("img", { name: /頁內路線圖預覽/ })).toBeInTheDocument();
+    const storedDb = JSON.parse(window.localStorage.getItem(MOCK_DB_STORAGE_KEY) ?? "{}");
+    const updatedPatient = storedDb.patients.find((patient: { id: string }) => patient.id === "pat-001");
+    const updatedSchedule = storedDb.visit_schedules.find(
+      (schedule: { patient_id: string; status: string }) =>
+        schedule.patient_id === "pat-001" && !["completed", "cancelled"].includes(schedule.status)
+    );
+    expect(updatedPatient.home_latitude).toBe(22.88612);
+    expect(updatedPatient.home_longitude).toBe(120.48234);
+    expect(updatedSchedule.home_latitude_snapshot).toBe(22.88612);
+    expect(updatedSchedule.home_longitude_snapshot).toBe(120.48234);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/maps/geocode",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ address: "高雄市旗山區延平一路 128 號" })
+      })
     );
   });
 
@@ -842,6 +901,36 @@ describe("AdminPages", () => {
     expect(screen.getAllByText("已經過的地點").length).toBeGreaterThan(0);
   });
 
+  it("AdminDoctorTrackingPage 打開醫師路線時會排除暫停與結案個案", () => {
+    const customDb = createSeedDb();
+    const pausedSchedule = customDb.visit_schedules.find((schedule) => schedule.id === "vs-002");
+    const completedSchedule = customDb.visit_schedules.find((schedule) => schedule.id === "vs-007");
+    const activeSchedule = customDb.visit_schedules.find((schedule) => schedule.id === "vs-003");
+
+    if (!pausedSchedule || !completedSchedule || !activeSchedule) {
+      throw new Error("追蹤路線測試缺少必要 seed schedule。");
+    }
+
+    customDb.visit_schedules = customDb.visit_schedules.map((schedule) =>
+      schedule.id === pausedSchedule.id
+        ? { ...schedule, status: "paused" as const }
+        : schedule.id === completedSchedule.id
+          ? { ...schedule, status: "completed" as const }
+          : schedule
+    );
+
+    window.localStorage.setItem(MOCK_DB_STORAGE_KEY, JSON.stringify(customDb));
+
+    renderWithProviders(<AdminDoctorTrackingPage />);
+
+    const routeLink = screen.getByRole("link", { name: "打開 蕭坤元醫師 路線" });
+    const decodedRouteUrl = decodeURIComponent(routeLink.getAttribute("href") ?? "");
+
+    expect(decodedRouteUrl).toContain(activeSchedule.address_snapshot);
+    expect(decodedRouteUrl).not.toContain(pausedSchedule.address_snapshot);
+    expect(decodedRouteUrl).not.toContain(completedSchedule.address_snapshot);
+  });
+
   it("AdminDoctorTrackingPage 會優先帶入最近且可追蹤的路線日期，切換日期時不會跳錯天", () => {
     const customDb = createSeedDb();
     customDb.saved_route_plans = customDb.saved_route_plans.filter((routePlan) =>
@@ -1149,6 +1238,13 @@ describe("AdminPages", () => {
     expect(screen.getByText("本次選擇")).toBeInTheDocument();
     expect(screen.getByDisplayValue("U1234567890abcdef1234567890abcdef")).toBeInTheDocument();
     expect(window.localStorage.getItem("tcm-family-line-user-bindings")).toContain("cg-001");
+  });
+
+  it("AdminFamilyLinePage 可依 patientId 預選該個案家屬", () => {
+    renderWithProviders(<AdminFamilyLinePage />, ["/admin/family-line?patientId=pat-001"]);
+
+    expect(screen.getByLabelText("王怡萱 發送勾選")).toBeChecked();
+    expect(screen.getByRole("combobox", { name: "篩選醫師" })).toHaveValue("doc-001");
   });
 
   it("AdminFamilyLinePage 可勾選抵達前提醒與結束後關心並編輯範本後確認送出", async () => {
@@ -1724,6 +1820,13 @@ describe("AdminPages", () => {
     });
   });
 
+  it("AdminPatientsPage 個案列可直接開啟家屬聯繫介面", () => {
+    renderWithProviders(<AdminPatientsPage />);
+
+    const familyContactLink = screen.getByRole("link", { name: "王○珠 家屬聯繫" });
+    expect(familyContactLink).toHaveAttribute("href", "/admin/family-line?patientId=pat-001");
+  });
+
   it("AdminPatientsPage 可匯入帶 UTF-8 BOM 的 CSV", async () => {
     renderWithProviders(<AdminPatientsPage />);
 
@@ -1777,12 +1880,20 @@ describe("AdminPages", () => {
       const importedPatients = storedDb.patients ?? [];
       expect(
         importedPatients.some(
-          (patient: { name: string; chart_number: string; preferred_service_slot: string; phone: string; notes: string }) =>
+          (patient: {
+            name: string;
+            chart_number: string;
+            preferred_service_slot: string;
+            phone: string;
+            notes: string;
+            reminder_tags: string[];
+          }) =>
             patient.name === "涂○○娣" &&
             patient.chart_number === "131250" &&
             patient.preferred_service_slot === "星期三上午" &&
             patient.phone === "" &&
-            patient.notes.includes("Line 聯繫")
+            patient.notes.includes("Line 聯繫") &&
+            patient.reminder_tags.includes("家屬聯繫")
         )
       ).toBe(true);
       expect(

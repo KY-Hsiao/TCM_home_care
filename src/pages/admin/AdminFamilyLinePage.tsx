@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useAppContext } from "../../app/use-app-context";
 import type { Caregiver, Doctor, Patient, VisitSchedule } from "../../domain/models";
 import { Badge } from "../../shared/ui/Badge";
@@ -102,6 +103,8 @@ function resolveRecipientLineStatus(lineUserId: string) {
 
 export function AdminFamilyLinePage() {
   const { db, repositories } = useAppContext();
+  const [searchParams] = useSearchParams();
+  const focusedPatientId = searchParams.get("patientId");
   const [settings, setSettings] = useState<FamilyLineAutomationSettings>(() =>
     loadJsonStorage(SETTINGS_STORAGE_KEY, defaultSettings)
   );
@@ -204,6 +207,21 @@ export function AdminFamilyLinePage() {
       )
     );
   }, [filteredRecipients]);
+
+  useEffect(() => {
+    if (!focusedPatientId) {
+      return;
+    }
+
+    const focusedRecipients = recipients.filter(
+      (recipient) => recipient.patient.id === focusedPatientId
+    );
+    const focusedDoctor = focusedRecipients[0]?.doctor;
+    if (focusedDoctor) {
+      setSelectedDoctorId(focusedDoctor.id);
+    }
+    setSelectedRecipientIds(focusedRecipients.map((recipient) => recipient.caregiver.id));
+  }, [focusedPatientId, recipients]);
 
   const toggleSetting = (key: keyof FamilyLineAutomationSettings) => {
     setSettings((current) => ({
