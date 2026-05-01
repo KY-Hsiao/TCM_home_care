@@ -1,13 +1,32 @@
-import { type ReactNode, useState } from "react";
+import { type PointerEvent, type ReactNode, useState } from "react";
 import { useAppContext } from "../../app/use-app-context";
 import type { RouteMapInput } from "../../services/types";
 
-const previewRangePresets = [
-  { label: "近距", scale: 0.75, zoomOffset: 1 },
-  { label: "標準", scale: 1, zoomOffset: 0 },
+const previewCanvasWidth = 640;
+const previewCanvasHeight = 480;
+const previewCanvasPadding = 56;
+const previewDrawableWidth = previewCanvasWidth - previewCanvasPadding * 2;
+const previewDrawableHeight = previewCanvasHeight - previewCanvasPadding * 2;
+const defaultPreviewZoomIndex = 1;
+
+const previewZoomPresets = [
   { label: "廣域", scale: 1.8, zoomOffset: -1 },
-  { label: "最大", scale: 2.8, zoomOffset: -2 }
+  { label: "標準", scale: 1, zoomOffset: 0 },
+  { label: "近距", scale: 0.72, zoomOffset: 1 },
+  { label: "細節", scale: 0.52, zoomOffset: 2 }
 ] as const;
+
+type PreviewPanOffset = {
+  x: number;
+  y: number;
+};
+
+type PreviewDragState = {
+  pointerId: number;
+  startClientX: number;
+  startClientY: number;
+  startOffset: PreviewPanOffset;
+};
 
 function buildPreviewPoints(route: RouteMapInput) {
   return [
@@ -47,10 +66,10 @@ function buildPreviewPoints(route: RouteMapInput) {
   );
 }
 
-function buildPreviewCanvasPoints(route: RouteMapInput, rangeScale: number) {
+function buildPreviewBounds(route: RouteMapInput, rangeScale: number) {
   const points = buildPreviewPoints(route);
   if (points.length < 2) {
-    return [];
+    return null;
   }
 
   const latitudes = points.map((point) => point.latitude);
@@ -63,17 +82,55 @@ function buildPreviewCanvasPoints(route: RouteMapInput, rangeScale: number) {
   const longitudeCenter = (minLongitude + maxLongitude) / 2;
   const latitudeSpan = Math.max(maxLatitude - minLatitude, 0.001) * rangeScale;
   const longitudeSpan = Math.max(maxLongitude - minLongitude, 0.001) * rangeScale;
-  const scaledMinLatitude = latitudeCenter - latitudeSpan / 2;
-  const scaledMinLongitude = longitudeCenter - longitudeSpan / 2;
-  const padding = 56;
-  const width = 640;
-  const height = 480;
 
-  return points.map((point) => ({
-    ...point,
-    x: padding + ((point.longitude - scaledMinLongitude) / longitudeSpan) * (width - padding * 2),
-    y: height - padding - ((point.latitude - scaledMinLatitude) / latitudeSpan) * (height - padding * 2)
-  }));
+  return {
+    points,
+    latitudeCenter,
+    longitudeCenter,
+    latitudeSpan,
+    longitudeSpan
+  };
+}
+
+function buildPreviewCanvasState(route: RouteMapInput, rangeScale: number, panOffset: PreviewPanOffset) {
+  const bounds = buildPreviewBounds(route, rangeScale);
+  if (!bounds) {
+    return null;
+  }
+
+  const centerLongitude =
+    bounds.longitudeCenter - (panOffset.x / previewDrawableWidth) * bounds.longitudeSpan;
+  const centerLatitude =
+    bounds.latitudeCenter + (panOffset.y / previewDrawableHeight) * bounds.latitudeSpan;
+  const scaledMinLatitude = centerLatitude - bounds.latitudeSpan / 2;
+  const scaledMinLongitude = centerLongitude - bounds.longitudeSpan / 2;
+
+  return {
+    centerLatitude,
+    centerLongitude,
+    points: bounds.points.map((point) => ({
+      ...point,
+      x:
+        previewCanvasPadding +
+        ((point.longitude - scaledMinLongitude) / bounds.longitudeSpan) * previewDrawableWidth,
+      y:
+        previewCanvasHeight -
+        previewCanvasPadding -
+        ((point.latitude - scaledMinLatitude) / bounds.latitudeSpan) * previewDrawableHeight
+    }))
+  };
+}
+
+function buildCenterOffsetForPoint(route: RouteMapInput, rangeScale: number, target: { latitude: number; longitude: number }) {
+  const bounds = buildPreviewBounds(route, rangeScale);
+  if (!bounds) {
+    return { x: 0, y: 0 };
+  }
+
+  return {
+    x: ((bounds.longitudeCenter - target.longitude) / bounds.longitudeSpan) * previewDrawableWidth,
+    y: ((target.latitude - bounds.latitudeCenter) / bounds.latitudeSpan) * previewDrawableHeight
+  };
 }
 
 function buildUnresolvedPreviewPoints(route: RouteMapInput) {
@@ -122,22 +179,20 @@ function resolvePreviewMapZoom(points: Array<{ latitude: number; longitude: numb
   return 16;
 }
 
-function buildPreviewMapBackgroundUrl(
-  points: Array<{ latitude: number; longitude: number }>,
-  zoomOffset: number
-) {
-  if (!points.length) {
+function buildPreviewMapBackgroundUrl(input: {
+  centerLatitude: number;
+  centerLongitude: number;
+  points: Array<{ latitude: number; longitude: number }>;
+  zoomOffset: number;
+}) {
+  if (!input.points.length) {
     return null;
   }
 
-  const centerLatitude =
-    points.reduce((sum, point) => sum + point.latitude, 0) / points.length;
-  const centerLongitude =
-    points.reduce((sum, point) => sum + point.longitude, 0) / points.length;
-  const zoom = Math.min(18, Math.max(3, resolvePreviewMapZoom(points) + zoomOffset));
+  const zoom = Math.min(18, Math.max(3, resolvePreviewMapZoom(input.points) + input.zoomOffset));
 
   return `https://maps.google.com/maps?q=${encodeURIComponent(
-    `${centerLatitude},${centerLongitude}`
+    `${input.centerLatitude},${input.centerLongitude}`
   )}&z=${zoom}&output=embed`;
 }
 
@@ -157,7 +212,9 @@ export function RouteMapPreviewCard({
   headerActions
 }: RouteMapPreviewCardProps) {
   const { services } = useAppContext();
-  const [previewRangeIndex, setPreviewRangeIndex] = useState(1);
+  const [previewZoomIndex, setPreviewZoomIndex] = useState(defaultPreviewZoomIndex);
+  const [previewPanOffset, setPreviewPanOffset] = useState<PreviewPanOffset>({ x: 0, y: 0 });
+  const [previewDragState, setPreviewDragState] = useState<PreviewDragState | null>(null);
 
   if (!route) {
     return (
@@ -174,14 +231,64 @@ export function RouteMapPreviewCard({
   }
 
   const previewState = services.maps.getRoutePreviewState(route);
-  const previewRange = previewRangePresets[previewRangeIndex];
-  const previewCanvasPoints = buildPreviewCanvasPoints(route, previewRange.scale);
+  const previewZoom = previewZoomPresets[previewZoomIndex];
+  const previewCanvasState = buildPreviewCanvasState(route, previewZoom.scale, previewPanOffset);
+  const previewCanvasPoints = previewCanvasState?.points ?? [];
   const unresolvedPreviewPoints = buildUnresolvedPreviewPoints(route);
   const hasCanvasPreview = previewCanvasPoints.length >= 2;
-  const previewBackgroundMapUrl = buildPreviewMapBackgroundUrl(
-    previewCanvasPoints,
-    previewRange.zoomOffset
-  );
+  const previewBackgroundMapUrl = previewCanvasState
+    ? buildPreviewMapBackgroundUrl({
+        centerLatitude: previewCanvasState.centerLatitude,
+        centerLongitude: previewCanvasState.centerLongitude,
+        points: previewCanvasPoints,
+        zoomOffset: previewZoom.zoomOffset
+      })
+    : null;
+  const doctorCenterAvailable = route.origin.latitude !== null && route.origin.longitude !== null;
+  const resetPreviewView = () => {
+    setPreviewZoomIndex(defaultPreviewZoomIndex);
+    setPreviewPanOffset({ x: 0, y: 0 });
+  };
+  const centerPreviewOnDoctor = () => {
+    if (route.origin.latitude === null || route.origin.longitude === null) {
+      return;
+    }
+    setPreviewPanOffset(
+      buildCenterOffsetForPoint(route, previewZoom.scale, {
+        latitude: route.origin.latitude,
+        longitude: route.origin.longitude
+      })
+    );
+  };
+  const handlePreviewPointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) {
+      return;
+    }
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setPreviewDragState({
+      pointerId: event.pointerId,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      startOffset: previewPanOffset
+    });
+  };
+  const handlePreviewPointerMove = (event: PointerEvent<HTMLDivElement>) => {
+    if (!previewDragState || previewDragState.pointerId !== event.pointerId) {
+      return;
+    }
+    setPreviewPanOffset({
+      x: previewDragState.startOffset.x + event.clientX - previewDragState.startClientX,
+      y: previewDragState.startOffset.y + event.clientY - previewDragState.startClientY
+    });
+  };
+  const handlePreviewPointerUp = (event: PointerEvent<HTMLDivElement>) => {
+    if (previewDragState?.pointerId === event.pointerId) {
+      setPreviewDragState(null);
+    }
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  };
   const mediaHeightClass = compact
     ? "mt-3 aspect-[4/3] w-full min-h-[360px] max-h-[62vh] rounded-3xl border border-slate-200 bg-white"
     : "mt-4 aspect-[4/3] w-full min-h-[420px] max-h-[76vh] rounded-3xl border border-slate-200 bg-white";
@@ -243,40 +350,63 @@ export function RouteMapPreviewCard({
               <p className="mt-1 text-xs text-slate-500">依個案座標繪製，明確標示個案位置</p>
             </div>
             <div className="flex flex-wrap items-center justify-end gap-2">
-              <span className="text-xs text-slate-500">目前範圍：{previewRange.label}</span>
+              <span className="text-xs text-slate-500">目前視野：{previewZoom.label}</span>
               <button
                 type="button"
-                onClick={() => setPreviewRangeIndex((current) => Math.min(current + 1, previewRangePresets.length - 1))}
-                disabled={previewRangeIndex === previewRangePresets.length - 1}
+                onClick={() => setPreviewZoomIndex((current) => Math.min(current + 1, previewZoomPresets.length - 1))}
+                disabled={previewZoomIndex === previewZoomPresets.length - 1}
                 className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-brand-ink disabled:cursor-not-allowed disabled:opacity-50"
               >
-                範圍放大
+                放大
               </button>
               <button
                 type="button"
-                onClick={() => setPreviewRangeIndex((current) => Math.max(current - 1, 0))}
-                disabled={previewRangeIndex === 0}
+                onClick={() => setPreviewZoomIndex((current) => Math.max(current - 1, 0))}
+                disabled={previewZoomIndex === 0}
                 className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-brand-ink disabled:cursor-not-allowed disabled:opacity-50"
               >
-                範圍縮小
+                縮小
+              </button>
+              <button
+                type="button"
+                onClick={centerPreviewOnDoctor}
+                disabled={!doctorCenterAvailable}
+                className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-brand-ink disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                醫師置中
+              </button>
+              <button
+                type="button"
+                onClick={resetPreviewView}
+                className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-brand-ink"
+              >
+                回預設
               </button>
             </div>
           </div>
-          <div className={`${canvasHeightClass} relative overflow-hidden border border-slate-200`}>
+          <div
+            className={`${canvasHeightClass} relative touch-none overflow-hidden border border-slate-200 ${
+              previewDragState ? "cursor-grabbing" : "cursor-grab"
+            }`}
+            onPointerDown={handlePreviewPointerDown}
+            onPointerMove={handlePreviewPointerMove}
+            onPointerUp={handlePreviewPointerUp}
+            onPointerCancel={handlePreviewPointerUp}
+          >
             {previewBackgroundMapUrl ? (
               <iframe
                 title={`${route.label} 頁內路線底圖`}
                 src={previewBackgroundMapUrl}
                 loading="lazy"
                 referrerPolicy="no-referrer-when-downgrade"
-                className="absolute inset-0 h-full w-full bg-white"
+                className="pointer-events-none absolute inset-0 h-full w-full bg-white"
               />
             ) : null}
             <svg
               viewBox="0 0 640 480"
               role="img"
               aria-label={`${route.label} 頁內路線圖預覽`}
-              className="absolute inset-0 h-full w-full"
+              className="pointer-events-none absolute inset-0 h-full w-full"
             >
               <defs>
                 <filter id="route-preview-shadow" x="-20%" y="-20%" width="140%" height="140%">
@@ -328,6 +458,9 @@ export function RouteMapPreviewCard({
                 </g>
               ))}
             </svg>
+            <div className="pointer-events-none absolute bottom-3 left-3 rounded-full bg-white/90 px-3 py-1.5 text-[11px] font-semibold text-slate-600 shadow-sm">
+              可拖曳移動視野
+            </div>
           </div>
           {hidePointLegend ? null : (
             <div className="mt-3 grid gap-2 text-xs text-slate-600 sm:grid-cols-2">
