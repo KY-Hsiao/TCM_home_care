@@ -57,7 +57,6 @@ export function DoctorPatientPage() {
             <p>重要病史：{profile.patient.important_medical_history}</p>
             <p>注意事項：{profile.patient.precautions}</p>
             <p>用藥摘要：{profile.patient.medication_summary}</p>
-            <p>上次訪視摘要：{profile.patient.last_visit_summary}</p>
             <p>下次追蹤重點：{profile.patient.next_follow_up_focus}</p>
           </div>
         </Panel>

@@ -1104,7 +1104,6 @@ export function DoctorReturnRecordPage() {
                 <p>個案：{maskPatientName(selectedProfile.patient.name)}</p>
                 <p>生日：{formatDateOnly(selectedProfile.patient.date_of_birth)}</p>
                 <p className="break-words">重要病史：{selectedProfile.patient.important_medical_history}</p>
-                <p className="break-words">上次追蹤摘要：{selectedProfile.patient.last_visit_summary}</p>
               </div>
             ) : null}
             {previousRecord ? (

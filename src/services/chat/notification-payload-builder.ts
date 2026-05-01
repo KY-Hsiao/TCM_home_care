@@ -190,36 +190,36 @@ export function createNotificationPayloadBuilder(): NotificationPayloadBuilder {
         case "family_followup_normal":
           {
             const completionSummary =
-              summary ?? detail.record?.follow_up_note ?? detail.patient.last_visit_summary ?? "已完成訪視";
-          return {
-            eventType: type,
-            subject: "訪視已完成",
-            body: `${maskedPatientName} 本次訪視已完成，若需補充說明請由行政端協助處理。摘要：${completionSummary}`,
-            templateCode: templateCodeByType[type],
-            cardDraft: JSON.stringify(
-              {
-                cardsV2: [
-                  {
-                    cardId: "visit_completed",
-                    card: {
-                      header: { title: "訪視已完成", subtitle: maskedPatientName },
-                      sections: [{ widgets: [{ textParagraph: { text: completionSummary } }] }]
+              summary ?? detail.record?.follow_up_note ?? "已完成訪視";
+            return {
+              eventType: type,
+              subject: "訪視已完成",
+              body: `${maskedPatientName} 本次訪視已完成，若需補充說明請由行政端協助處理。摘要：${completionSummary}`,
+              templateCode: templateCodeByType[type],
+              cardDraft: JSON.stringify(
+                {
+                  cardsV2: [
+                    {
+                      cardId: "visit_completed",
+                      card: {
+                        header: { title: "訪視已完成", subtitle: maskedPatientName },
+                        sections: [{ widgets: [{ textParagraph: { text: completionSummary } }] }]
+                      }
                     }
-                  }
-                ]
-              },
-              null,
-              2
-            ),
-            actions: [
-              { label: "收到", action: "approve" },
-              { label: "留言給行政", action: "admin_note" }
-            ],
-            previewPayload: {
-              ...sharedPreviewPayload,
-              summary: completionSummary
-            }
-          };
+                  ]
+                },
+                null,
+                2
+              ),
+              actions: [
+                { label: "收到", action: "approve" },
+                { label: "留言給行政", action: "admin_note" }
+              ],
+              previewPayload: {
+                ...sharedPreviewPayload,
+                summary: completionSummary
+              }
+            };
           }
         case "family_followup_absent":
           return {
@@ -320,35 +320,38 @@ export function createNotificationPayloadBuilder(): NotificationPayloadBuilder {
             }
           };
         default:
-          return {
-            eventType: "visit_completed",
-            subject: "訪視完成通知",
-            body: `${maskedPatientName} 本次訪視已完成。${(summary ?? detail.patient.last_visit_summary) || "若需補充內容，請由行政端協助處理。"}。`,
-            templateCode: templateCodeByType.visit_completed,
-            cardDraft: JSON.stringify(
-              {
-                cardsV2: [
-                  {
-                    cardId: "visit_completed_default",
-                    card: {
-                      header: { title: "訪視完成通知", subtitle: maskedPatientName },
-                      sections: [{ widgets: [{ textParagraph: { text: summary ?? detail.patient.last_visit_summary ?? "待補摘要" } }] }]
+          {
+            const completionSummary = summary ?? "若需補充內容，請由行政端協助處理。";
+            return {
+              eventType: "visit_completed",
+              subject: "訪視完成通知",
+              body: `${maskedPatientName} 本次訪視已完成。${completionSummary}。`,
+              templateCode: templateCodeByType.visit_completed,
+              cardDraft: JSON.stringify(
+                {
+                  cardsV2: [
+                    {
+                      cardId: "visit_completed_default",
+                      card: {
+                        header: { title: "訪視完成通知", subtitle: maskedPatientName },
+                        sections: [{ widgets: [{ textParagraph: { text: completionSummary } }] }]
+                      }
                     }
-                  }
-                ]
-              },
-              null,
-              2
-            ),
-            actions: [
-              { label: "收到", action: "approve" },
-              { label: "回覆行政", action: "admin_note" }
-            ],
-            previewPayload: {
-              ...sharedPreviewPayload,
-              summary: summary ?? detail.patient.last_visit_summary ?? "待補摘要"
-            }
-          };
+                  ]
+                },
+                null,
+                2
+              ),
+              actions: [
+                { label: "收到", action: "approve" },
+                { label: "回覆行政", action: "admin_note" }
+              ],
+              previewPayload: {
+                ...sharedPreviewPayload,
+                summary: completionSummary
+              }
+            };
+          }
       }
     }
   };
