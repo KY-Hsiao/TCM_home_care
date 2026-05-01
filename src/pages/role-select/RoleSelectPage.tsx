@@ -76,9 +76,9 @@ export function RoleSelectPage() {
     <div className="mx-auto flex min-h-screen max-w-6xl items-center px-4 py-10 lg:px-6">
       <div className="grid w-full gap-6 lg:grid-cols-[1.05fr_0.95fr]">
         <div className="overflow-hidden rounded-[2rem] bg-[linear-gradient(140deg,#0f172a_0%,#1e293b_58%,#14532d_100%)] p-10 text-white shadow-card">
-          <p className="text-sm tracking-[0.28em] text-brand-sand/70">TCM HOME CARE</p>
+          <p className="text-sm tracking-[0.18em] text-brand-sand/70">中醫居家輔助系統</p>
           <h1 className="mt-4 text-4xl font-bold leading-tight lg:text-5xl">
-            中醫居家醫療
+            中醫居家
             <br />
             輔助系統
           </h1>

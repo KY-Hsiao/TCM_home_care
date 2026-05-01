@@ -1,7 +1,7 @@
 {
   "name": "tcm-home-care-local",
   "interface": {
-    "displayName": "TCM Home Care Local Plugins"
+    "displayName": "中醫居家輔助系統 Local Plugins"
   },
   "plugins": [
     {

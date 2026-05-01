@@ -436,11 +436,11 @@ export function AppShell() {
           }`}
         >
           <div>
-            <p className={`tracking-[0.3em] text-brand-sand/70 ${isDoctorShell ? "text-xs" : "text-sm"}`}>
-              TCM HOME CARE
+            <p className={`tracking-[0.18em] text-brand-sand/70 ${isDoctorShell ? "text-xs" : "text-sm"}`}>
+              中醫居家輔助系統
             </p>
             <h1 className={`mt-1.5 font-bold ${isDoctorShell ? "text-lg leading-tight lg:mt-2 lg:text-2xl" : "text-2xl"}`}>
-              中醫居家醫療輔助系統
+              中醫居家輔助系統
             </h1>
             <p className={`mt-1.5 text-brand-sand/80 ${isDoctorShell ? "text-[11px] lg:mt-2 lg:text-sm" : "text-sm"}`}>
               {shellRole === "doctor"
