@@ -111,15 +111,6 @@ function getUpcomingDateInputs(from = new Date(), daysAhead = 3) {
   });
 }
 
-function buildRouteDateForWeekday(weekday: (typeof weekdayOptions)[number], from = new Date()) {
-  const targetDate = new Date(from);
-  targetDate.setHours(0, 0, 0, 0);
-  const targetDay = weekdayToIndex[weekday];
-  const dayOffset = (targetDay - targetDate.getDay() + 7) % 7;
-  targetDate.setDate(targetDate.getDate() + dayOffset);
-  return formatDateInputValue(targetDate);
-}
-
 function buildUpcomingRouteDatesForWeekday(
   weekday: (typeof weekdayOptions)[number],
   from = new Date(),

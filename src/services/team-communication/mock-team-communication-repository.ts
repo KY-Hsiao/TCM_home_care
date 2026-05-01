@@ -91,8 +91,8 @@ export function createMockTeamCommunicationRepository(input: {
   repositories: AppRepositories;
 }): TeamCommunicationRepository {
   const findConversationMessage = (
-    viewerRole: TeamCommunicationRole,
-    viewerUserId: string,
+    _viewerRole: TeamCommunicationRole,
+    _viewerUserId: string,
     messageId: string
   ) =>
     input.db.contact_logs

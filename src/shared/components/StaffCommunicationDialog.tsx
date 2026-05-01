@@ -4,19 +4,14 @@ import type { TeamCommunicationMessage } from "../../services/team-communication
 
 type StaffCommunicationDialogProps = {
   counterpartLabel: string;
-  counterpartPhone: string;
   currentUserLabel: string;
   contextLabel: string;
   doctorId: string;
   adminUserId: string;
-  patientId: string | null;
-  visitScheduleId: string | null;
   logs: TeamCommunicationMessage[];
   unreadConversationCount?: number;
   syncError?: string | null;
   lastSyncedAt?: string | null;
-  isRefreshing?: boolean;
-  onRefresh?: () => void;
   onConversationViewed?: () => void;
   onCreateLog: (input: {
     channel: "phone" | "web_notice";
@@ -29,19 +24,14 @@ type StaffCommunicationDialogProps = {
 
 type StaffCommunicationPanelProps = {
   counterpartLabel: string;
-  counterpartPhone: string;
   currentUserLabel: string;
   contextLabel: string;
   doctorId: string;
   adminUserId: string;
-  patientId: string | null;
-  visitScheduleId: string | null;
   logs: TeamCommunicationMessage[];
   unreadConversationCount?: number;
   syncError?: string | null;
   lastSyncedAt?: string | null;
-  isRefreshing?: boolean;
-  onRefresh?: () => void;
   onConversationViewed?: () => void;
   onCreateLog: (input: {
     channel: "phone" | "web_notice";
@@ -67,14 +57,10 @@ export function StaffCommunicationPanel({
   contextLabel,
   doctorId,
   adminUserId,
-  patientId,
-  visitScheduleId,
   logs,
   unreadConversationCount = 0,
   syncError,
   lastSyncedAt,
-  isRefreshing = false,
-  onRefresh,
   onConversationViewed,
   onClose,
   onCreateLog

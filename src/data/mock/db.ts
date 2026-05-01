@@ -155,12 +155,6 @@ export function persistDb(db: AppDb): void {
   );
 }
 
-export function resetDb(): AppDb {
-  const seeded = removeExpiredSavedRoutePlans(removeLegacyLinDoctorSeed(createSeedDb()));
-  persistDb(seeded);
-  return seeded;
-}
-
 export function subscribeDbStorage(listener: (db: AppDb) => void): () => void {
   if (typeof window === "undefined") {
     return () => undefined;

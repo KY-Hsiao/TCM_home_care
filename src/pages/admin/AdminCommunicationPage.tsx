@@ -140,7 +140,6 @@ export function AdminTeamCommunicationPage() {
           <div className="h-[min(72dvh,820px)] min-h-[420px]">
             <StaffCommunicationPanel
               counterpartLabel={selectedDoctor.name}
-              counterpartPhone={selectedDoctor.phone}
               currentUserLabel="行政人員"
               contextLabel={
                 activeSchedule && activePatient
@@ -149,14 +148,10 @@ export function AdminTeamCommunicationPage() {
               }
               doctorId={selectedDoctor.id}
               adminUserId={selectedAdmin.id}
-              patientId={activePatient?.id ?? null}
-              visitScheduleId={activeSchedule?.id ?? null}
               logs={conversation.messages}
               unreadConversationCount={conversation.unreadCount}
               syncError={conversation.syncError}
               lastSyncedAt={conversation.lastSyncedAt}
-              isRefreshing={conversation.isRefreshing}
-              onRefresh={() => void conversation.refresh()}
               onConversationViewed={() => void conversation.markConversationRead()}
               onCreateLog={createAdminDoctorContactLog}
             />

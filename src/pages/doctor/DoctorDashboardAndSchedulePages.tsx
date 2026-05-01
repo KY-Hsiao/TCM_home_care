@@ -374,86 +374,6 @@ function DoctorRouteSelector({ embedded = false }: { embedded?: boolean }) {
     setRouteListModalId(routePlanId);
   };
 
-  const handleStartRouteNavigation = (routePlanId: string) => {
-    const navigationState = resolveRoutePlanNavigationState({
-      repositories,
-      services,
-      doctorId: session.activeDoctorId,
-      routePlanId
-    });
-    const targetSchedule = navigationState.currentNavigationSchedule ?? navigationState.nextRouteSchedule;
-    if (!targetSchedule && !navigationState.shouldReturnHospital) {
-      return;
-    }
-
-    setActiveRoutePlanId(routePlanId);
-    if (!targetSchedule) {
-      const routePlan = repositories.visitRepository.getSavedRoutePlanById(routePlanId);
-      if (!routePlan) {
-        return;
-      }
-      navigate("/doctor/navigation");
-      openExternalNavigation(
-        services.maps.buildNavigationUrl({
-          destinationAddress: routePlan.end_address,
-          destinationLatitude: routePlan.end_latitude,
-          destinationLongitude: routePlan.end_longitude,
-          originLatitude: null,
-          originLongitude: null
-        })
-      );
-      return;
-    }
-
-    const detail = repositories.visitRepository.getScheduleDetail(targetSchedule.id);
-    if (!detail) {
-      return;
-    }
-
-    if (navigationState.currentNavigationSchedule) {
-      if (navigationState.activeTrackingContext?.runtime.watchStatus === "paused") {
-        services.visitAutomation.resumeTracking(detail);
-      }
-      navigate("/doctor/navigation");
-      openExternalNavigation(
-        services.maps.buildNavigationUrl({
-          destinationAddress: detail.schedule.address_snapshot,
-          destinationKeyword: detail.schedule.location_keyword_snapshot,
-          destinationLatitude: detail.schedule.home_latitude_snapshot,
-          destinationLongitude: detail.schedule.home_longitude_snapshot,
-          originLatitude: navigationState.activeTrackingContext?.runtime.latestSample?.latitude ?? null,
-          originLongitude: navigationState.activeTrackingContext?.runtime.latestSample?.longitude ?? null
-        })
-      );
-      return;
-    }
-
-    const nextRecord =
-      detail.record?.departure_time
-        ? detail.record
-        : repositories.visitRepository.startVisitTravel(targetSchedule.id) ?? detail.record;
-    services.visitAutomation.startTracking({
-      ...detail,
-      record: nextRecord ?? detail.record,
-      schedule: {
-        ...detail.schedule,
-        status: "on_the_way",
-        geofence_status: "tracking"
-      }
-    });
-    navigate("/doctor/navigation");
-    openExternalNavigation(
-      services.maps.buildNavigationUrl({
-        destinationAddress: detail.schedule.address_snapshot,
-        destinationKeyword: detail.schedule.location_keyword_snapshot,
-        destinationLatitude: detail.schedule.home_latitude_snapshot,
-        destinationLongitude: detail.schedule.home_longitude_snapshot,
-        originLatitude: null,
-        originLongitude: null
-      })
-    );
-  };
-
   const handleResetRouteProgress = (routePlanId: string) => {
     const routePlan = repositories.visitRepository.getSavedRoutePlanById(routePlanId);
     if (!routePlan) {
@@ -1044,9 +964,6 @@ export function DoctorLocationPage() {
           originLongitude: latestLocation?.longitude ?? null
         })
       : null;
-  const coordinateLabel = latestLocation
-    ? services.maps.buildCoordinateLabel(latestLocation.latitude, latestLocation.longitude)
-    : "尚未取得精確座標";
   const handleStartRouteStop = (routeContext: typeof currentRouteContext) => {
     if (!routeContext) {
       return;

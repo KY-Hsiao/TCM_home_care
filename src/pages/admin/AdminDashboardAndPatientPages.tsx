@@ -6,7 +6,7 @@ import type { RouteMapInput } from "../../services/types";
 import { Badge } from "../../shared/ui/Badge";
 import { Panel } from "../../shared/ui/Panel";
 import { StatCard } from "../../shared/ui/StatCard";
-import { formatDateOnly, formatDateTimeFull, formatTimeOnly } from "../../shared/utils/format";
+import { formatDateTimeFull, formatTimeOnly } from "../../shared/utils/format";
 import { anonymizePatientName, maskPatientName } from "../../shared/utils/patient-name";
 import {
   buildGoogleMapsSearchUrl,
@@ -21,7 +21,6 @@ function mapsLink(address: string, locationKeyword = sameAddressLocationKeyword)
 
 const patientServiceNeedOptions = ["中藥", "針灸"] as const;
 const routeTimeSlotOptions = ["上午", "下午"] as const;
-const weekdayLabels = ["星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"] as const;
 const trackingMapOrigin = {
   address: "旗山醫院",
   latitude: 22.88794,
@@ -149,14 +148,6 @@ function estimateDistanceKilometersBetween(
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 
   return earthRadiusKm * c;
-}
-
-function buildServiceSlotLabel(routeDate: string, routeTimeSlot: RouteTimeSlot) {
-  const date = new Date(`${routeDate}T00:00:00`);
-  if (Number.isNaN(date.getTime())) {
-    return routeTimeSlot;
-  }
-  return `${weekdayLabels[date.getDay()]}${routeTimeSlot}`;
 }
 
 function resolveTrackingTimeSlot(schedule: Pick<VisitSchedule, "service_time_slot" | "scheduled_start_at">): RouteTimeSlot {
@@ -291,13 +282,6 @@ function buildDateInputValue(date = new Date()) {
   const month = `${date.getMonth() + 1}`.padStart(2, "0");
   const day = `${date.getDate()}`.padStart(2, "0");
   return `${year}-${month}-${day}`;
-}
-
-function renumberRoute(route: VisitSchedule[]) {
-  return route.map((schedule, index) => ({
-    ...schedule,
-    route_order: index + 1
-  }));
 }
 
 function buildPatientDraft(patient?: Patient): Patient {
@@ -653,10 +637,6 @@ function trackingWorldToLatitude(worldY: number, zoom: number) {
   const scale = trackingMapTileSize * 2 ** zoom;
   const mercatorY = Math.PI - (2 * Math.PI * worldY) / scale;
   return (180 / Math.PI) * Math.atan(0.5 * (Math.exp(mercatorY) - Math.exp(-mercatorY)));
-}
-
-function buildTrackingMapRoutePoints(doctor: DoctorTrackingSummary) {
-  return buildTrackingRouteLayerPoints(doctor.routeSchedules);
 }
 
 function buildTrackingRouteLayerPoints(schedules: VisitSchedule[]) {
@@ -2174,7 +2154,7 @@ export function AdminPatientsPage() {
       }
 
       const patientToImport = buildPatientDraft();
-      const result = repositories.patientRepository.upsertPatient({
+      repositories.patientRepository.upsertPatient({
         ...patientToImport,
         id: `pat-import-${Date.now()}-${index}`,
         name: anonymizePatientName(name),

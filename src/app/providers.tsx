@@ -6,15 +6,13 @@ import {
   type PropsWithChildren
 } from "react";
 import { AppContext, type AppContextValue } from "./app-context";
-import { loadDb, persistDb, resetDb, subscribeDbStorage } from "../data/mock/db";
+import { loadDb, persistDb, subscribeDbStorage } from "../data/mock/db";
 import { createRepositories } from "../data/mock/repositories";
 import type { AppDb } from "../domain/models";
 import type { SessionState } from "../domain/repository";
 import { createAppServices } from "../services";
 import type { AppServices } from "../services/types";
 import {
-  clearStoredPasswords,
-  clearStoredSession,
   loadStoredPasswords,
   loadStoredSession,
   persistStoredPasswords,
@@ -195,21 +193,6 @@ export function AppProviders({ children }: PropsWithChildren) {
     },
     setActiveRoutePlanId(routePlanId) {
       setSession((current) => ({ ...current, activeRoutePlanId: routePlanId }));
-    },
-    resetMockData() {
-      services.visitAutomation.resetAll();
-      clearStoredSession();
-      clearStoredPasswords();
-      setDb(resetDb());
-      setStoredPasswords({});
-      setSession({
-        role: "doctor",
-        activeDoctorId: "doc-001",
-        activeAdminId: "admin-001",
-        activeRoutePlanId: null,
-        authenticatedDoctorId: null,
-        authenticatedAdminId: null
-      });
     }
   };
 

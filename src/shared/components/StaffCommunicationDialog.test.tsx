@@ -9,13 +9,10 @@ describe("StaffCommunicationPanel", () => {
     const { rerender } = render(
       <StaffCommunicationPanel
         counterpartLabel="行政人員"
-        counterpartPhone="0912-000-000"
         currentUserLabel="蕭坤元醫師"
         contextLabel="院內行政協調"
         doctorId="doc-001"
         adminUserId="admin-001"
-        patientId={null}
-        visitScheduleId={null}
         logs={[]}
         unreadConversationCount={0}
         onConversationViewed={handleViewed}
@@ -28,13 +25,10 @@ describe("StaffCommunicationPanel", () => {
     rerender(
       <StaffCommunicationPanel
         counterpartLabel="行政人員"
-        counterpartPhone="0912-000-000"
         currentUserLabel="蕭坤元醫師"
         contextLabel="院內行政協調"
         doctorId="doc-001"
         adminUserId="admin-001"
-        patientId={null}
-        visitScheduleId={null}
         logs={[]}
         unreadConversationCount={0}
         onConversationViewed={handleViewed}

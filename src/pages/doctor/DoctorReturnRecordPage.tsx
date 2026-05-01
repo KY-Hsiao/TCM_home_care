@@ -251,16 +251,6 @@ function buildRouteOptionKey(schedule: VisitSchedule) {
     : `route-slot:${schedule.assigned_doctor_id}:${schedule.scheduled_start_at.slice(0, 10)}:${schedule.service_time_slot}`;
 }
 
-function buildRouteOptionName(
-  schedule: VisitSchedule,
-  routePlanName?: string
-) {
-  return (
-    routePlanName ??
-    `${formatDateOnly(schedule.scheduled_start_at)} ${schedule.service_time_slot}出巡`
-  );
-}
-
 function resolveReturnRecordTimeDefaults(
   matchedVisit: CompletedHomeVisitContext | null
 ): ReturnRecordTimeDefaults {

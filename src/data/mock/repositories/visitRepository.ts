@@ -7,11 +7,9 @@ import type {
   VisitSchedule
 } from "../../../domain/models";
 import type {
-  ConfirmationSource,
   FamilyFollowUpStatus,
   RouteItemStatus,
   UserRole,
-  VisitFeedbackCode,
   VisitStatus
 } from "../../../domain/enums";
 import { applyVisitRecordRules } from "../../../domain/rules";

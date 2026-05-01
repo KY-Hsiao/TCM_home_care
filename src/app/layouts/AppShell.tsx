@@ -680,19 +680,14 @@ export function AppShell() {
       {shellRole === "doctor" && isStaffCommunicationOpen && currentDoctor && currentAdmin ? (
         <StaffCommunicationDialog
           counterpartLabel="行政人員"
-          counterpartPhone={currentAdmin.phone}
           currentUserLabel={currentDoctor.name}
           contextLabel={doctorCommunicationContextLabel}
           doctorId={currentDoctor.id}
           adminUserId={currentAdmin.id}
-          patientId={activeDoctorScheduleDetail?.patient.id ?? null}
-          visitScheduleId={activeDoctorScheduleDetail?.schedule.id ?? null}
           logs={shellConversation.messages}
           unreadConversationCount={shellConversation.unreadCount}
           syncError={shellConversation.syncError}
           lastSyncedAt={shellConversation.lastSyncedAt}
-          isRefreshing={shellConversation.isRefreshing}
-          onRefresh={() => void shellConversation.refresh()}
           onConversationViewed={() => {
             void shellConversation.markConversationRead();
             void teamCommunicationUnread.refresh();

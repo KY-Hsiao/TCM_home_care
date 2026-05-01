@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SESSION_STORAGE_KEY } from "../../app/auth-storage";
 import { AppProviders } from "../../app/providers";
 import { useAppContext } from "../../app/use-app-context";
+import { maskPatientName } from "../../shared/utils/patient-name";
 import { DoctorLocationPage } from "./DoctorDashboardAndSchedulePages";
 
 let capturedContext: ReturnType<typeof useAppContext> | null = null;
@@ -96,7 +97,7 @@ function openCurrentPatientDetail(patientName: string) {
   }
 
   fireEvent.click(routeButton);
-  fireEvent.click(screen.getByRole("button", { name: new RegExp(patientName) }));
+  fireEvent.click(screen.getByRole("button", { name: new RegExp(maskPatientName(patientName)) }));
 }
 
 describe("DoctorManualRouteContinuation", () => {

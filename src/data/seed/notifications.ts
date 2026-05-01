@@ -3,7 +3,7 @@ import type {
   NotificationTask,
   NotificationTemplate
 } from "../../domain/models";
-import { at, stamp } from "./helpers";
+import { stamp } from "./helpers";
 
 export const notificationTemplatesSeed: NotificationTemplate[] = [
   {

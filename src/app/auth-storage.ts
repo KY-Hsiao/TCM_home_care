@@ -44,14 +44,6 @@ export function persistStoredSession(session: SessionState) {
   window.localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
 }
 
-export function clearStoredSession() {
-  if (!canUseStorage()) {
-    return;
-  }
-
-  window.localStorage.removeItem(SESSION_STORAGE_KEY);
-}
-
 export function loadStoredPasswords(): StoredPasswords {
   if (!canUseStorage()) {
     return {};
@@ -76,14 +68,6 @@ export function persistStoredPasswords(passwords: StoredPasswords) {
   }
 
   window.localStorage.setItem(PASSWORD_STORAGE_KEY, JSON.stringify(passwords));
-}
-
-export function clearStoredPasswords() {
-  if (!canUseStorage()) {
-    return;
-  }
-
-  window.localStorage.removeItem(PASSWORD_STORAGE_KEY);
 }
 
 export function resolvePassword(

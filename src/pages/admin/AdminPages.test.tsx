@@ -6,7 +6,7 @@ import { SESSION_STORAGE_KEY } from "../../app/auth-storage";
 import { AppProviders } from "../../app/providers";
 import { MOCK_DB_STORAGE_KEY } from "../../data/mock/db";
 import { createSeedDb } from "../../data/seed";
-import { DoctorLocationPage, DoctorTeamCommunicationPage } from "../doctor/DoctorPages";
+import { DoctorLocationPage } from "../doctor/DoctorPages";
 import {
   AdminDashboardPage,
   AdminDoctorTrackingPage,

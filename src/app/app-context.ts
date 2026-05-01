@@ -25,7 +25,6 @@ export type AppContextValue = {
   setActiveDoctorId: (doctorId: string) => void;
   setActiveAdminId: (adminId: string) => void;
   setActiveRoutePlanId: (routePlanId: string | null) => void;
-  resetMockData: () => void;
 };
 
 export const AppContext = createContext<AppContextValue | undefined>(undefined);

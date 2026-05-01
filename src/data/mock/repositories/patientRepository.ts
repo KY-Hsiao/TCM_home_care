@@ -1,12 +1,11 @@
-import { addDays, addMinutes, compareAsc, formatISO, isSameDay, startOfDay } from "date-fns";
+import { compareAsc, isSameDay } from "date-fns";
 import type {
   AdminUser,
   AppDb,
   CaregiverChatBinding,
   Doctor,
   Patient,
-  SavedRoutePlan,
-  VisitSchedule
+  SavedRoutePlan
 } from "../../../domain/models";
 import type {
   PatientRemoveResult,
@@ -58,40 +57,6 @@ function defaultAddressArea(address: string): string {
   return match ? `${match[1]}${match[2]}` : "未分類";
 }
 
-const AUTO_SLOT_PATIENT_LIMIT = 8;
-const AUTO_SLOT_INTERVAL_MINUTES = 30;
-const AUTO_VISIT_DURATION_MINUTES = 30;
-const SLOT_PART_WINDOWS = {
-  上午: { startHour: 9, startMinute: 0, endHour: 13, endMinute: 0 },
-  下午: { startHour: 14, startMinute: 0, endHour: 18, endMinute: 0 }
-} as const;
-const WEEKDAY_TO_INDEX: Record<string, number> = {
-  星期日: 0,
-  星期天: 0,
-  星期一: 1,
-  星期二: 2,
-  星期三: 3,
-  星期四: 4,
-  星期五: 5,
-  星期六: 6
-};
-
-type ParsedServiceSlot = {
-  normalizedLabel: string;
-  startHour: number;
-  startMinute: number;
-  endHour: number;
-  endMinute: number;
-  dayOfWeek: number | null;
-};
-
-function parseServiceSlotSelections(slotText: string) {
-  return slotText
-    .split(/\r?\n|[|、,]/)
-    .map((slot) => slot.trim())
-    .filter(Boolean);
-}
-
 function createChartNumber(): string {
   return `AUTO-${Date.now().toString().slice(-6)}`;
 }
@@ -109,180 +74,6 @@ function reindexRouteItems(routeItems: SavedRoutePlan["route_items"]) {
           route_order: null
         }
   );
-}
-
-function parseServiceSlot(slotLabel: string): ParsedServiceSlot | null {
-  const normalizedLabel = slotLabel.trim();
-  const weeklyMatch = normalizedLabel.match(/^(星期[一二三四五六日天])(上午|下午)$/);
-  if (weeklyMatch) {
-    const weekday = weeklyMatch[1];
-    const part = weeklyMatch[2] as keyof typeof SLOT_PART_WINDOWS;
-    const window = SLOT_PART_WINDOWS[part];
-    return {
-      normalizedLabel,
-      startHour: window.startHour,
-      startMinute: window.startMinute,
-      endHour: window.endHour,
-      endMinute: window.endMinute,
-      dayOfWeek: WEEKDAY_TO_INDEX[weekday] ?? null
-    };
-  }
-
-  const match = slotLabel.match(/(\d{1,2}):(\d{2})-(\d{1,2}):(\d{2})/);
-  if (!match) {
-    return null;
-  }
-  return {
-    normalizedLabel,
-    startHour: Number(match[1]),
-    startMinute: Number(match[2]),
-    endHour: Number(match[3]),
-    endMinute: Number(match[4]),
-    dayOfWeek: null
-  };
-}
-
-function parseServiceSlotList(slotText: string) {
-  return [...new Set(parseServiceSlotSelections(slotText))]
-    .map((slot) => parseServiceSlot(slot))
-    .filter((slot): slot is ParsedServiceSlot => Boolean(slot))
-    .sort((left, right) => {
-      const leftDay = left.dayOfWeek ?? Number.MAX_SAFE_INTEGER;
-      const rightDay = right.dayOfWeek ?? Number.MAX_SAFE_INTEGER;
-      if (leftDay !== rightDay) {
-        return leftDay - rightDay;
-      }
-      const leftStart = left.startHour * 60 + left.startMinute;
-      const rightStart = right.startHour * 60 + right.startMinute;
-      return leftStart - rightStart;
-    });
-}
-
-function buildIsoAt(dayOffset: number, hour: number, minute: number): string {
-  return formatISO(addMinutes(addDays(startOfDay(new Date()), dayOffset), hour * 60 + minute));
-}
-
-function buildAutoSchedule(
-  db: AppDb,
-  patient: Patient,
-  caregiverId: string,
-  serviceSlotLabel: string,
-  dayOffset: number,
-  position: number
-): VisitSchedule | null {
-  const parsedSlot = parseServiceSlot(serviceSlotLabel);
-  if (!parsedSlot) {
-    return null;
-  }
-
-  const startMinutes =
-    parsedSlot.startHour * 60 + parsedSlot.startMinute + position * AUTO_SLOT_INTERVAL_MINUTES;
-  const endMinutes = startMinutes + AUTO_VISIT_DURATION_MINUTES;
-  const startHour = Math.floor(startMinutes / 60);
-  const startMinute = startMinutes % 60;
-  const endHour = Math.floor(endMinutes / 60);
-  const endMinute = endMinutes % 60;
-  const scheduledStart = buildIsoAt(dayOffset, startHour, startMinute);
-  const scheduledEnd = buildIsoAt(dayOffset, endHour, endMinute);
-  const routeGroupId = `${patient.preferred_doctor_id}-${scheduledStart.slice(0, 10)}`;
-  const routeOrder =
-    db.visit_schedules.filter(
-      (schedule) =>
-        schedule.assigned_doctor_id === patient.preferred_doctor_id &&
-        schedule.scheduled_start_at.slice(0, 10) === scheduledStart.slice(0, 10)
-    ).length + 1;
-
-  return {
-    id: `vs-auto-${patient.id}`,
-    patient_id: patient.id,
-    assigned_doctor_id: patient.preferred_doctor_id,
-    primary_caregiver_id: caregiverId,
-    scheduled_start_at: scheduledStart,
-    scheduled_end_at: scheduledEnd,
-    estimated_treatment_minutes: AUTO_VISIT_DURATION_MINUTES,
-    address_snapshot: patient.home_address,
-    location_keyword_snapshot: patient.location_keyword,
-    home_latitude_snapshot: patient.home_latitude,
-    home_longitude_snapshot: patient.home_longitude,
-    arrival_radius_meters: 100,
-    geofence_status:
-      patient.home_latitude === null || patient.home_longitude === null ? "coordinate_missing" : "idle",
-    google_maps_link: buildGoogleMapsSearchUrl(patient.location_keyword, patient.home_address),
-    area: defaultAddressArea(patient.home_address),
-    service_time_slot: parsedSlot.normalizedLabel,
-    route_order: routeOrder,
-    route_group_id: routeGroupId,
-    tracking_mode: "hybrid",
-    tracking_started_at: null,
-    tracking_stopped_at: null,
-    arrival_confirmed_by: null,
-    departure_confirmed_by: null,
-    last_feedback_code: null,
-    reminder_tags: [...patient.reminder_tags, ...patient.service_needs],
-    status: patient.status === "active" ? "scheduled" : "cancelled",
-    visit_type:
-      patient.service_needs.length > 0
-        ? `${patient.service_needs.join(" / ")} / ${patient.primary_diagnosis}`
-        : patient.primary_diagnosis,
-    note: "由個案管理自動排入",
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString()
-  };
-}
-
-function findSchedulePlacement(
-  db: AppDb,
-  patient: Patient,
-  serviceSlotLabel: string,
-  existingScheduleId?: string
-): { dayOffset: number; position: number } | null {
-  const parsedSlot = parseServiceSlot(serviceSlotLabel);
-  if (!parsedSlot) {
-    return null;
-  }
-
-  const now = new Date();
-  for (let dayOffset = 0; dayOffset < 14; dayOffset += 1) {
-    const candidateDate = addDays(startOfDay(now), dayOffset);
-    if (
-      parsedSlot.dayOfWeek !== null &&
-      candidateDate.getDay() !== parsedSlot.dayOfWeek
-    ) {
-      continue;
-    }
-
-    const sameSlotSchedules = db.visit_schedules.filter((schedule) => {
-      if (schedule.assigned_doctor_id !== patient.preferred_doctor_id) {
-        return false;
-      }
-      if (schedule.service_time_slot !== parsedSlot.normalizedLabel) {
-        return false;
-      }
-      if (schedule.id === existingScheduleId) {
-        return false;
-      }
-      if (schedule.status === "cancelled") {
-        return false;
-      }
-      return isSameDay(new Date(schedule.scheduled_start_at), candidateDate);
-    });
-
-    if (
-      dayOffset === 0 &&
-      now.getHours() * 60 + now.getMinutes() > parsedSlot.endHour * 60 + parsedSlot.endMinute
-    ) {
-      continue;
-    }
-
-    if (sameSlotSchedules.length < AUTO_SLOT_PATIENT_LIMIT) {
-      return {
-        dayOffset,
-        position: sameSlotSchedules.length
-      };
-    }
-  }
-
-  return null;
 }
 
 export function createPatientRepository(
