@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import * as XLSX from "xlsx";
 import { Link, useParams } from "react-router-dom";
 import { useAppContext } from "../../app/use-app-context";
 import type { DoctorLocationLog, Patient, VisitSchedule } from "../../domain/models";
@@ -142,12 +143,16 @@ function normalizeHomeCareServiceSlot(input: string) {
   const value = input.replace(/\s/g, "");
   const weekday = value.match(/星期[一二三四五六日天]/)?.[0];
   const timeSlot = value.includes("下午") ? "下午" : value.includes("上午") ? "上午" : "";
-  return weekday && timeSlot ? `${weekday}${timeSlot}` : "";
+  return weekday && timeSlot ? `${weekday.replace("天", "日")}${timeSlot}` : "";
+}
+
+function isHomeCareSectionHeader(row: string[]) {
+  return row.includes("順序") && row.includes("姓名") && row.includes("病歷號");
 }
 
 function isHomeCarePatientList(rows: string[][]) {
   return rows.some((row) => row.some((cell) => cell.includes("中醫居家名單"))) &&
-    rows.some((row) => row.includes("順序") && row.includes("姓名") && row.includes("病歷號"));
+    rows.some(isHomeCareSectionHeader);
 }
 
 function normalizeImportedPhone(input: string) {
@@ -155,32 +160,37 @@ function normalizeImportedPhone(input: string) {
 }
 
 function buildHomeCarePatientImportRows(rows: string[][]): PatientImportRow[] {
-  let serviceSlotMarker = "";
-  let currentServiceSlot = normalizeHomeCareServiceSlot(rows.slice(2).map((row) => row[0]?.trim() ?? "").join(""));
+  const headerIndexes = rows
+    .map((row, index) => (isHomeCareSectionHeader(row) ? index : -1))
+    .filter((index) => index >= 0);
+  const importedRows: PatientImportRow[] = [];
+  const seenKeys = new Set<string>();
 
-  return rows.slice(2).flatMap((row, index) => {
-    const marker = row[0]?.trim() ?? "";
-    if (marker) {
-      serviceSlotMarker += marker;
-      const normalizedSlot = normalizeHomeCareServiceSlot(serviceSlotMarker);
-      if (normalizedSlot) {
-        currentServiceSlot = normalizedSlot;
+  headerIndexes.forEach((headerIndex, sectionIndex) => {
+    const nextHeaderIndex = headerIndexes[sectionIndex + 1] ?? rows.length;
+    const sectionRows = rows.slice(headerIndex + 1, nextHeaderIndex);
+    const serviceSlot = normalizeHomeCareServiceSlot(
+      sectionRows.map((row) => row[0]?.trim() ?? "").join("")
+    );
+
+    sectionRows.forEach((row, sectionRowIndex) => {
+      const name = row[2]?.trim() ?? "";
+      const chartNumber = row[3]?.trim() ?? "";
+      const contactText = row[4]?.trim() ?? "";
+      const address = row[5]?.trim() ?? "";
+      const notes = row[6]?.trim() ?? "";
+      if (!name && !chartNumber && !address) {
+        return;
       }
-    }
+      const dedupeKey = `${chartNumber}|${name}|${address}`;
+      if (seenKeys.has(dedupeKey)) {
+        return;
+      }
+      seenKeys.add(dedupeKey);
 
-    const name = row[2]?.trim() ?? "";
-    const chartNumber = row[3]?.trim() ?? "";
-    const contactText = row[4]?.trim() ?? "";
-    const address = row[5]?.trim() ?? "";
-    const notes = row[6]?.trim() ?? "";
-    if (!name && !chartNumber && !address) {
-      return [];
-    }
-
-    const phone = normalizeImportedPhone(contactText);
-    return [
-      {
-        rowNumber: index + 3,
+      const phone = normalizeImportedPhone(contactText);
+      importedRows.push({
+        rowNumber: headerIndex + sectionRowIndex + 2,
         name,
         chartNumber,
         phone,
@@ -189,11 +199,13 @@ function buildHomeCarePatientImportRows(rows: string[][]): PatientImportRow[] {
         serviceNeeds: [],
         status: notes.includes("結案") ? "closed" : "active",
         doctorRaw: "",
-        serviceSlot: currentServiceSlot,
+        serviceSlot,
         notes: [notes, contactText && !phone ? `原表連絡電話：${contactText}` : ""].filter(Boolean).join("；")
-      }
-    ];
+      });
+    });
   });
+
+  return importedRows;
 }
 
 function buildLegacyPatientImportRows(header: string[], bodyRows: string[][]): PatientImportRow[] {
@@ -255,6 +267,44 @@ async function readUploadedFileText(file: File): Promise<string> {
     reader.onload = () => resolve(stripUtf8Bom(String(reader.result ?? "")));
     reader.onerror = () => reject(reader.error);
     reader.readAsText(file);
+  });
+}
+
+async function readUploadedFileArrayBuffer(file: File): Promise<ArrayBuffer> {
+  if (typeof file.arrayBuffer === "function") {
+    return file.arrayBuffer();
+  }
+
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as ArrayBuffer);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+async function readUploadedPatientRows(file: File): Promise<string[][]> {
+  const filename = file.name.toLowerCase();
+  const isSpreadsheet =
+    filename.endsWith(".xlsx") ||
+    filename.endsWith(".xls") ||
+    file.type.includes("spreadsheet") ||
+    file.type.includes("excel");
+
+  if (!isSpreadsheet) {
+    return parseCsvRows(await readUploadedFileText(file));
+  }
+
+  const workbook = XLSX.read(await readUploadedFileArrayBuffer(file), { type: "array" });
+  return workbook.SheetNames.flatMap((sheetName) => {
+    const worksheet = workbook.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json<unknown[]>(worksheet, {
+      header: 1,
+      raw: false,
+      blankrows: false,
+      defval: ""
+    });
+    return rows.map((row) => row.map((cell) => String(cell ?? "").trim()));
   });
 }
 
@@ -2309,15 +2359,16 @@ export function AdminPatientsPage() {
 
   const deleteSelectedPatient = () => deletePatient(selectedPatient);
 
-  const handleCsvImport = async (event: ChangeEvent<HTMLInputElement>) => {
+  const handlePatientImport = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) {
       return;
     }
 
-    const importRows = buildPatientImportRows(parseCsvRows(await readUploadedFileText(file)));
+    const isSpreadsheet = /\.(xlsx|xls)$/i.test(file.name) || file.type.includes("spreadsheet");
+    const importRows = buildPatientImportRows(await readUploadedPatientRows(file));
     if (!importRows) {
-      setRecentAction("CSV 欄位不足，請先下載範本後再匯入。");
+      setRecentAction("匯入欄位不足，請確認檔案符合居家患者名單格式後再匯入。");
       event.target.value = "";
       return;
     }
@@ -2368,8 +2419,8 @@ export function AdminPatientsPage() {
 
     setRecentAction(
       skippedReasons.length > 0
-        ? `CSV 匯入完成：成功 ${importedCount} 筆，略過 ${skippedCount} 筆。${skippedReasons[0]}`
-        : `CSV 匯入完成：成功 ${importedCount} 筆。`
+        ? `${isSpreadsheet ? "Excel" : "CSV"} 匯入完成：成功 ${importedCount} 筆，略過 ${skippedCount} 筆。${skippedReasons[0]}`
+        : `${isSpreadsheet ? "Excel" : "CSV"} 匯入完成：成功 ${importedCount} 筆。`
     );
     event.target.value = "";
   };
@@ -2392,12 +2443,12 @@ export function AdminPatientsPage() {
               下載 CSV 範本
             </button>
             <label className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-brand-ink ring-1 ring-slate-200">
-              CSV 匯入
+              CSV / Excel 匯入
               <input
                 type="file"
-                accept=".csv,text/csv"
+                accept=".csv,text/csv,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
                 className="sr-only"
-                onChange={(event) => void handleCsvImport(event)}
+                onChange={(event) => void handlePatientImport(event)}
               />
             </label>
             <button

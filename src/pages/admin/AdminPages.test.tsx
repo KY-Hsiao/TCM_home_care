@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ReactNode } from "react";
+import * as XLSX from "xlsx";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 import { SESSION_STORAGE_KEY } from "../../app/auth-storage";
@@ -56,6 +57,17 @@ function selectScheduleFilters(routeDate = "2026-04-29") {
 function openSlotPatientDialog() {
   fireEvent.click(screen.getByRole("button", { name: "選擇符合時段個案" }));
   return screen.getByRole("dialog", { name: "符合時段的個案清單視窗" });
+}
+
+function createXlsxFile(sheets: Array<{ name: string; rows: string[][] }>, filename = "home-care.xlsx") {
+  const workbook = XLSX.utils.book_new();
+  sheets.forEach((sheet) => {
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(sheet.rows), sheet.name);
+  });
+  const workbookBytes = XLSX.write(workbook, { type: "array", bookType: "xlsx" });
+  return new File([workbookBytes], filename, {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  });
 }
 
 function openRouteEndpointsDialog() {
@@ -1561,7 +1573,7 @@ describe("AdminPages", () => {
       { type: "text/csv" }
     );
 
-    fireEvent.change(screen.getByLabelText("CSV 匯入"), {
+    fireEvent.change(screen.getByLabelText("CSV / Excel 匯入"), {
       target: { files: [csvFile] }
     });
 
@@ -1591,7 +1603,7 @@ describe("AdminPages", () => {
       { type: "text/csv" }
     );
 
-    fireEvent.change(screen.getByLabelText("CSV 匯入"), {
+    fireEvent.change(screen.getByLabelText("CSV / Excel 匯入"), {
       target: { files: [csvFile] }
     });
 
@@ -1618,7 +1630,7 @@ describe("AdminPages", () => {
       { type: "text/csv" }
     );
 
-    fireEvent.change(screen.getByLabelText("CSV 匯入"), {
+    fireEvent.change(screen.getByLabelText("CSV / Excel 匯入"), {
       target: { files: [csvFile] }
     });
 
@@ -1644,6 +1656,65 @@ describe("AdminPages", () => {
         importedPatients.some(
           (patient: { name: string; chart_number: string; status: string }) =>
             patient.name === "黃○珠" && patient.chart_number === "206034" && patient.status === "closed"
+        )
+      ).toBe(true);
+    });
+  });
+
+  it("AdminPatientsPage 可直接匯入 Excel 居家患者名單並跳過重複表頭", async () => {
+    renderWithProviders(<AdminPatientsPage />);
+
+    const xlsxFile = createXlsxFile([
+      {
+        name: "居家4月",
+        rows: [
+          ["中醫居家名單", "", "", "", "", "", ""],
+          ["", "順序", "姓名", "病歷號", "連絡電話", "地址", ""],
+          ["星", "1", "涂黃招娣", "131250", "Line 聯繫", "美濃區獅山里中華路 92-1號", ""],
+          ["期", "2", "楊運郎", "198103", "07-6814570", "美濃區興隆里大埤頭 210號", ""],
+          ["三", "3", "黃福珠", "206034", "0987076029", "美濃區中圳里民族路40號", "4/14結案"],
+          ["上", "4", "李黃秀英", "286690", "07-6818157", "美濃區永安路235號", ""],
+          ["午", "5", "張吳明珍", "108291", "07-6772506", "杉林區新庄里司馬路2巷1-11號", ""],
+          ["", "順序", "姓名", "病歷號", "連絡電話", "地址", ""],
+          ["星", "1", "陳柯月霞", "396781", "07-6613266", "旗山區旗南一路232-2號", ""],
+          ["期", "2", "柯歐月女", "35360", "0978647604", "旗山區上洲里銀店街9-1號", ""],
+          ["四", "3", "陳柯秀貴", "24424", "0978505192", "旗山區文和巷33號", ""],
+          ["下", "4", "徐滿祥", "166432", "07-6830818", "美濃區清水里南中街3-3號", ""],
+          ["午", "5", "劉勝智", "242423", "0935791871", "美濃區上清街50號", ""]
+        ]
+      },
+      {
+        name: "居家4月 (2)",
+        rows: [
+          ["中醫居家名單", "", "", "", "", "", ""],
+          ["", "順序", "姓名", "病歷號", "連絡電話", "地址", ""],
+          ["星", "1", "涂黃招娣", "131250", "Line 聯繫", "美濃區獅山里中華路 92-1號", ""]
+        ]
+      }
+    ]);
+
+    fireEvent.change(screen.getByLabelText("CSV / Excel 匯入"), {
+      target: { files: [xlsxFile] }
+    });
+
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent("Excel 匯入完成：成功 10 筆")
+    );
+    expect(screen.getByText("陳○○貴")).toBeInTheDocument();
+    expect(screen.queryByText("姓○")).not.toBeInTheDocument();
+
+    await waitFor(() => {
+      const storedDb = JSON.parse(window.localStorage.getItem(MOCK_DB_STORAGE_KEY) ?? "{}");
+      const importedPatients = storedDb.patients ?? [];
+      expect(
+        importedPatients.filter((patient: { chart_number: string }) => patient.chart_number === "131250")
+      ).toHaveLength(1);
+      expect(
+        importedPatients.some(
+          (patient: { name: string; chart_number: string; preferred_service_slot: string }) =>
+            patient.name === "陳○○貴" &&
+            patient.chart_number === "24424" &&
+            patient.preferred_service_slot === "星期四下午"
         )
       ).toBe(true);
     });
