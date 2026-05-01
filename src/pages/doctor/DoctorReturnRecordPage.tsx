@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { addMinutes } from "date-fns";
 import { useForm, useWatch } from "react-hook-form";
 import { useAppContext } from "../../app/use-app-context";
@@ -393,7 +393,7 @@ export function DoctorReturnRecordPage({
 }: DoctorReturnRecordPageProps = {}) {
   const { repositories, session } = useAppContext();
   const [searchParams, setSearchParams] = useSearchParams();
-  const navigate = useNavigate();
+  const [isReturnRecordModalOpen, setIsReturnRecordModalOpen] = useState(true);
   const activeDoctor = useMemo(
     () =>
       repositories.patientRepository
@@ -742,16 +742,7 @@ export function DoctorReturnRecordPage({
       onCloseWindow();
       return;
     }
-    if (typeof window !== "undefined") {
-      window.close();
-      window.setTimeout(() => {
-        if (!window.closed) {
-          navigate("/doctor/navigation");
-        }
-      }, 80);
-      return;
-    }
-    navigate("/doctor/navigation");
+    setIsReturnRecordModalOpen(false);
   };
   const resolvedChiefComplaint = useMemo(() => {
     const draftValues = watchedValues ?? getValues();
@@ -1346,23 +1337,51 @@ export function DoctorReturnRecordPage({
           action={
             <button
               type="button"
-              onClick={closeReturnRecordWindow}
-              className="rounded-full bg-white px-5 py-2.5 text-sm font-semibold text-slate-600 ring-1 ring-slate-200"
+              onClick={() => setIsReturnRecordModalOpen(true)}
+              className="rounded-full bg-brand-coral px-5 py-2.5 text-sm font-semibold text-white"
             >
-              關閉視窗
+              開啟回院病歷視窗
             </button>
           }
         >
           <div className="rounded-[1.5rem] border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-600">
             <p className="font-semibold text-brand-ink">目前作業</p>
             <p className="mt-1">
-              回院病歷登打、路線與個案選擇、CSV 匯出都會在本頁直接進行。
+              回院病歷登打、路線與個案選擇、CSV 匯出都會在目前頁面的內嵌視窗中進行，不會另開瀏覽器視窗。
             </p>
           </div>
         </Panel>
       )}
 
-      <Panel title="回院病歷登打">{returnRecordForm}</Panel>
+      {embeddedWindow ? (
+        <Panel title="回院病歷登打">{returnRecordForm}</Panel>
+      ) : isReturnRecordModalOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-2 sm:p-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="回院病歷視窗"
+            className="flex max-h-[calc(100dvh-1rem)] w-full max-w-6xl flex-col overflow-hidden rounded-[1.5rem] bg-brand-sand shadow-2xl lg:max-h-[calc(100dvh-2rem)] lg:rounded-[2rem]"
+          >
+            <div className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-200 bg-white px-4 py-3 lg:px-5 lg:py-4">
+              <div>
+                <p className="text-xs font-semibold tracking-[0.18em] text-brand-coral">醫師端視窗</p>
+                <h2 className="mt-1 text-lg font-semibold text-brand-ink lg:text-xl">回院病歷</h2>
+              </div>
+              <button
+                type="button"
+                onClick={closeReturnRecordWindow}
+                className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-600 ring-1 ring-slate-200"
+              >
+                關閉視窗
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto p-3 lg:p-5">
+              <Panel title="回院病歷登打">{returnRecordForm}</Panel>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
