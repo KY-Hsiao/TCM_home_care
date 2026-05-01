@@ -23,6 +23,23 @@ describe("DoctorReturnRecordPage", () => {
     vi.spyOn(window, "alert").mockImplementation(() => undefined);
   });
 
+  it("以全頁視窗開啟回院病歷，並可關閉後再次開啟", () => {
+    renderWithProviders(<DoctorReturnRecordPage />);
+
+    expect(screen.getByRole("dialog", { name: "回院病歷全頁視窗" })).toBeInTheDocument();
+    expect(screen.getByLabelText("選擇路線")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "關閉視窗" }));
+
+    expect(screen.queryByRole("dialog", { name: "回院病歷全頁視窗" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("選擇路線")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "開啟回院病歷視窗" }));
+
+    expect(screen.getByRole("dialog", { name: "回院病歷全頁視窗" })).toBeInTheDocument();
+    expect(screen.getByLabelText("選擇路線")).toBeInTheDocument();
+  });
+
   it("會顯示長照慢性臥床版四診選單，且勾選其他後出現輸入框", () => {
     renderWithProviders(<DoctorReturnRecordPage />);
 
@@ -810,6 +827,10 @@ describe("DoctorReturnRecordPage", () => {
     if (!firstBaseSchedule || !secondBaseSchedule) {
       throw new Error("找不到測試用個案排程");
     }
+    const baseRoutePlan = seeded.saved_route_plans[0];
+    if (!baseRoutePlan) {
+      throw new Error("找不到測試用儲存路線");
+    }
 
     seeded.visit_schedules.unshift(
       {
@@ -843,6 +864,42 @@ describe("DoctorReturnRecordPage", () => {
         updated_at: "2026-05-10T03:45:00.000Z"
       }
     );
+    seeded.saved_route_plans.unshift({
+      ...baseRoutePlan,
+      id: "srp-export-20260510-am",
+      doctor_id: "doc-001",
+      route_group_id: "route-export-20260510-am",
+      route_name: "05/10上午路線",
+      route_date: "2026-05-10",
+      route_weekday: "星期日",
+      service_time_slot: "上午",
+      schedule_ids: ["vs-home-export-1", "vs-home-export-2"],
+      route_items: [
+        {
+          patient_id: "pat-001",
+          schedule_id: "vs-home-export-1",
+          checked: true,
+          route_order: 1,
+          status: "completed",
+          patient_name: "王麗珠",
+          address: firstBaseSchedule.address_snapshot
+        },
+        {
+          patient_id: "pat-004",
+          schedule_id: "vs-home-export-2",
+          checked: true,
+          route_order: 2,
+          status: "completed",
+          patient_name: "周文德",
+          address: secondBaseSchedule.address_snapshot
+        }
+      ],
+      execution_status: "executing",
+      executed_at: "2026-05-10T01:30:00.000Z",
+      saved_at: "2026-05-10T01:00:00.000Z",
+      created_at: "2026-05-10T01:00:00.000Z",
+      updated_at: "2026-05-10T03:45:00.000Z"
+    });
     seeded.visit_records.unshift(
       {
         id: "vr-home-export-2",

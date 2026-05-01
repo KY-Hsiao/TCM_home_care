@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Link, useSearchParams } from "react-router-dom";
 import { addMinutes } from "date-fns";
 import { useForm, useWatch } from "react-hook-form";
@@ -385,6 +386,7 @@ function isReturnRecordSchedule(schedule: VisitSchedule) {
 export function DoctorReturnRecordPage() {
   const { repositories, session } = useAppContext();
   const [searchParams, setSearchParams] = useSearchParams();
+  const [isReturnRecordModalOpen, setIsReturnRecordModalOpen] = useState(true);
   const activeDoctor = useMemo(
     () =>
       repositories.patientRepository
@@ -507,6 +509,8 @@ export function DoctorReturnRecordPage() {
   const defaultPatientId =
     defaultRoutePatients.find((patient) => patient.id === searchParams.get("patientId"))?.id ??
     defaultRouteCompletedVisit?.detail.patient.id ??
+    requestedPatientLatestCompletedVisit?.detail.patient.id ??
+    latestCompletedHomeVisit?.detail.patient.id ??
     defaultRoutePatients[0]?.id ??
     "";
   const initialTimeDefaults = resolveReturnRecordTimeDefaults(
@@ -516,7 +520,12 @@ export function DoctorReturnRecordPage() {
           repositories,
           patientId: defaultPatientId,
           routeKey: defaultRouteKey || undefined
-        })
+        }) ??
+          resolveLatestCompletedHomeVisit({
+            doctorId: session.activeDoctorId,
+            repositories,
+            patientId: defaultPatientId
+          })
       : null
   );
 
@@ -577,29 +586,47 @@ export function DoctorReturnRecordPage() {
     [repositories, selectedPatientId]
   );
   const returnRecordTimeDefaults = useMemo(
-    () =>
-      resolveReturnRecordTimeDefaults(
-          selectedPatientId
-            ? resolveLatestCompletedHomeVisit({
-              doctorId: session.activeDoctorId,
-              repositories,
-              patientId: selectedPatientId,
-              routeKey: selectedRoute?.key
-            })
-          : null
-      ),
-    [repositories, selectedPatientId, selectedRoute, session.activeDoctorId]
-  );
-  const matchedCompletedVisit = useMemo(
-    () =>
-      selectedPatientId
+    () => {
+      const routeMatchedVisit = selectedPatientId
         ? resolveLatestCompletedHomeVisit({
             doctorId: session.activeDoctorId,
             repositories,
             patientId: selectedPatientId,
             routeKey: selectedRoute?.key
           })
-        : null,
+        : null;
+      const patientMatchedVisit = selectedPatientId
+        ? resolveLatestCompletedHomeVisit({
+            doctorId: session.activeDoctorId,
+            repositories,
+            patientId: selectedPatientId
+          })
+        : null;
+
+      return resolveReturnRecordTimeDefaults(routeMatchedVisit ?? patientMatchedVisit);
+    },
+    [repositories, selectedPatientId, selectedRoute, session.activeDoctorId]
+  );
+  const matchedCompletedVisit = useMemo(
+    () => {
+      const routeMatchedVisit = selectedPatientId
+        ? resolveLatestCompletedHomeVisit({
+            doctorId: session.activeDoctorId,
+            repositories,
+            patientId: selectedPatientId,
+            routeKey: selectedRoute?.key
+          })
+        : null;
+      const patientMatchedVisit = selectedPatientId
+        ? resolveLatestCompletedHomeVisit({
+            doctorId: session.activeDoctorId,
+            repositories,
+            patientId: selectedPatientId
+          })
+        : null;
+
+      return routeMatchedVisit ?? patientMatchedVisit;
+    },
     [repositories, selectedPatientId, selectedRoute, session.activeDoctorId]
   );
   const previousRecord = useMemo(() => selectedProfile?.visitRecords[0], [selectedProfile]);
@@ -1044,10 +1071,8 @@ export function DoctorReturnRecordPage() {
     return <Panel title="查無路線">目前此醫師沒有可建立回院病歷的出巡路線資料。</Panel>;
   }
 
-  return (
-    <div className="space-y-4">
-      <Panel title="醫師回院產生病歷">
-        <form className="space-y-4 lg:space-y-5" onSubmit={handleSubmit(onSubmit)}>
+  const returnRecordForm = (
+    <form className="space-y-4 lg:space-y-5" onSubmit={handleSubmit(onSubmit)}>
           <div className="rounded-[1.5rem] border border-slate-200 bg-slate-50 p-4 lg:rounded-3xl lg:p-5">
             <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] lg:items-end">
               <label className="block text-sm">
@@ -1287,8 +1312,71 @@ export function DoctorReturnRecordPage() {
               建立回院病歷
             </button>
           </div>
-        </form>
+    </form>
+  );
+
+  return (
+    <div className="space-y-4">
+      <Panel
+        title="醫師回院產生病歷"
+        action={
+          <button
+            type="button"
+            onClick={() => setIsReturnRecordModalOpen(true)}
+            className="rounded-full bg-brand-coral px-5 py-2.5 text-sm font-semibold text-white"
+          >
+            開啟回院病歷視窗
+          </button>
+        }
+      >
+        <div className="rounded-[1.5rem] border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-600">
+          <p className="font-semibold text-brand-ink">目前作業</p>
+          <p className="mt-1">
+            回院病歷登打、路線與個案選擇、CSV 匯出都會在全頁視窗內進行。
+          </p>
+          <p className="mt-2 text-xs text-slate-500">
+            若已關閉視窗，可再按「開啟回院病歷視窗」繼續作業。
+          </p>
+        </div>
       </Panel>
+
+      {isReturnRecordModalOpen && typeof document !== "undefined"
+        ? createPortal(
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-label="回院病歷全頁視窗"
+              className="fixed inset-0 z-[100] h-[100dvh] w-[100dvw] overflow-hidden bg-brand-cream"
+            >
+              <div className="flex h-full min-w-0 flex-col">
+                <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-200 bg-white/95 px-4 py-3 shadow-sm backdrop-blur lg:px-6 lg:py-4">
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold tracking-[0.2em] text-brand-coral">回院病歷</p>
+                    <h2 className="mt-1 text-lg font-semibold text-brand-ink lg:text-2xl">
+                      全頁回院病歷操作視窗
+                    </h2>
+                    <p className="mt-1 text-sm text-slate-600">
+                      選擇路線與個案後登打病歷，完成後可建立病歷或匯出此次出巡 CSV。
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsReturnRecordModalOpen(false)}
+                    className="shrink-0 rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-600 ring-1 ring-slate-200"
+                  >
+                    關閉視窗
+                  </button>
+                </div>
+                <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3 lg:px-6 lg:py-5">
+                  <div className="mx-auto w-full max-w-6xl pb-[max(1rem,env(safe-area-inset-bottom))]">
+                    <Panel title="醫師回院產生病歷">{returnRecordForm}</Panel>
+                  </div>
+                </div>
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
     </div>
   );
 }
