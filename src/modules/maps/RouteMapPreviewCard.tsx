@@ -313,9 +313,6 @@ export function RouteMapPreviewCard({
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
   };
-  const mediaHeightClass = compact
-    ? "mt-3 aspect-[4/3] w-full min-h-[360px] max-h-[62vh] rounded-3xl border border-slate-200 bg-white"
-    : "mt-4 aspect-[4/3] w-full min-h-[420px] max-h-[76vh] rounded-3xl border border-slate-200 bg-white";
   const canvasHeightClass = compact
     ? "mt-3 aspect-[4/3] w-full min-h-[360px] max-h-[62vh] rounded-2xl bg-white/70"
     : "mt-3 aspect-[4/3] w-full min-h-[420px] max-h-[76vh] rounded-2xl bg-white/70";
@@ -344,27 +341,6 @@ export function RouteMapPreviewCard({
           ) : null}
         </div>
       </div>
-
-      {previewState.embedUrl ? (
-        <div className="mt-4 overflow-hidden rounded-3xl border border-slate-200 bg-white">
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-4 py-3">
-            <div>
-              <p className="text-sm font-semibold text-brand-ink">Google 路徑預覽</p>
-              <p className="mt-1 text-xs text-slate-500">依目前站序產生 Directions embed，供排程前確認實際路徑。</p>
-            </div>
-            <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
-              已啟用 Maps API
-            </span>
-          </div>
-          <iframe
-            title={`${route.label} Google 路徑預覽`}
-            src={previewState.embedUrl}
-            loading="lazy"
-            referrerPolicy="no-referrer-when-downgrade"
-            className={mediaHeightClass}
-          />
-        </div>
-      ) : null}
 
       {hasCanvasPreview ? (
         <div className="mt-4 overflow-hidden rounded-3xl border border-slate-200 bg-[radial-gradient(circle_at_top,_rgba(209,213,219,0.65),_transparent_42%),linear-gradient(180deg,_#f8fafc_0%,_#eef6f2_100%)] p-3">

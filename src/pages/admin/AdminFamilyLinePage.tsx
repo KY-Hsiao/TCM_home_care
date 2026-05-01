@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useAppContext } from "../../app/use-app-context";
-import type { Caregiver, Doctor, Patient, VisitSchedule } from "../../domain/models";
+import type { Doctor, Patient, VisitSchedule } from "../../domain/models";
 import { Badge } from "../../shared/ui/Badge";
 import { Panel } from "../../shared/ui/Panel";
 import { formatDateTimeFull } from "../../shared/utils/format";
@@ -20,11 +20,33 @@ type FamilyLineTemplateKey =
   | "custom_notice";
 
 type FamilyLineRecipient = {
-  caregiver: Caregiver;
-  patient: Patient;
+  id: string;
+  displayName: string;
+  relationshipLabel: string;
+  patient: Patient | null;
+  linkedPatients: Patient[];
   schedule: VisitSchedule | null;
   doctor: Doctor | null;
   lineUserId: string;
+};
+
+type ManagedFamilyLineContact = {
+  id: string;
+  displayName: string;
+  lineUserId: string;
+  linkedPatientIds: string[];
+  note: string;
+  source: "webhook" | "official_friend";
+  updatedAt: string;
+};
+
+type LineFriendProfile = {
+  userId: string;
+  displayName: string;
+  note?: string;
+  source?: "webhook" | "official_friend";
+  linkedPatientIds?: string[];
+  updatedAt?: string;
 };
 
 type FamilyLineTemplateDraft = {
@@ -33,7 +55,8 @@ type FamilyLineTemplateDraft = {
 };
 
 const SETTINGS_STORAGE_KEY = "tcm-family-line-settings";
-const BINDINGS_STORAGE_KEY = "tcm-family-line-user-bindings";
+const LEGACY_BINDINGS_STORAGE_KEY = "tcm-family-line-user-bindings";
+const MANAGED_CONTACTS_STORAGE_KEY = "tcm-family-line-managed-contacts";
 const TEMPLATE_DRAFTS_STORAGE_KEY = "tcm-family-line-template-drafts";
 
 const defaultSettings: FamilyLineAutomationSettings = {
@@ -80,6 +103,30 @@ function loadJsonStorage<T>(key: string, fallback: T): T {
   }
 }
 
+function loadArrayStorage<T>(key: string): T[] {
+  if (typeof window === "undefined") {
+    return [];
+  }
+  try {
+    const raw = window.localStorage.getItem(key);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? (parsed as T[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function normalizeManagedLineContacts(
+  contacts: Array<Omit<ManagedFamilyLineContact, "source"> & { source?: string }>
+): ManagedFamilyLineContact[] {
+  return contacts
+    .filter((contact) => contact.source === "webhook" || contact.source === "official_friend")
+    .map((contact) => ({
+      ...contact,
+      source: contact.source === "official_friend" ? "official_friend" : "webhook"
+    }));
+}
+
 function renderTemplateDraft(draft: FamilyLineTemplateDraft, selectedDoctorName: string) {
   return {
     subject: draft.subject.trim() || "LINE 家屬通知",
@@ -108,8 +155,8 @@ export function AdminFamilyLinePage() {
   const [settings, setSettings] = useState<FamilyLineAutomationSettings>(() =>
     loadJsonStorage(SETTINGS_STORAGE_KEY, defaultSettings)
   );
-  const [lineBindings, setLineBindings] = useState<Record<string, string>>(() =>
-    loadJsonStorage<Record<string, string>>(BINDINGS_STORAGE_KEY, {})
+  const [managedLineContacts, setManagedLineContacts] = useState<ManagedFamilyLineContact[]>(() =>
+    normalizeManagedLineContacts(loadArrayStorage<ManagedFamilyLineContact>(MANAGED_CONTACTS_STORAGE_KEY))
   );
   const [templateDrafts, setTemplateDrafts] = useState<Record<FamilyLineTemplateKey, FamilyLineTemplateDraft>>(() =>
     loadJsonStorage<Record<FamilyLineTemplateKey, FamilyLineTemplateDraft>>(
@@ -117,6 +164,8 @@ export function AdminFamilyLinePage() {
       defaultTemplateDrafts
     )
   );
+  const [selectedManagedContactIds, setSelectedManagedContactIds] = useState<string[]>([]);
+  const [bulkLinkPatientId, setBulkLinkPatientId] = useState("");
   const [selectedTemplate, setSelectedTemplate] = useState<FamilyLineTemplateKey>("custom_notice");
   const [selectedSendTypes, setSelectedSendTypes] = useState<FamilyLineTemplateKey[]>(["custom_notice"]);
   const [selectedDoctorId, setSelectedDoctorId] = useState("all");
@@ -127,14 +176,19 @@ export function AdminFamilyLinePage() {
     message: string;
   } | null>(null);
   const [isSending, setIsSending] = useState(false);
+  const [isSyncingLineFriends, setIsSyncingLineFriends] = useState(false);
+
+  useEffect(() => {
+    window.localStorage.removeItem(LEGACY_BINDINGS_STORAGE_KEY);
+  }, []);
 
   useEffect(() => {
     window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
   }, [settings]);
 
   useEffect(() => {
-    window.localStorage.setItem(BINDINGS_STORAGE_KEY, JSON.stringify(lineBindings));
-  }, [lineBindings]);
+    window.localStorage.setItem(MANAGED_CONTACTS_STORAGE_KEY, JSON.stringify(managedLineContacts));
+  }, [managedLineContacts]);
 
   useEffect(() => {
     window.localStorage.setItem(TEMPLATE_DRAFTS_STORAGE_KEY, JSON.stringify(templateDrafts));
@@ -142,29 +196,34 @@ export function AdminFamilyLinePage() {
 
   const recipients = useMemo<FamilyLineRecipient[]>(() => {
     const nextRecipients: FamilyLineRecipient[] = [];
-    db.caregivers
-      .filter((caregiver) => caregiver.receives_notifications)
-      .forEach((caregiver) => {
-        const patient = repositories.patientRepository.getPatientById(caregiver.patient_id);
-        if (!patient) {
-          return;
-        }
-        const schedules = repositories.visitRepository.getSchedules({ patientId: patient.id });
-        const schedule = resolveLatestSchedule(schedules);
-        const doctor =
-          schedule
-            ? db.doctors.find((item) => item.id === schedule.assigned_doctor_id) ?? null
-            : db.doctors.find((item) => item.id === patient.preferred_doctor_id) ?? null;
-        nextRecipients.push({
-          caregiver,
-          patient,
-          schedule,
-          doctor,
-          lineUserId: lineBindings[caregiver.id] ?? ""
-        });
+    managedLineContacts.forEach((contact) => {
+      const linkedPatients = contact.linkedPatientIds
+        .map((patientId) => repositories.patientRepository.getPatientById(patientId))
+        .filter((patient): patient is Patient => Boolean(patient));
+      const primaryPatient = linkedPatients[0] ?? null;
+      const schedules = primaryPatient
+        ? repositories.visitRepository.getSchedules({ patientId: primaryPatient.id })
+        : [];
+      const schedule = resolveLatestSchedule(schedules);
+      const doctor =
+        schedule
+          ? db.doctors.find((item) => item.id === schedule.assigned_doctor_id) ?? null
+          : primaryPatient
+            ? db.doctors.find((item) => item.id === primaryPatient.preferred_doctor_id) ?? null
+            : null;
+      nextRecipients.push({
+        id: `line-contact:${contact.id}`,
+        displayName: contact.displayName,
+        relationshipLabel: contact.note || "LINE 名單",
+        patient: primaryPatient,
+        linkedPatients,
+        schedule,
+        doctor,
+        lineUserId: contact.lineUserId
       });
+    });
     return nextRecipients;
-  }, [db.caregivers, db.doctors, lineBindings, repositories]);
+  }, [db.doctors, managedLineContacts, repositories]);
 
   const filteredRecipients = useMemo(() => {
     if (selectedDoctorId === "all") {
@@ -174,7 +233,7 @@ export function AdminFamilyLinePage() {
   }, [recipients, selectedDoctorId]);
 
   const selectedRecipients = filteredRecipients.filter((recipient) =>
-    selectedRecipientIds.includes(recipient.caregiver.id)
+    selectedRecipientIds.includes(recipient.id)
   );
   const selectedDoctorName =
     selectedDoctorId === "all"
@@ -203,7 +262,7 @@ export function AdminFamilyLinePage() {
   useEffect(() => {
     setSelectedRecipientIds((current) =>
       current.filter((recipientId) =>
-        filteredRecipients.some((recipient) => recipient.caregiver.id === recipientId)
+        filteredRecipients.some((recipient) => recipient.id === recipientId)
       )
     );
   }, [filteredRecipients]);
@@ -214,13 +273,13 @@ export function AdminFamilyLinePage() {
     }
 
     const focusedRecipients = recipients.filter(
-      (recipient) => recipient.patient.id === focusedPatientId
+      (recipient) => recipient.linkedPatients.some((patient) => patient.id === focusedPatientId)
     );
     const focusedDoctor = focusedRecipients[0]?.doctor;
     if (focusedDoctor) {
       setSelectedDoctorId(focusedDoctor.id);
     }
-    setSelectedRecipientIds(focusedRecipients.map((recipient) => recipient.caregiver.id));
+    setSelectedRecipientIds(focusedRecipients.map((recipient) => recipient.id));
   }, [focusedPatientId, recipients]);
 
   const toggleSetting = (key: keyof FamilyLineAutomationSettings) => {
@@ -250,28 +309,198 @@ export function AdminFamilyLinePage() {
     setIsSendConfirmed(false);
   };
 
-  const toggleRecipient = (caregiverId: string) => {
+  const toggleRecipient = (recipientId: string) => {
     setSelectedRecipientIds((current) =>
-      current.includes(caregiverId)
-        ? current.filter((id) => id !== caregiverId)
-        : [...current, caregiverId]
+      current.includes(recipientId)
+        ? current.filter((id) => id !== recipientId)
+        : [...current, recipientId]
     );
   };
 
   const selectAllFilteredRecipients = () => {
-    setSelectedRecipientIds(filteredRecipients.map((recipient) => recipient.caregiver.id));
+    setSelectedRecipientIds(filteredRecipients.map((recipient) => recipient.id));
   };
 
   const clearSelectedRecipients = () => {
     setSelectedRecipientIds([]);
   };
 
-  const updateLineBinding = (caregiverId: string, lineUserId: string) => {
-    setLineBindings((current) => ({
-      ...current,
-      [caregiverId]: lineUserId.trim()
-    }));
+  const persistManagedLineContact = async (contact: ManagedFamilyLineContact) => {
+    try {
+      await fetch("/api/admin/family-line/contacts", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          lineUserId: contact.lineUserId,
+          linkedPatientIds: contact.linkedPatientIds,
+          note: contact.note
+        })
+      });
+    } catch {
+      // 線上 API 失敗時仍保留本機畫面狀態，避免管理操作被中斷。
+    }
   };
+
+  const updateManagedContactNote = (contactId: string, note: string) => {
+    let updatedContact: ManagedFamilyLineContact | null = null;
+    setManagedLineContacts((current) =>
+      current.map((contact) => {
+        if (contact.id !== contactId) {
+          return contact;
+        }
+        updatedContact = {
+          ...contact,
+          note,
+          updatedAt: new Date().toISOString()
+        };
+        return updatedContact;
+      })
+    );
+    if (updatedContact) {
+      void persistManagedLineContact(updatedContact);
+    }
+  };
+
+  const toggleManagedContactSelection = (contactId: string) => {
+    setSelectedManagedContactIds((current) =>
+      current.includes(contactId) ? current.filter((id) => id !== contactId) : [...current, contactId]
+    );
+  };
+
+  const selectAllManagedContacts = () => {
+    setSelectedManagedContactIds(managedLineContacts.map((contact) => contact.id));
+  };
+
+  const invertManagedContactSelection = () => {
+    setSelectedManagedContactIds((current) =>
+      managedLineContacts
+        .map((contact) => contact.id)
+        .filter((contactId) => !current.includes(contactId))
+    );
+  };
+
+  const linkSelectedContactsToPatient = () => {
+    if (!selectedManagedContactIds.length || !bulkLinkPatientId) {
+      setSendFeedback({ tone: "error", message: "請先選擇 LINE 好友名單與要關聯的居家個案。" });
+      return;
+    }
+
+    const targetPatient = db.patients.find((patient) => patient.id === bulkLinkPatientId);
+    const now = new Date().toISOString();
+    const contactsToPersist: ManagedFamilyLineContact[] = [];
+    setManagedLineContacts((current) =>
+      current.map((contact) => {
+        if (!selectedManagedContactIds.includes(contact.id)) {
+          return contact;
+        }
+        const nextContact = {
+              ...contact,
+              linkedPatientIds: contact.linkedPatientIds.includes(bulkLinkPatientId)
+                ? contact.linkedPatientIds
+                : [...contact.linkedPatientIds, bulkLinkPatientId],
+              updatedAt: now
+        };
+        contactsToPersist.push(nextContact);
+        return nextContact;
+      })
+    );
+    contactsToPersist.forEach((contact) => void persistManagedLineContact(contact));
+    setSendFeedback({
+      tone: "success",
+      message: `已將 ${selectedManagedContactIds.length} 位 LINE 好友關聯到 ${
+        targetPatient ? maskPatientName(targetPatient.name) : "指定個案"
+      }。`
+    });
+  };
+
+  const syncLineOfficialAccountFriends = async (options: { silent?: boolean } = {}) => {
+    const isSilent = Boolean(options.silent);
+    setIsSyncingLineFriends(true);
+    if (!isSilent) {
+      setSendFeedback(null);
+    }
+    try {
+      const response = await fetch("/api/admin/family-line/friends", { cache: "no-store" });
+      const payload = (await response.json().catch(() => ({}))) as {
+        error?: string;
+        warning?: string;
+        friends?: LineFriendProfile[];
+        contacts?: LineFriendProfile[];
+        databaseConnected?: boolean;
+        savedContactCount?: number;
+        officialFetchedCount?: number;
+        returnedCount?: number;
+      };
+      if (!response.ok) {
+        if (!isSilent) {
+          setSendFeedback({
+            tone: "error",
+            message:
+              payload.error ??
+              "無法同步 LINE 官方帳號好友，請確認 LINE_CHANNEL_ACCESS_TOKEN 與官方帳號等級。"
+          });
+        }
+        return;
+      }
+      const friends = Array.isArray(payload.friends)
+        ? payload.friends
+        : Array.isArray(payload.contacts)
+          ? payload.contacts
+          : [];
+      const now = new Date().toISOString();
+      setManagedLineContacts((current) => {
+        const contactByUserId = new Map(current.map((contact) => [contact.lineUserId, contact]));
+        friends.forEach((friend) => {
+          const existing = contactByUserId.get(friend.userId);
+          contactByUserId.set(friend.userId, {
+            id: existing?.id ?? `line-contact-${friend.userId}`,
+            displayName: friend.displayName || existing?.displayName || friend.userId,
+            lineUserId: friend.userId,
+            linkedPatientIds: friend.linkedPatientIds ?? existing?.linkedPatientIds ?? [],
+            note: friend.note ?? existing?.note ?? "",
+            source: friend.source === "official_friend" ? "official_friend" : "webhook",
+            updatedAt: friend.updatedAt ?? now
+          });
+        });
+        return Array.from(contactByUserId.values());
+      });
+      if (!isSilent) {
+        const savedCount = payload.savedContactCount ?? friends.length;
+        const returnedCount = payload.returnedCount ?? friends.length;
+        if (friends.length === 0) {
+          setSendFeedback({
+            tone: "error",
+            message:
+              "已連到 LINE 名單同步端點，但目前資料庫沒有任何 LINE 好友。請確認 LINE Developers 的 Use webhook 已啟用、Webhook URL 指向目前 Vercel 網址，並請家屬傳送一則新訊息後再重新整理。"
+          });
+          return;
+        }
+        setSendFeedback({
+          tone: "success",
+          message:
+            payload.warning
+              ? `${payload.warning} 已從資料庫載入 ${returnedCount} 位 LINE 好友。`
+              : `已載入 LINE 好友 ${returnedCount} 位；資料庫目前保存 ${savedCount} 位，請再於名單管理中關聯居家個案。`
+        });
+      }
+    } catch {
+      if (!isSilent) {
+        setSendFeedback({
+          tone: "error",
+          message: "無法連線到 LINE 好友同步端點，請確認部署與網路狀態。"
+        });
+      }
+    } finally {
+      setIsSyncingLineFriends(false);
+    }
+  };
+
+  useEffect(() => {
+    if (import.meta.env.MODE === "test") {
+      return;
+    }
+    void syncLineOfficialAccountFriends({ silent: true });
+  }, []);
 
   const sendLineMessages = async () => {
     setSendFeedback(null);
@@ -307,10 +536,10 @@ export function AdminFamilyLinePage() {
           subject: outboundSubject,
           content: outboundContent,
           recipients: sendableRecipients.map((recipient) => ({
-            caregiverId: recipient.caregiver.id,
-            caregiverName: recipient.caregiver.name,
-            patientId: recipient.patient.id,
-            patientName: recipient.patient.name,
+            caregiverId: recipient.id,
+            caregiverName: recipient.displayName,
+            patientId: recipient.patient?.id ?? "",
+            patientName: recipient.patient?.name ?? "",
             lineUserId: recipient.lineUserId
           }))
         })
@@ -330,10 +559,10 @@ export function AdminFamilyLinePage() {
       const now = new Date().toISOString();
       sendableRecipients.forEach((recipient) => {
         repositories.contactRepository.createContactLog({
-          id: `line-${Date.now()}-${recipient.caregiver.id}`,
-          patient_id: recipient.patient.id,
+          id: `line-${Date.now()}-${recipient.id}`,
+          patient_id: recipient.patient?.id ?? null,
           visit_schedule_id: recipient.schedule?.id ?? null,
-          caregiver_id: recipient.caregiver.id,
+          caregiver_id: null,
           doctor_id: recipient.doctor?.id ?? null,
           admin_user_id: null,
           channel: "line",
@@ -574,13 +803,138 @@ export function AdminFamilyLinePage() {
         </Panel>
       </div>
 
+      <Panel title="LINE 名單管理">
+        <div className="grid gap-4 xl:grid-cols-[0.8fr_1.2fr]">
+          <div className="space-y-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm">
+            <p className="text-sm text-slate-600">
+              名單來源改為 LINE webhook：家屬加入官方帳號並傳送任一訊息後，系統會記錄該好友。行政只需在這裡替好友註記身分並關聯居家個案。
+            </p>
+              <button
+                type="button"
+                onClick={() => void syncLineOfficialAccountFriends()}
+                disabled={isSyncingLineFriends}
+              className="rounded-full border border-emerald-200 bg-white px-4 py-2 text-xs font-semibold text-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {isSyncingLineFriends ? "重新整理中" : "重新整理 LINE 好友名單"}
+            </button>
+            <div className="rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-xs text-emerald-800">
+              若官方帳號不是認證或 Premium，LINE 可能無法直接匯出完整好友名單；目前會改用 webhook 收到的互動好友作為可管理名單。
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-xs text-slate-600">
+              操作方式：請家屬先加入官方 LINE 帳號並傳一則訊息，回到本頁按「重新整理 LINE 好友名單」，再勾選好友關聯到既有居家個案。
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm">
+              <div className="grid gap-3 md:grid-cols-[1fr_auto_auto_auto] md:items-end">
+                <label className="block">
+                  <span className="mb-1 block font-medium text-brand-ink">批次關聯到個案</span>
+                  <select
+                    aria-label="批次關聯居家個案"
+                    value={bulkLinkPatientId}
+                    onChange={(event) => setBulkLinkPatientId(event.target.value)}
+                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-2.5"
+                  >
+                    <option value="">請選擇個案</option>
+                    {db.patients.map((patient) => (
+                      <option key={patient.id} value={patient.id}>
+                        {maskPatientName(patient.name)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  onClick={selectAllManagedContacts}
+                  className="rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-brand-ink"
+                >
+                  全選好友
+                </button>
+                <button
+                  type="button"
+                  onClick={invertManagedContactSelection}
+                  className="rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-brand-ink"
+                >
+                  反選好友
+                </button>
+                <button
+                  type="button"
+                  onClick={linkSelectedContactsToPatient}
+                  className="rounded-full bg-brand-forest px-4 py-2 text-xs font-semibold text-white"
+                >
+                  關聯所選好友
+                </button>
+              </div>
+              <p className="mt-2 text-xs text-slate-500">
+                已選 {selectedManagedContactIds.length} 位 LINE 好友；可把多位好友一次註記到同一個居家個案。
+              </p>
+            </div>
+
+            {managedLineContacts.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-8 text-center text-sm text-slate-500">
+                目前尚未收到 LINE 好友互動；請家屬加入官方帳號並傳送任一訊息後，再按「重新整理 LINE 好友名單」。
+              </div>
+            ) : (
+              managedLineContacts.map((contact) => {
+                const linkedNames = contact.linkedPatientIds
+                  .map((patientId) => db.patients.find((patient) => patient.id === patientId))
+                  .filter((patient): patient is Patient => Boolean(patient))
+                  .map((patient) => maskPatientName(patient.name));
+                return (
+                  <div key={contact.id} className="rounded-2xl border border-slate-200 bg-white p-4 text-sm">
+                    <div className="flex items-start justify-between gap-3">
+                      <label className="flex min-w-0 items-start gap-3">
+                        <input
+                          type="checkbox"
+                          aria-label={`${contact.displayName} 批次關聯勾選`}
+                          checked={selectedManagedContactIds.includes(contact.id)}
+                          onChange={() => toggleManagedContactSelection(contact.id)}
+                          className="mt-1 h-4 w-4"
+                        />
+                        <span className="min-w-0">
+                          <span className="block font-semibold text-brand-ink">{contact.displayName}</span>
+                          <span className="mt-1 block break-all text-xs text-slate-500">{contact.lineUserId}</span>
+                        </span>
+                      </label>
+                      <Badge
+                        value={contact.source === "official_friend" ? "官方好友" : "Webhook 收到"}
+                        compact
+                      />
+                    </div>
+                    <p className="mt-2 text-slate-600">
+                      關聯個案：{linkedNames.length ? linkedNames.join("、") : "尚未關聯"}
+                    </p>
+                    <label className="mt-3 block">
+                      <span className="mb-1 block text-xs font-medium text-brand-ink">好友註記</span>
+                      <input
+                        aria-label={`${contact.displayName} 好友註記`}
+                        value={contact.note}
+                        onChange={(event) => updateManagedContactNote(contact.id, event.target.value)}
+                        placeholder="例如：主要照顧者、可接收公告"
+                        className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm"
+                      />
+                    </label>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+      </Panel>
+
       <Panel title="發送人員">
-        <div className="grid gap-3 lg:grid-cols-2">
-          {filteredRecipients.map((recipient) => {
-            const isSelected = selectedRecipientIds.includes(recipient.caregiver.id);
+        {filteredRecipients.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-8 text-center text-sm text-slate-500">
+            目前沒有可發送的 LINE 好友。請先在 LINE 名單管理中重新整理 webhook 好友，並關聯到居家個案。
+          </div>
+        ) : (
+          <div className="grid gap-3 lg:grid-cols-2">
+            {filteredRecipients.map((recipient) => {
+            const isSelected = selectedRecipientIds.includes(recipient.id);
             return (
               <div
-                key={recipient.caregiver.id}
+                key={recipient.id}
                 className={`rounded-2xl border p-4 ${
                   isSelected ? "border-brand-forest bg-emerald-50/70" : "border-slate-200 bg-white"
                 }`}
@@ -589,17 +943,20 @@ export function AdminFamilyLinePage() {
                   <label className="flex min-w-0 items-start gap-3">
                     <input
                       type="checkbox"
-                      aria-label={`${recipient.caregiver.name} 發送勾選`}
+                      aria-label={`${recipient.displayName} 發送勾選`}
                       checked={isSelected}
-                      onChange={() => toggleRecipient(recipient.caregiver.id)}
+                      onChange={() => toggleRecipient(recipient.id)}
                       className="mt-1 h-4 w-4"
                     />
                     <span className="min-w-0">
                       <span className="block font-semibold text-brand-ink">
-                        {recipient.caregiver.name} / {recipient.caregiver.relationship}
+                        {recipient.displayName} / {recipient.relationshipLabel}
                       </span>
                       <span className="mt-1 block text-sm text-slate-600">
-                        {maskPatientName(recipient.patient.name)}｜{recipient.doctor?.name ?? "未指定醫師"}
+                        {recipient.linkedPatients.length
+                          ? recipient.linkedPatients.map((patient) => maskPatientName(patient.name)).join("、")
+                          : "未關聯個案"}
+                        ｜{recipient.doctor?.name ?? "未指定醫師"}
                       </span>
                       <span className="mt-1 block text-xs text-slate-500">
                         最近排程：{recipient.schedule ? formatDateTimeFull(recipient.schedule.scheduled_start_at) : "尚無排程"}
@@ -610,18 +967,15 @@ export function AdminFamilyLinePage() {
                 </div>
                 <label className="mt-3 block text-sm">
                   <span className="mb-1 block font-medium text-brand-ink">LINE userId</span>
-                  <input
-                    aria-label={`${recipient.caregiver.name} LINE userId`}
-                    value={recipient.lineUserId}
-                    onChange={(event) => updateLineBinding(recipient.caregiver.id, event.target.value)}
-                    placeholder="Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-                    className="w-full rounded-2xl border border-slate-200 px-4 py-2.5"
-                  />
+                  <div className="break-all rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-slate-700">
+                    {recipient.lineUserId}
+                  </div>
                 </label>
               </div>
             );
-          })}
-        </div>
+            })}
+          </div>
+        )}
       </Panel>
     </div>
   );

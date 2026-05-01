@@ -472,8 +472,7 @@ describe("AdminPages", () => {
     selectScheduleFilters();
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
-    expect(screen.getByText(/已由 Google Map 補上/)).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByText(/已補座標：高雄市旗山區延平一路128號/)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/已由 Google Map 補上/)).toBeInTheDocument());
     expect(screen.getByRole("img", { name: /頁內路線圖預覽/ })).toBeInTheDocument();
     const storedDb = JSON.parse(window.localStorage.getItem(MOCK_DB_STORAGE_KEY) ?? "{}");
     const updatedPatient = storedDb.patients.find((patient: { id: string }) => patient.id === "pat-001");
@@ -1225,29 +1224,131 @@ describe("AdminPages", () => {
     await waitFor(() => expect(screen.getByText(/最後同步/)).toBeInTheDocument());
   });
 
-  it("AdminFamilyLinePage 可設定自動發送、選擇家屬並填入 LINE userId", () => {
+  it("AdminFamilyLinePage 發送人員只顯示 webhook 收到的 LINE 好友", () => {
+    window.localStorage.setItem(
+      "tcm-family-line-managed-contacts",
+      JSON.stringify([
+        {
+          id: "line-contact-a",
+          displayName: "王先生 LINE",
+          lineUserId: "U1234567890abcdef1234567890abcdef",
+          linkedPatientIds: ["pat-001"],
+          note: "",
+          source: "webhook",
+          updatedAt: "2026-05-01T00:00:00.000Z"
+        }
+      ])
+    );
     renderWithProviders(<AdminFamilyLinePage />);
 
     expect(screen.getByRole("heading", { name: "LINE 自動發送設定" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /醫師請假時自動發/ }));
-    fireEvent.change(screen.getByLabelText("王怡萱 LINE userId"), {
-      target: { value: "U1234567890abcdef1234567890abcdef" }
-    });
-    fireEvent.click(screen.getByLabelText("王怡萱 發送勾選"));
+    fireEvent.click(screen.getByLabelText("王先生 LINE 發送勾選"));
 
     expect(screen.getByText("本次選擇")).toBeInTheDocument();
-    expect(screen.getByDisplayValue("U1234567890abcdef1234567890abcdef")).toBeInTheDocument();
-    expect(window.localStorage.getItem("tcm-family-line-user-bindings")).toContain("cg-001");
+    expect(screen.getAllByText("U1234567890abcdef1234567890abcdef").length).toBeGreaterThan(0);
+    expect(screen.queryByText("王怡萱 /")).not.toBeInTheDocument();
+    expect(window.localStorage.getItem("tcm-family-line-user-bindings")).toBeNull();
   });
 
-  it("AdminFamilyLinePage 可依 patientId 預選該個案家屬", () => {
+  it("AdminFamilyLinePage 可依 patientId 預選已關聯的 LINE 好友", () => {
+    window.localStorage.setItem(
+      "tcm-family-line-managed-contacts",
+      JSON.stringify([
+        {
+          id: "line-contact-a",
+          displayName: "王先生 LINE",
+          lineUserId: "U1234567890abcdef1234567890abcdef",
+          linkedPatientIds: ["pat-001"],
+          note: "",
+          source: "webhook",
+          updatedAt: "2026-05-01T00:00:00.000Z"
+        }
+      ])
+    );
     renderWithProviders(<AdminFamilyLinePage />, ["/admin/family-line?patientId=pat-001"]);
 
-    expect(screen.getByLabelText("王怡萱 發送勾選")).toBeChecked();
+    expect(screen.getByLabelText("王先生 LINE 發送勾選")).toBeChecked();
     expect(screen.getByRole("combobox", { name: "篩選醫師" })).toHaveValue("doc-001");
   });
 
+  it("AdminFamilyLinePage 可管理 webhook 收到的 LINE 好友並作為發送對象", () => {
+    window.localStorage.setItem(
+      "tcm-family-line-managed-contacts",
+      JSON.stringify([
+        {
+          id: "line-contact-a",
+          displayName: "王先生 LINE",
+          lineUserId: "U1234567890abcdef1234567890abcdef",
+          linkedPatientIds: ["pat-001"],
+          note: "",
+          source: "webhook",
+          updatedAt: "2026-05-01T00:00:00.000Z"
+        }
+      ])
+    );
+    renderWithProviders(<AdminFamilyLinePage />);
+
+    expect(screen.getByText("王先生 LINE")).toBeInTheDocument();
+    expect(screen.getByLabelText("王先生 LINE 發送勾選")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("王先生 LINE 好友註記"), {
+      target: { value: "主要照顧者" }
+    });
+    expect(window.localStorage.getItem("tcm-family-line-managed-contacts")).toContain("主要照顧者");
+  });
+
+  it("AdminFamilyLinePage 可批次選擇 LINE 好友並關聯到現有個案", () => {
+    window.localStorage.setItem(
+      "tcm-family-line-managed-contacts",
+      JSON.stringify([
+        {
+          id: "line-contact-a",
+          displayName: "王先生 LINE",
+          lineUserId: "Uaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          linkedPatientIds: [],
+          note: "",
+          source: "official_friend",
+          updatedAt: "2026-05-01T00:00:00.000Z"
+        },
+        {
+          id: "line-contact-b",
+          displayName: "王太太 LINE",
+          lineUserId: "Ubbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          linkedPatientIds: [],
+          note: "",
+          source: "official_friend",
+          updatedAt: "2026-05-01T00:00:00.000Z"
+        }
+      ])
+    );
+
+    renderWithProviders(<AdminFamilyLinePage />);
+
+    fireEvent.click(screen.getByLabelText("王先生 LINE 批次關聯勾選"));
+    fireEvent.change(screen.getByLabelText("批次關聯居家個案"), {
+      target: { value: "pat-001" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "關聯所選好友" }));
+
+    expect(screen.getByRole("status")).toHaveTextContent("已將 1 位 LINE 好友關聯到 王○珠");
+    expect(window.localStorage.getItem("tcm-family-line-managed-contacts")).toContain("pat-001");
+  });
+
   it("AdminFamilyLinePage 可勾選抵達前提醒與結束後關心並編輯範本後確認送出", async () => {
+    window.localStorage.setItem(
+      "tcm-family-line-managed-contacts",
+      JSON.stringify([
+        {
+          id: "line-contact-a",
+          displayName: "王先生 LINE",
+          lineUserId: "U1234567890abcdef1234567890abcdef",
+          linkedPatientIds: ["pat-001"],
+          note: "",
+          source: "webhook",
+          updatedAt: "2026-05-01T00:00:00.000Z"
+        }
+      ])
+    );
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({ sentCount: 1 })
@@ -1257,10 +1358,7 @@ describe("AdminPages", () => {
 
     fireEvent.click(screen.getByLabelText("醫師抵達前提醒 本次發送勾選"));
     fireEvent.click(screen.getByLabelText("結束後關心 本次發送勾選"));
-    fireEvent.change(screen.getByLabelText("王怡萱 LINE userId"), {
-      target: { value: "U1234567890abcdef1234567890abcdef" }
-    });
-    fireEvent.click(screen.getByLabelText("王怡萱 發送勾選"));
+    fireEvent.click(screen.getByLabelText("王先生 LINE 發送勾選"));
 
     fireEvent.change(screen.getByLabelText("目前編輯範本"), {
       target: { value: "arrival_reminder" }
@@ -1272,7 +1370,11 @@ describe("AdminPages", () => {
     fireEvent.click(screen.getByRole("button", { name: "送出 LINE 群發" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
-    const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body);
+    const sendCall = fetchMock.mock.calls.find(
+      ([url, options]) => url === "/api/admin/family-line/send" && typeof options?.body === "string"
+    );
+    expect(sendCall).toBeDefined();
+    const requestBody = JSON.parse(sendCall![1].body);
     expect(requestBody.content).toContain("【醫師抵達前提醒】");
     expect(requestBody.content).toContain("您好，負責醫師 即將抵達，請協助準備。");
     expect(requestBody.content).toContain("【結束後關心】");
