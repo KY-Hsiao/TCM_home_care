@@ -249,6 +249,15 @@ export function AdminStaffPage() {
     }));
   };
 
+  const removeDraftServiceSlot = (slotToRemove: string) => {
+    setDraft((current) => ({
+      ...current,
+      serviceSlotsText: buildServiceSlotsText(
+        getSupportedServiceSlots(current.serviceSlotsText).filter((slot) => slot !== slotToRemove)
+      )
+    }));
+  };
+
   const saveStaffRoleSetting = () => {
     const now = new Date().toISOString();
     const normalizedName = draft.name.trim();
@@ -560,9 +569,17 @@ export function AdminStaffPage() {
                       supportedServiceSlots.map((slot) => (
                         <span
                           key={slot}
-                          className="rounded-full bg-brand-sand px-3 py-1 text-xs font-semibold text-brand-forest"
+                          className="inline-flex items-center gap-2 rounded-full bg-brand-sand px-3 py-1 text-xs font-semibold text-brand-forest"
                         >
-                          {slot}
+                          <span>{slot}</span>
+                          <button
+                            type="button"
+                            aria-label={`刪除 ${slot}`}
+                            onClick={() => removeDraftServiceSlot(slot)}
+                            className="rounded-full bg-white/80 px-2 py-0.5 text-[11px] font-semibold text-red-700 ring-1 ring-red-100 transition hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-300"
+                          >
+                            刪除
+                          </button>
                         </span>
                       ))
                     ) : (

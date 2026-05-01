@@ -1760,6 +1760,20 @@ describe("AdminPages", () => {
     expect(within(dialog).getAllByText("星期四下午").length).toBeGreaterThan(0);
   });
 
+  it("AdminStaffPage 可直接刪除已選服務時段並同步取消勾選", () => {
+    renderWithProviders(<AdminStaffPage />);
+
+    fireEvent.click(screen.getByRole("button", { name: /蕭坤元醫師/ }));
+
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByLabelText("星期三上午")).toBeChecked();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "刪除 星期三上午" }));
+
+    expect(within(dialog).queryByRole("button", { name: "刪除 星期三上午" })).not.toBeInTheDocument();
+    expect(within(dialog).getByLabelText("星期三上午")).not.toBeChecked();
+  });
+
   it("AdminStaffPage 不再提供 LINE 聯絡設定入口", () => {
     renderWithProviders(<AdminStaffPage />);
 
