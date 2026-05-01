@@ -2273,10 +2273,10 @@ export function AdminPatientsPage() {
           </div>
         </div>
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
-          <div className="overflow-x-auto">
+          <div className="max-h-[calc(100dvh-320px)] min-h-[320px] overflow-auto">
             <table className="min-w-[980px] w-full border-collapse text-left text-sm">
               <caption className="sr-only">個案管理清單</caption>
-              <thead className="bg-slate-50 text-xs font-semibold text-slate-500">
+              <thead className="sticky top-0 z-10 bg-slate-50 text-xs font-semibold text-slate-500 shadow-[0_1px_0_rgba(148,163,184,0.28)]">
                 <tr>
                   <th scope="col" className="w-12 px-4 py-3">選取</th>
                   <th scope="col" className="px-4 py-3">個案姓名</th>

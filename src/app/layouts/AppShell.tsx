@@ -416,17 +416,23 @@ export function AppShell() {
   }
 
   return (
-    <div className="min-h-dvh overflow-x-hidden bg-brand-sand text-brand-ink">
+    <div
+      className={`bg-brand-sand text-brand-ink ${
+        isDoctorShell ? "min-h-dvh overflow-x-hidden" : "h-dvh overflow-hidden"
+      }`}
+    >
       <div
-        className={`mx-auto grid min-h-dvh max-w-[1600px] min-w-0 items-start overflow-x-hidden ${
-            isDoctorShell ? "gap-2 px-2 py-2 lg:grid-cols-[260px_1fr] lg:gap-3 lg:px-3 lg:py-3" : "gap-4 px-3 py-3 lg:grid-cols-[260px_1fr] lg:px-4"
+        className={`mx-auto grid max-w-[1600px] min-w-0 overflow-x-hidden ${
+            isDoctorShell
+              ? "min-h-dvh items-start gap-2 px-2 py-2 lg:grid-cols-[260px_1fr] lg:gap-3 lg:px-3 lg:py-3"
+              : "h-dvh min-h-0 items-stretch gap-4 px-3 py-3 lg:grid-cols-[260px_1fr] lg:px-4"
         }`}
       >
         <aside
           className={`min-w-0 overflow-hidden border border-white/70 bg-brand-ink text-white shadow-card ${
             isDoctorShell
               ? "rounded-[1.35rem] p-3 pb-2.5 lg:rounded-[2rem] lg:p-6"
-              : "rounded-[1.75rem] p-4 lg:p-5"
+              : "h-[calc(100dvh-1.5rem)] overflow-y-auto rounded-[1.75rem] p-4 lg:p-5"
           }`}
         >
           <div>
@@ -577,7 +583,11 @@ export function AppShell() {
           ) : null}
         </aside>
 
-        <div className={`min-w-0 ${isDoctorShell ? "space-y-3 lg:space-y-4" : "space-y-4"}`}>
+        <div
+          className={`min-w-0 ${
+            isDoctorShell ? "space-y-3 lg:space-y-4" : "h-[calc(100dvh-1.5rem)] min-h-0 space-y-4 overflow-y-auto pr-1"
+          }`}
+        >
           {shellRole !== "doctor" ? (
             <header className="rounded-[1.5rem] border border-white/70 bg-white/90 p-3 shadow-card backdrop-blur lg:p-4">
               <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-start">
@@ -621,7 +631,7 @@ export function AppShell() {
               ) : null}
             </header>
           ) : null}
-          <main className="min-w-0">
+          <main className="min-w-0 pb-1">
             <Outlet />
           </main>
         </div>
