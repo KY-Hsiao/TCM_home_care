@@ -59,8 +59,13 @@ type TrackingRouteDistributionOption = {
 
 function buildCsvTemplate() {
   return [
-    "個案姓名,主診斷,需求項目,地址,狀態管理,負責醫師,服務時段",
-    "王小明,慢性腰痛,中藥|針灸,台北市文山區示範路 1 號,服務中,蕭坤元醫師,星期三上午"
+    "中醫居家名單,,,,,,",
+    ",順序,姓名,病歷號,連絡電話,地址,備註",
+    "星,1,王小明,123456,0912-000-000,高雄市旗山區示範路 1 號,",
+    "期,2,林小芳,234567,07-6000000,高雄市美濃區示範路 2 號,",
+    "三,3,陳大華,345678,Line 聯繫,高雄市杉林區示範路 3 號,",
+    "上,4,黃秀英,456789,0988-000-000,高雄市旗山區示範路 4 號,",
+    "午,5,李明德,567890,07-6000001,高雄市美濃區示範路 5 號,4/30結案"
   ].join("\n");
 }
 
@@ -87,7 +92,144 @@ function parseCsvRows(content: string) {
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean)
-    .map((line) => line.split(",").map((cell) => cell.trim()));
+    .map(parseCsvLine);
+}
+
+function parseCsvLine(line: string) {
+  const cells: string[] = [];
+  let currentCell = "";
+  let quoted = false;
+
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    const nextChar = line[index + 1];
+    if (char === '"' && quoted && nextChar === '"') {
+      currentCell += '"';
+      index += 1;
+      continue;
+    }
+    if (char === '"') {
+      quoted = !quoted;
+      continue;
+    }
+    if (char === "," && !quoted) {
+      cells.push(currentCell.trim());
+      currentCell = "";
+      continue;
+    }
+    currentCell += char;
+  }
+
+  cells.push(currentCell.trim());
+  return cells;
+}
+
+type PatientImportRow = {
+  rowNumber: number;
+  name: string;
+  chartNumber: string;
+  phone: string;
+  address: string;
+  diagnosis: string;
+  serviceNeeds: string[];
+  status: Patient["status"];
+  doctorRaw: string;
+  serviceSlot: string;
+  notes: string;
+};
+
+function normalizeHomeCareServiceSlot(input: string) {
+  const value = input.replace(/\s/g, "");
+  const weekday = value.match(/星期[一二三四五六日天]/)?.[0];
+  const timeSlot = value.includes("下午") ? "下午" : value.includes("上午") ? "上午" : "";
+  return weekday && timeSlot ? `${weekday}${timeSlot}` : "";
+}
+
+function isHomeCarePatientList(rows: string[][]) {
+  return rows.some((row) => row.some((cell) => cell.includes("中醫居家名單"))) &&
+    rows.some((row) => row.includes("順序") && row.includes("姓名") && row.includes("病歷號"));
+}
+
+function normalizeImportedPhone(input: string) {
+  return /line/i.test(input) ? "" : input.trim();
+}
+
+function buildHomeCarePatientImportRows(rows: string[][]): PatientImportRow[] {
+  let serviceSlotMarker = "";
+  let currentServiceSlot = normalizeHomeCareServiceSlot(rows.slice(2).map((row) => row[0]?.trim() ?? "").join(""));
+
+  return rows.slice(2).flatMap((row, index) => {
+    const marker = row[0]?.trim() ?? "";
+    if (marker) {
+      serviceSlotMarker += marker;
+      const normalizedSlot = normalizeHomeCareServiceSlot(serviceSlotMarker);
+      if (normalizedSlot) {
+        currentServiceSlot = normalizedSlot;
+      }
+    }
+
+    const name = row[2]?.trim() ?? "";
+    const chartNumber = row[3]?.trim() ?? "";
+    const contactText = row[4]?.trim() ?? "";
+    const address = row[5]?.trim() ?? "";
+    const notes = row[6]?.trim() ?? "";
+    if (!name && !chartNumber && !address) {
+      return [];
+    }
+
+    const phone = normalizeImportedPhone(contactText);
+    return [
+      {
+        rowNumber: index + 3,
+        name,
+        chartNumber,
+        phone,
+        address,
+        diagnosis: "",
+        serviceNeeds: [],
+        status: notes.includes("結案") ? "closed" : "active",
+        doctorRaw: "",
+        serviceSlot: currentServiceSlot,
+        notes: [notes, contactText && !phone ? `原表連絡電話：${contactText}` : ""].filter(Boolean).join("；")
+      }
+    ];
+  });
+}
+
+function buildLegacyPatientImportRows(header: string[], bodyRows: string[][]): PatientImportRow[] {
+  if (header.length < 7) {
+    return [];
+  }
+
+  return bodyRows.map((row, index) => {
+    const [name, diagnosis, serviceNeedsRaw, address, statusRaw, doctorRaw, serviceSlot] = row;
+    return {
+      rowNumber: index + 2,
+      name: name?.trim() ?? "",
+      chartNumber: "",
+      phone: "",
+      address: address?.trim() ?? "",
+      diagnosis: diagnosis?.trim() ?? "",
+      serviceNeeds: serviceNeedsRaw
+        ? serviceNeedsRaw.split(/[|、,]/).map((item) => item.trim()).filter(Boolean)
+        : [],
+      status: normalizePatientStatus(statusRaw || "服務中"),
+      doctorRaw: doctorRaw?.trim() ?? "",
+      serviceSlot: serviceSlot?.trim() ?? "",
+      notes: ""
+    };
+  });
+}
+
+function buildPatientImportRows(rows: string[][]) {
+  const [header, ...bodyRows] = rows;
+  if (isHomeCarePatientList(rows)) {
+    return buildHomeCarePatientImportRows(rows);
+  }
+  if (!header || header.length < 7) {
+    return null;
+  }
+  return buildLegacyPatientImportRows(header, bodyRows);
 }
 
 function normalizePatientStatus(input: string): Patient["status"] {
@@ -2124,9 +2266,8 @@ export function AdminPatientsPage() {
       return;
     }
 
-    const rows = parseCsvRows(await readUploadedFileText(file));
-    const [header, ...bodyRows] = rows;
-    if (!header || header.length < 7) {
+    const importRows = buildPatientImportRows(parseCsvRows(await readUploadedFileText(file)));
+    if (!importRows) {
       setRecentAction("CSV 欄位不足，請先下載範本後再匯入。");
       event.target.value = "";
       return;
@@ -2136,20 +2277,21 @@ export function AdminPatientsPage() {
     let skippedCount = 0;
     const skippedReasons: string[] = [];
 
-    bodyRows.forEach((row, index) => {
-      const [name, diagnosis, serviceNeedsRaw, address, statusRaw, doctorRaw, serviceSlot] = row;
-      if (!name || !diagnosis || !address || !doctorRaw || !serviceSlot) {
+    const defaultDoctor = db.doctors[0];
+    importRows.forEach((row, index) => {
+      if (!row.name || !row.address || !row.serviceSlot) {
         skippedCount += 1;
-        skippedReasons.push(`第 ${index + 2} 列缺少必要欄位`);
+        skippedReasons.push(`第 ${row.rowNumber} 列缺少姓名、地址或服務時段`);
         return;
       }
 
       const doctor =
-        db.doctors.find((item) => item.name === doctorRaw) ??
-        db.doctors.find((item) => item.id === doctorRaw);
+        db.doctors.find((item) => item.name === row.doctorRaw) ??
+        db.doctors.find((item) => item.id === row.doctorRaw) ??
+        defaultDoctor;
       if (!doctor) {
         skippedCount += 1;
-        skippedReasons.push(`第 ${index + 2} 列找不到醫師 ${doctorRaw}`);
+        skippedReasons.push(`第 ${row.rowNumber} 列找不到可用醫師`);
         return;
       }
 
@@ -2157,19 +2299,19 @@ export function AdminPatientsPage() {
       repositories.patientRepository.upsertPatient({
         ...patientToImport,
         id: `pat-import-${Date.now()}-${index}`,
-        name: anonymizePatientName(name),
-        chart_number: "",
-        service_needs: serviceNeedsRaw
-          ? serviceNeedsRaw.split(/[|、,]/).map((item) => item.trim()).filter(Boolean)
-          : [],
-        primary_diagnosis: diagnosis,
-        address,
-        home_address: address,
+        name: anonymizePatientName(row.name),
+        chart_number: row.chartNumber,
+        phone: row.phone,
+        service_needs: row.serviceNeeds,
+        primary_diagnosis: row.diagnosis,
+        address: row.address,
+        home_address: row.address,
         location_keyword: sameAddressLocationKeyword,
-        google_maps_link: mapsLink(address, sameAddressLocationKeyword),
+        google_maps_link: mapsLink(row.address, sameAddressLocationKeyword),
         preferred_doctor_id: doctor.id,
-        preferred_service_slot: serviceSlot,
-        status: normalizePatientStatus(statusRaw || "服務中")
+        preferred_service_slot: row.serviceSlot,
+        status: row.status,
+        notes: row.notes
       });
 
       importedCount += 1;

@@ -1601,6 +1601,54 @@ describe("AdminPages", () => {
     expect(screen.getByText("林○芳")).toBeInTheDocument();
   });
 
+  it("AdminPatientsPage 可匯入居家患者名單格式", async () => {
+    renderWithProviders(<AdminPatientsPage />);
+
+    const csvFile = new File(
+      [
+        "中醫居家名單,,,,,,\n",
+        ",順序,姓名,病歷號,連絡電話,地址,備註\n",
+        "星,1,涂黃招娣,131250,Line 聯繫,美濃區獅山里中華路 92-1號,\n",
+        "期,2,楊運郎,198103,07-6814570,美濃區興隆里大埤頭 210號,\n",
+        "三,3,黃福珠,206034,0987076029,美濃區中圳里民族路40號,4/14結案\n",
+        "上,4,李黃秀英,286690,07-6818157,美濃區永安路235號,\n",
+        "午,5,張吳明珍,108291,07-6772506,杉林區新庄里司馬路2巷1-11號,\n"
+      ],
+      "home-care-patients.csv",
+      { type: "text/csv" }
+    );
+
+    fireEvent.change(screen.getByLabelText("CSV 匯入"), {
+      target: { files: [csvFile] }
+    });
+
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent("CSV 匯入完成：成功 5 筆")
+    );
+    expect(screen.getByText("涂○○娣")).toBeInTheDocument();
+    expect(screen.getByText("黃○珠")).toBeInTheDocument();
+    await waitFor(() => {
+      const storedDb = JSON.parse(window.localStorage.getItem(MOCK_DB_STORAGE_KEY) ?? "{}");
+      const importedPatients = storedDb.patients ?? [];
+      expect(
+        importedPatients.some(
+          (patient: { name: string; chart_number: string; preferred_service_slot: string; phone: string; notes: string }) =>
+            patient.name === "涂○○娣" &&
+            patient.chart_number === "131250" &&
+            patient.preferred_service_slot === "星期三上午" &&
+            patient.phone === "" &&
+            patient.notes.includes("Line 聯繫")
+        )
+      ).toBe(true);
+      expect(
+        importedPatients.some(
+          (patient: { name: string; chart_number: string; status: string }) =>
+            patient.name === "黃○珠" && patient.chart_number === "206034" && patient.status === "closed"
+        )
+      ).toBe(true);
+    });
+  });
+
   it("AdminPatientsPage 下載 CSV 範本時會輸出含 UTF-8 BOM 的檔案", async () => {
     renderWithProviders(<AdminPatientsPage />);
 
@@ -1632,7 +1680,9 @@ describe("AdminPages", () => {
     const exportedBytes = await readBlobAsBytes(blob);
     expect(Array.from(exportedBytes.slice(0, 3))).toEqual([0xef, 0xbb, 0xbf]);
     const exportedText = await readBlobAsText(blob);
-    expect(exportedText).toContain("個案姓名,主診斷,需求項目,地址,狀態管理,負責醫師,服務時段");
+    expect(exportedText).toContain("中醫居家名單");
+    expect(exportedText).toContain(",順序,姓名,病歷號,連絡電話,地址,備註");
+    expect(exportedText).toContain("星,1,王小明,123456");
   });
 
   it("AdminPatientsPage 儲存個案後會提示改到排程管理頁建立或實行路線", () => {
