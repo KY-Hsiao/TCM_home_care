@@ -431,8 +431,32 @@ describe("AdminPages", () => {
     renderWithProviders(<AdminSchedulesPage />);
 
     expect(screen.getByRole("combobox", { name: "已儲存的路線" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "套用前次路線" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "刪除這條路線" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "批次刪除路線" })).toBeInTheDocument();
+  });
+
+  it("AdminSchedulesPage 可套用同醫師前次路線但不沿用舊排程 ID", () => {
+    renderWithProviders(<AdminSchedulesPage />);
+
+    selectScheduleFilters("2026-05-06");
+    fireEvent.click(screen.getByRole("button", { name: "套用前次路線" }));
+
+    expect(screen.getByRole("status")).toHaveTextContent("已套用前次路線");
+    expect(screen.getByRole("status")).toHaveTextContent("本次日期與時段維持目前設定");
+    fireEvent.click(screen.getByRole("button", { name: "儲存路線" }));
+
+    const savedRouteSelect = screen.getByRole("combobox", { name: "已儲存的路線" }) as HTMLSelectElement;
+    const storedDb = JSON.parse(window.localStorage.getItem(MOCK_DB_STORAGE_KEY) ?? "{}");
+    const savedRoutePlan = (storedDb.saved_route_plans ?? []).find(
+      (routePlan: { id: string }) => routePlan.id === savedRouteSelect.value
+    );
+
+    expect(savedRoutePlan).toBeTruthy();
+    expect(savedRoutePlan.route_date).toBe("2026-05-06");
+    expect(savedRoutePlan.route_items.length).toBeGreaterThan(0);
+    expect(savedRoutePlan.route_items.every((item: { schedule_id: string | null }) => item.schedule_id === null)).toBe(true);
+    expect(savedRoutePlan.schedule_ids).toEqual([]);
   });
 
   it("AdminSchedulesPage 可刪除已儲存路線", async () => {

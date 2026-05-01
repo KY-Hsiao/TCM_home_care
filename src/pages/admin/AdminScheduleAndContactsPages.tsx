@@ -423,6 +423,19 @@ function buildPlannerRowsFromRoutePlan(
   );
 }
 
+function buildPlannerRowsForPreviousRouteDraft(
+  routePlan: SavedRoutePlan,
+  patientsById: Parameters<typeof buildPlannerRowsFromRoutePlan>[1]
+) {
+  return reindexPlannerRows(
+    buildPlannerRowsFromRoutePlan(routePlan, patientsById).map((row) => ({
+      ...row,
+      scheduleId: null,
+      status: row.checked ? ("scheduled" as PlannerStatus) : ("paused" as PlannerStatus)
+    }))
+  );
+}
+
 function buildRoutePreviewInput(input: {
   routeDate: string;
   doctorName?: string;
@@ -684,6 +697,29 @@ export function AdminSchedulesPage() {
   const selectedSavedRoutePlan = selectedSavedRoutePlanId
     ? savedRoutePlans.find((routePlan) => routePlan.id === selectedSavedRoutePlanId)
     : undefined;
+  const previousRoutePlan = useMemo(() => {
+    if (!selectedDoctorId) {
+      return undefined;
+    }
+    const doctorRoutePlans = savedRoutePlans.filter(
+      (routePlan) => routePlan.doctor_id === selectedDoctorId && routePlan.route_items.length > 0
+    );
+    if (doctorRoutePlans.length === 0) {
+      return undefined;
+    }
+    const olderThanCurrentRouteDate = routeDate
+      ? doctorRoutePlans.filter((routePlan) => routePlan.route_date < routeDate)
+      : [];
+    const candidates = olderThanCurrentRouteDate.length > 0 ? olderThanCurrentRouteDate : doctorRoutePlans;
+    return candidates
+      .slice()
+      .sort(
+        (left, right) =>
+          right.route_date.localeCompare(left.route_date) ||
+          new Date(right.saved_at || right.updated_at).getTime() -
+            new Date(left.saved_at || left.updated_at).getTime()
+      )[0];
+  }, [routeDate, savedRoutePlans, selectedDoctorId]);
   const derivedRouteWeekday = useMemo(
     () => resolveWeekdayFromRouteDate(routeDate),
     [routeDate]
@@ -1187,6 +1223,29 @@ export function AdminSchedulesPage() {
     setRecentAction(`已還原 ${routePlan.route_name}。`);
   };
 
+  const applyPreviousRoutePlan = () => {
+    if (!selectedDoctorId) {
+      setRecentAction("請先選擇醫師，才能套用前次路線。");
+      return;
+    }
+    if (!previousRoutePlan) {
+      setRecentAction("目前找不到這位醫師可套用的前次路線。");
+      return;
+    }
+    const nextRows = buildPlannerRowsForPreviousRouteDraft(previousRoutePlan, patientsById);
+    if (nextRows.length === 0) {
+      setRecentAction("前次路線中的個案已結案或不存在，無法套用。");
+      return;
+    }
+    setSelectedSavedRoutePlanId("");
+    setRouteStartAddress(previousRoutePlan.start_address || routeStartLocation.address);
+    setRouteEndAddress(previousRoutePlan.end_address || routeEndLocation.address);
+    setPlannerRows(nextRows);
+    setRecentAction(
+      `已套用前次路線 ${previousRoutePlan.route_name} 的個案、勾選狀態與排序；本次日期與時段維持目前設定。`
+    );
+  };
+
   return (
     <div className="space-y-6">
       <Panel title="排程管理頁">
@@ -1388,6 +1447,19 @@ export function AdminSchedulesPage() {
                   className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-brand-ink"
                 >
                   清除
+                </button>
+                <button
+                  type="button"
+                  onClick={applyPreviousRoutePlan}
+                  disabled={!selectedDoctorId || !previousRoutePlan}
+                  className="rounded-full border border-brand-forest/30 bg-white px-4 py-2 text-sm font-semibold text-brand-forest disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-400"
+                  title={
+                    previousRoutePlan
+                      ? `套用 ${previousRoutePlan.route_name}`
+                      : "請先選擇醫師，或確認已有前次路線"
+                  }
+                >
+                  套用前次路線
                 </button>
               </div>
             </div>
