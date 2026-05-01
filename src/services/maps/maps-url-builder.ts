@@ -1,7 +1,26 @@
-import type { MapsUrlBuilder, RouteMapInput, RouteMapLocation, RouteMapPreviewState } from "../types";
+import type {
+  GeocodedAddressResult,
+  MapsUrlBuilder,
+  RouteMapInput,
+  RouteMapLocation,
+  RouteMapPreviewState
+} from "../types";
 import { resolveLocationKeyword } from "../../shared/utils/location-keyword";
 
 const MAX_ROUTE_PREVIEW_WAYPOINTS = 9;
+
+type GoogleGeocodingResponse = {
+  status?: string;
+  results?: Array<{
+    formatted_address?: string;
+    geometry?: {
+      location?: {
+        lat?: number;
+        lng?: number;
+      };
+    };
+  }>;
+};
 
 function formatCoordinateQuery(latitude: number | null, longitude: number | null): string | null {
   if (latitude === null || longitude === null) {
@@ -127,6 +146,48 @@ export function createMapsUrlBuilder(options?: { embedApiKey?: string | null }):
         fallbackReason: null,
         waypointCount: input.waypoints.length
       };
+    },
+    async geocodeAddress({ address, signal }): Promise<GeocodedAddressResult | null> {
+      const normalizedAddress = address.trim();
+      if (!embedApiKey || !normalizedAddress || typeof fetch !== "function") {
+        return null;
+      }
+
+      try {
+        const url = new URL("https://maps.googleapis.com/maps/api/geocode/json");
+        url.searchParams.set("address", normalizedAddress);
+        url.searchParams.set("key", embedApiKey);
+        url.searchParams.set("language", "zh-TW");
+        url.searchParams.set("region", "tw");
+
+        const response = await fetch(url.toString(), { signal });
+        if (!response.ok) {
+          return null;
+        }
+
+        const payload = (await response.json()) as GoogleGeocodingResponse;
+        const firstResult = payload.status === "OK" ? payload.results?.[0] : null;
+        const location = firstResult?.geometry?.location;
+        if (
+          typeof location?.lat !== "number" ||
+          typeof location.lng !== "number" ||
+          !Number.isFinite(location.lat) ||
+          !Number.isFinite(location.lng)
+        ) {
+          return null;
+        }
+
+        return {
+          latitude: location.lat,
+          longitude: location.lng,
+          formattedAddress: firstResult?.formatted_address ?? normalizedAddress
+        };
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          throw error;
+        }
+        return null;
+      }
     },
     buildCoordinateLabel(latitude, longitude) {
       if (latitude === null || longitude === null) {

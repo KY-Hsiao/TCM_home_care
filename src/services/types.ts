@@ -107,6 +107,12 @@ export type RouteMapPreviewState = {
   waypointCount: number;
 };
 
+export type GeocodedAddressResult = {
+  latitude: number;
+  longitude: number;
+  formattedAddress: string;
+};
+
 export type FamilyEntryContext = {
   patientId?: string;
   scheduleId?: string;
@@ -266,6 +272,10 @@ export interface MapsUrlBuilder {
   buildRouteDirectionsUrl(input: RouteMapInput): string;
   buildRouteEmbedDirectionsUrl(input: RouteMapInput): string | null;
   getRoutePreviewState(input: RouteMapInput): RouteMapPreviewState;
+  geocodeAddress(input: {
+    address: string;
+    signal?: AbortSignal;
+  }): Promise<GeocodedAddressResult | null>;
   buildCoordinateLabel(latitude: number | null, longitude: number | null): string;
 }
 

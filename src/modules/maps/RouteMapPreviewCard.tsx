@@ -1,6 +1,13 @@
-import type { ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 import { useAppContext } from "../../app/use-app-context";
 import type { RouteMapInput } from "../../services/types";
+
+const previewRangePresets = [
+  { label: "近距", scale: 0.75, zoomOffset: 1 },
+  { label: "標準", scale: 1, zoomOffset: 0 },
+  { label: "廣域", scale: 1.8, zoomOffset: -1 },
+  { label: "最大", scale: 2.8, zoomOffset: -2 }
+] as const;
 
 function buildPreviewPoints(route: RouteMapInput) {
   return [
@@ -40,7 +47,7 @@ function buildPreviewPoints(route: RouteMapInput) {
   );
 }
 
-function buildPreviewCanvasPoints(route: RouteMapInput) {
+function buildPreviewCanvasPoints(route: RouteMapInput, rangeScale: number) {
   const points = buildPreviewPoints(route);
   if (points.length < 2) {
     return [];
@@ -52,16 +59,20 @@ function buildPreviewCanvasPoints(route: RouteMapInput) {
   const maxLatitude = Math.max(...latitudes);
   const minLongitude = Math.min(...longitudes);
   const maxLongitude = Math.max(...longitudes);
-  const latitudeSpan = Math.max(maxLatitude - minLatitude, 0.001);
-  const longitudeSpan = Math.max(maxLongitude - minLongitude, 0.001);
+  const latitudeCenter = (minLatitude + maxLatitude) / 2;
+  const longitudeCenter = (minLongitude + maxLongitude) / 2;
+  const latitudeSpan = Math.max(maxLatitude - minLatitude, 0.001) * rangeScale;
+  const longitudeSpan = Math.max(maxLongitude - minLongitude, 0.001) * rangeScale;
+  const scaledMinLatitude = latitudeCenter - latitudeSpan / 2;
+  const scaledMinLongitude = longitudeCenter - longitudeSpan / 2;
   const padding = 56;
   const width = 640;
   const height = 480;
 
   return points.map((point) => ({
     ...point,
-    x: padding + ((point.longitude - minLongitude) / longitudeSpan) * (width - padding * 2),
-    y: height - padding - ((point.latitude - minLatitude) / latitudeSpan) * (height - padding * 2)
+    x: padding + ((point.longitude - scaledMinLongitude) / longitudeSpan) * (width - padding * 2),
+    y: height - padding - ((point.latitude - scaledMinLatitude) / latitudeSpan) * (height - padding * 2)
   }));
 }
 
@@ -111,7 +122,10 @@ function resolvePreviewMapZoom(points: Array<{ latitude: number; longitude: numb
   return 16;
 }
 
-function buildPreviewMapBackgroundUrl(points: Array<{ latitude: number; longitude: number }>) {
+function buildPreviewMapBackgroundUrl(
+  points: Array<{ latitude: number; longitude: number }>,
+  zoomOffset: number
+) {
   if (!points.length) {
     return null;
   }
@@ -120,7 +134,7 @@ function buildPreviewMapBackgroundUrl(points: Array<{ latitude: number; longitud
     points.reduce((sum, point) => sum + point.latitude, 0) / points.length;
   const centerLongitude =
     points.reduce((sum, point) => sum + point.longitude, 0) / points.length;
-  const zoom = resolvePreviewMapZoom(points);
+  const zoom = Math.min(18, Math.max(3, resolvePreviewMapZoom(points) + zoomOffset));
 
   return `https://maps.google.com/maps?q=${encodeURIComponent(
     `${centerLatitude},${centerLongitude}`
@@ -143,6 +157,7 @@ export function RouteMapPreviewCard({
   headerActions
 }: RouteMapPreviewCardProps) {
   const { services } = useAppContext();
+  const [previewRangeIndex, setPreviewRangeIndex] = useState(1);
 
   if (!route) {
     return (
@@ -159,10 +174,14 @@ export function RouteMapPreviewCard({
   }
 
   const previewState = services.maps.getRoutePreviewState(route);
-  const previewCanvasPoints = buildPreviewCanvasPoints(route);
+  const previewRange = previewRangePresets[previewRangeIndex];
+  const previewCanvasPoints = buildPreviewCanvasPoints(route, previewRange.scale);
   const unresolvedPreviewPoints = buildUnresolvedPreviewPoints(route);
   const hasCanvasPreview = previewCanvasPoints.length >= 2;
-  const previewBackgroundMapUrl = buildPreviewMapBackgroundUrl(previewCanvasPoints);
+  const previewBackgroundMapUrl = buildPreviewMapBackgroundUrl(
+    previewCanvasPoints,
+    previewRange.zoomOffset
+  );
   const mediaHeightClass = compact
     ? "mt-3 aspect-[4/3] w-full min-h-[360px] max-h-[62vh] rounded-3xl border border-slate-200 bg-white"
     : "mt-4 aspect-[4/3] w-full min-h-[420px] max-h-[76vh] rounded-3xl border border-slate-200 bg-white";
@@ -219,8 +238,29 @@ export function RouteMapPreviewCard({
       {hasCanvasPreview ? (
         <div className="mt-4 overflow-hidden rounded-3xl border border-slate-200 bg-[radial-gradient(circle_at_top,_rgba(209,213,219,0.65),_transparent_42%),linear-gradient(180deg,_#f8fafc_0%,_#eef6f2_100%)] p-3">
           <div className="flex items-center justify-between gap-3">
-            <p className="text-sm font-semibold text-brand-ink">頁內示意路線預覽</p>
-            <span className="text-xs text-slate-500">依個案座標繪製，明確標示個案位置</span>
+            <div>
+              <p className="text-sm font-semibold text-brand-ink">頁內示意路線預覽</p>
+              <p className="mt-1 text-xs text-slate-500">依個案座標繪製，明確標示個案位置</p>
+            </div>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <span className="text-xs text-slate-500">目前範圍：{previewRange.label}</span>
+              <button
+                type="button"
+                onClick={() => setPreviewRangeIndex((current) => Math.min(current + 1, previewRangePresets.length - 1))}
+                disabled={previewRangeIndex === previewRangePresets.length - 1}
+                className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-brand-ink disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                範圍放大
+              </button>
+              <button
+                type="button"
+                onClick={() => setPreviewRangeIndex((current) => Math.max(current - 1, 0))}
+                disabled={previewRangeIndex === 0}
+                className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-brand-ink disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                範圍縮小
+              </button>
+            </div>
           </div>
           <div className={`${canvasHeightClass} relative overflow-hidden border border-slate-200`}>
             {previewBackgroundMapUrl ? (

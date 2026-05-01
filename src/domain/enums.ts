@@ -53,7 +53,7 @@ export type ScheduleChangeAction = (typeof scheduleChangeActionValues)[number];
 export const reminderStatusValues = ["pending", "done", "dismissed"] as const;
 export type ReminderStatus = (typeof reminderStatusValues)[number];
 
-export const contactChannelValues = ["phone", "google_chat", "web_notice", "sms", "in_person"] as const;
+export const contactChannelValues = ["phone", "google_chat", "web_notice", "sms", "line", "in_person"] as const;
 export type ContactChannel = (typeof contactChannelValues)[number];
 
 export const locationSourceValues = [

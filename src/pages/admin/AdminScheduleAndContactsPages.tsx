@@ -19,6 +19,8 @@ type PlannerRow = {
   address: string;
   latitude: number | null;
   longitude: number | null;
+  geocodingStatus?: "idle" | "pending" | "resolved" | "failed";
+  geocodedAddress?: string | null;
   checked: boolean;
   routeOrder: number | null;
   status: PlannerStatus;
@@ -62,6 +64,8 @@ const routeEndLocation = {
   longitude: 120.48341
 } as const;
 const routeDatePreviewWindowDays = 30;
+const familyLineSettingsStorageKey = "tcm-family-line-settings";
+const familyLineBindingsStorageKey = "tcm-family-line-user-bindings";
 const weekdayToIndex: Record<(typeof weekdayOptions)[number], number> = {
   星期一: 1,
   星期二: 2,
@@ -395,6 +399,18 @@ function resolveScheduleRouteTimeSlot(schedule: Pick<VisitSchedule, "service_tim
     return "下午";
   }
   return new Date(schedule.scheduled_start_at).getHours() < 13 ? "上午" : "下午";
+}
+
+function loadFamilyLineJson<T>(key: string, fallback: T): T {
+  if (typeof window === "undefined") {
+    return fallback;
+  }
+  try {
+    const raw = window.localStorage.getItem(key);
+    return raw ? ({ ...fallback, ...JSON.parse(raw) } as T) : fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 function hasPlannedRouteForSlot(input: {
@@ -894,7 +910,7 @@ function optimizePlannerRowsByDistance(input: {
 }
 
 export function AdminSchedulesPage() {
-  const { repositories, db } = useAppContext();
+  const { repositories, services, db } = useAppContext();
   const [selectedDoctorId, setSelectedDoctorId] = useState<string>("");
   const [routeDateMode, setRouteDateMode] = useState<RouteDateMode>("preset");
   const [selectedWeekday, setSelectedWeekday] = useState<string>("");
@@ -908,6 +924,8 @@ export function AdminSchedulesPage() {
   const [isBatchDeleteDialogOpen, setIsBatchDeleteDialogOpen] = useState(false);
   const [isSlotPatientDialogOpen, setIsSlotPatientDialogOpen] = useState(false);
   const [plannerRows, setPlannerRows] = useState<PlannerRow[]>([]);
+  const [isGeocodingPlannerRows, setIsGeocodingPlannerRows] = useState(false);
+  const [geocodingMessage, setGeocodingMessage] = useState<string | null>(null);
   const [draggingPlannerPatientId, setDraggingPlannerPatientId] = useState<string | null>(null);
   const [dragTargetPlannerPatientId, setDragTargetPlannerPatientId] = useState<string | null>(null);
   const [dismissedAutoScheduleCandidateIds, setDismissedAutoScheduleCandidateIds] = useState<string[]>([]);
@@ -1006,6 +1024,10 @@ export function AdminSchedulesPage() {
   const checkedRows = useMemo(
     () => sortedPlannerRows.filter((row) => row.checked),
     [sortedPlannerRows]
+  );
+  const missingCheckedCoordinateCount = useMemo(
+    () => checkedRows.filter((row) => !getPlannerRowCoordinate(row)).length,
+    [checkedRows]
   );
   const routePreview = useMemo(
     () =>
@@ -1291,19 +1313,156 @@ export function AdminSchedulesPage() {
     });
   };
 
-  const autoSortPlannerRows = () => {
+  const resolveMissingPlannerCoordinates = async (sourceRows: PlannerRow[]) => {
+    const targetRows = sortPlannerRows(sourceRows).filter(
+      (row) => row.checked && !getPlannerRowCoordinate(row)
+    );
+    if (targetRows.length === 0) {
+      return {
+        rows: sourceRows,
+        resolvedCount: 0,
+        failedCount: 0
+      };
+    }
+
+    setIsGeocodingPlannerRows(true);
+    setPlannerRows((current) =>
+      current.map((row) =>
+        targetRows.some((targetRow) => targetRow.patientId === row.patientId)
+          ? { ...row, geocodingStatus: "pending" }
+          : row
+      )
+    );
+
+    const resolvedRows = new Map<
+      string,
+      {
+        latitude: number;
+        longitude: number;
+        formattedAddress: string;
+        googleMapsLink: string;
+      }
+    >();
+    const failedPatientIds = new Set<string>();
+
+    try {
+      for (const row of targetRows) {
+        const result = await services.maps.geocodeAddress({ address: row.address });
+        if (!result) {
+          failedPatientIds.add(row.patientId);
+          repositories.patientRepository.updatePatientCoordinates(row.patientId, {
+            homeLatitude: null,
+            homeLongitude: null,
+            geocodingStatus: "failed"
+          });
+          continue;
+        }
+
+        const googleMapsLink = services.maps.buildPatientMapUrl({
+          address: result.formattedAddress,
+          latitude: result.latitude,
+          longitude: result.longitude
+        });
+        repositories.patientRepository.updatePatientCoordinates(row.patientId, {
+          homeLatitude: result.latitude,
+          homeLongitude: result.longitude,
+          geocodingStatus: "resolved",
+          googleMapsLink
+        });
+        resolvedRows.set(row.patientId, {
+          latitude: result.latitude,
+          longitude: result.longitude,
+          formattedAddress: result.formattedAddress,
+          googleMapsLink
+        });
+      }
+    } finally {
+      setIsGeocodingPlannerRows(false);
+    }
+
+    const nextRows = sourceRows.map((row) => {
+      const resolvedRow = resolvedRows.get(row.patientId);
+      if (resolvedRow) {
+        return {
+          ...row,
+          latitude: resolvedRow.latitude,
+          longitude: resolvedRow.longitude,
+          geocodingStatus: "resolved" as const,
+          geocodedAddress: resolvedRow.formattedAddress
+        };
+      }
+      if (failedPatientIds.has(row.patientId)) {
+        return {
+          ...row,
+          latitude: null,
+          longitude: null,
+          geocodingStatus: "failed" as const
+        };
+      }
+      return row;
+    });
+
+    setPlannerRows((current) =>
+      current.map((row) => {
+        const resolvedRow = resolvedRows.get(row.patientId);
+        if (resolvedRow) {
+          return {
+            ...row,
+            latitude: resolvedRow.latitude,
+            longitude: resolvedRow.longitude,
+            geocodingStatus: "resolved",
+            geocodedAddress: resolvedRow.formattedAddress
+          };
+        }
+        if (failedPatientIds.has(row.patientId)) {
+          return {
+            ...row,
+            latitude: null,
+            longitude: null,
+            geocodingStatus: "failed"
+          };
+        }
+        return row;
+      })
+    );
+
+    return {
+      rows: nextRows,
+      resolvedCount: resolvedRows.size,
+      failedCount: failedPatientIds.size
+    };
+  };
+
+  const geocodePlannerRows = async () => {
+    const result = await resolveMissingPlannerCoordinates(plannerRows);
+    if (result.resolvedCount === 0 && result.failedCount === 0) {
+      setGeocodingMessage("目前已勾選個案都有可用座標。");
+      return result.rows;
+    }
+
+    const failedText =
+      result.failedCount > 0
+        ? `仍有 ${result.failedCount} 位找不到座標，已保留在最後順位；需補座標後重新排程。`
+        : "全部已可納入地圖預覽與自動排序。";
+    setGeocodingMessage(`已由 Google Map 補上 ${result.resolvedCount} 位個案座標。${failedText}`);
+    return result.rows;
+  };
+
+  const autoSortPlannerRows = async () => {
     if (checkedRows.length < 2) {
       setRecentAction("至少要保留兩站以上，才需要自動排序。");
       return;
     }
 
+    const geocodingResult = await resolveMissingPlannerCoordinates(plannerRows);
+    const nextCheckedRows = sortPlannerRows(geocodingResult.rows).filter((row) => row.checked);
     const { reorderedRows, unresolvedCoordinateCount, strategy, totalDistanceKilometers } =
       optimizePlannerRowsByDistance({
-      checkedRows,
+      checkedRows: nextCheckedRows,
       startAddress: routeStartAddress,
       endAddress: routeEndAddress
     });
-    const uncheckedRows = sortPlannerRows(plannerRows).filter((row) => !row.checked);
+    const uncheckedRows = sortPlannerRows(geocodingResult.rows).filter((row) => !row.checked);
     setPlannerRows(reindexPlannerRows([...reorderedRows, ...uncheckedRows]));
     const distanceText =
       typeof totalDistanceKilometers === "number" && Number.isFinite(totalDistanceKilometers)
@@ -1317,7 +1476,13 @@ export function AdminSchedulesPage() {
       unresolvedCoordinateCount > 0
         ? `另有 ${unresolvedCoordinateCount} 站缺少座標，已排到最後順位；請補座標後重新排程。`
         : "可再拖曳微調。";
-    setRecentAction([strategyText, distanceText, unresolvedText].filter(Boolean).join(" "));
+    const geocodingText =
+      geocodingResult.resolvedCount > 0 || geocodingResult.failedCount > 0
+        ? `Google Map 已補上 ${geocodingResult.resolvedCount} 站座標，${geocodingResult.failedCount} 站仍找不到座標。`
+        : "";
+    setRecentAction(
+      [geocodingText, strategyText, distanceText, unresolvedText].filter(Boolean).join(" ")
+    );
   };
 
   const handlePlannerRowDragStart = (patientId: string) => {
@@ -1930,16 +2095,36 @@ export function AdminSchedulesPage() {
                 emptyText="請先選擇醫師、星期、上午/下午，並保留至少一位已勾選個案，才會產生路線預覽。"
                 compact
                 headerActions={
-                  <button
-                    type="button"
-                    onClick={() => setIsSlotPatientDialogOpen(true)}
-                    disabled={sortedPlannerRows.length === 0}
-                    className="rounded-full border border-brand-forest/20 bg-white px-4 py-2 text-sm font-semibold text-brand-forest disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
-                  >
-                    選擇符合時段個案
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void geocodePlannerRows();
+                      }}
+                      disabled={missingCheckedCoordinateCount === 0 || isGeocodingPlannerRows}
+                      className="rounded-full border border-brand-forest/20 bg-white px-4 py-2 text-sm font-semibold text-brand-forest disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
+                    >
+                      {isGeocodingPlannerRows ? "座標查詢中" : "用 Google 補座標"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setIsSlotPatientDialogOpen(true)}
+                      disabled={sortedPlannerRows.length === 0}
+                      className="rounded-full border border-brand-forest/20 bg-white px-4 py-2 text-sm font-semibold text-brand-forest disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
+                    >
+                      選擇符合時段個案
+                    </button>
+                  </>
                 }
               />
+              {geocodingMessage ? (
+                <div
+                  role="status"
+                  className="mt-3 rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-800"
+                >
+                  {geocodingMessage}
+                </div>
+              ) : null}
             </div>
 
             <div className="rounded-3xl border border-slate-200 bg-white p-4">
@@ -1954,11 +2139,13 @@ export function AdminSchedulesPage() {
                   <p className="text-xs text-slate-500">可執行 {checkedRows.length} 站</p>
                   <button
                     type="button"
-                    onClick={autoSortPlannerRows}
-                    disabled={checkedRows.length < 2}
+                    onClick={() => {
+                      void autoSortPlannerRows();
+                    }}
+                    disabled={checkedRows.length < 2 || isGeocodingPlannerRows}
                     className="rounded-full border border-brand-forest/20 bg-white px-3 py-1.5 text-xs font-semibold text-brand-forest disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-400"
                   >
-                    自動排序
+                    {isGeocodingPlannerRows ? "座標查詢中" : "自動排序"}
                   </button>
                 </div>
               </div>
@@ -2010,6 +2197,17 @@ export function AdminSchedulesPage() {
                           第 {row.routeOrder} 站 {maskPatientName(row.name)}
                         </p>
                         <p className="mt-1 text-xs text-slate-500">{row.address}</p>
+                        {row.geocodingStatus === "pending" ? (
+                          <p className="mt-1 text-xs font-semibold text-amber-700">Google Map 座標查詢中</p>
+                        ) : row.geocodingStatus === "resolved" ? (
+                          <p className="mt-1 text-xs font-semibold text-emerald-700">
+                            已補座標：{row.geocodedAddress ?? services.maps.buildCoordinateLabel(row.latitude, row.longitude)}
+                          </p>
+                        ) : row.geocodingStatus === "failed" || !getPlannerRowCoordinate(row) ? (
+                          <p className="mt-1 text-xs font-semibold text-amber-700">
+                            缺少座標，若 Google 仍找不到，會排到最後；需補座標後重新排程。
+                          </p>
+                        ) : null}
                       </div>
                       <div className="flex flex-wrap items-center justify-end gap-2">
                         <span
@@ -2696,6 +2894,46 @@ export function AdminLeaveRequestsPage() {
     repositories.staffingRepository.updateLeaveRequestStatus(selectedLeaveRequest.id, status, {
       rejectionReason: status === "rejected" ? rejectionReasonDraft : null
     });
+    if (status === "approved" && typeof fetch === "function") {
+      const settings = loadFamilyLineJson(familyLineSettingsStorageKey, {
+        doctorLeaveAutoBroadcast: false
+      });
+      const lineBindings = loadFamilyLineJson<Record<string, string>>(familyLineBindingsStorageKey, {});
+      if (settings.doctorLeaveAutoBroadcast) {
+        const doctorName =
+          db.doctors.find((item) => item.id === selectedLeaveRequest.doctor_id)?.name ??
+          selectedLeaveRequest.doctor_id;
+        const impactedPatientIds = new Set(impactedSchedules.map((schedule) => schedule.patient_id));
+        const recipients = db.caregivers
+          .filter(
+            (caregiver) =>
+              caregiver.receives_notifications &&
+              impactedPatientIds.has(caregiver.patient_id) &&
+              Boolean(lineBindings[caregiver.id]?.trim())
+          )
+          .map((caregiver) => ({
+            caregiverId: caregiver.id,
+            caregiverName: caregiver.name,
+            patientId: caregiver.patient_id,
+            patientName:
+              db.patients.find((patient) => patient.id === caregiver.patient_id)?.name ?? caregiver.patient_id,
+            lineUserId: lineBindings[caregiver.id]
+          }));
+        if (recipients.length > 0) {
+          void fetch("/api/admin/family-line/send", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+              subject: "醫師請假公告",
+              content: `您好，${doctorName} ${selectedLeaveRequest.start_date} 至 ${selectedLeaveRequest.end_date} 請假，原訂居家訪視可能需改派或改期。行政人員會再與您確認後續安排。`,
+              recipients
+            })
+          });
+        }
+      }
+    }
     setStatusFeedback(
       {
         tone: "success",

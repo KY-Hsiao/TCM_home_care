@@ -453,6 +453,47 @@ export function createPatientRepository(
       });
       return result;
     },
+    updatePatientCoordinates(patientId, patch) {
+      updateDb((db) => {
+        const now = new Date().toISOString();
+        const patient = db.patients.find((item) => item.id === patientId);
+        if (!patient) {
+          return db;
+        }
+
+        const googleMapsLink =
+          patch.googleMapsLink ??
+          buildGoogleMapsSearchUrl(patient.location_keyword, patient.home_address);
+
+        return {
+          ...db,
+          patients: db.patients.map((item) =>
+            item.id === patientId
+              ? {
+                  ...item,
+                  home_latitude: patch.homeLatitude,
+                  home_longitude: patch.homeLongitude,
+                  geocoding_status: patch.geocodingStatus,
+                  google_maps_link: googleMapsLink,
+                  updated_at: now
+                }
+              : item
+          ),
+          visit_schedules: db.visit_schedules.map((schedule) =>
+            schedule.patient_id === patientId &&
+            !["completed", "cancelled"].includes(schedule.status)
+              ? {
+                  ...schedule,
+                  home_latitude_snapshot: patch.homeLatitude,
+                  home_longitude_snapshot: patch.homeLongitude,
+                  google_maps_link: googleMapsLink,
+                  updated_at: now
+                }
+              : schedule
+          )
+        };
+      });
+    },
     closePatient(patientId, reason = "管理端結案") {
       let closeResult = {
         patientId,

@@ -980,10 +980,6 @@ export function DoctorLocationPage() {
     };
   };
   const openEmbeddedNavigation = (windowState: EmbeddedNavigationWindow) => {
-    if (!windowState.embedUrl) {
-      openExternalNavigation(windowState.externalUrl);
-      return;
-    }
     setEmbeddedNavigationWindow(windowState);
   };
   const currentMapUrl = currentRouteContext
@@ -1147,7 +1143,7 @@ export function DoctorLocationPage() {
                 }
                 className="inline-flex min-h-[44px] flex-1 items-center justify-center rounded-full bg-brand-coral px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90"
               >
-                用 Google 地圖開啟本站導航
+                在頁內開啟本站導航
               </button>
               <Link
                 to={`/doctor/schedules/${navigatingContext.schedule.id}`}
@@ -1172,7 +1168,7 @@ export function DoctorLocationPage() {
                   }
                   className="inline-flex min-h-[44px] flex-1 items-center justify-center rounded-full border border-white/20 bg-white/10 px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/20"
                 >
-                  開啟下一站導航：{nextRouteContext ? maskPatientName(nextRouteContext.detail.patient.name) : ""}
+                  在頁內開啟下一站導航：{nextRouteContext ? maskPatientName(nextRouteContext.detail.patient.name) : ""}
                 </button>
               ) : hospitalMapUrl ? (
                 <button
@@ -1186,7 +1182,7 @@ export function DoctorLocationPage() {
                   }
                   className="inline-flex min-h-[44px] flex-1 items-center justify-center rounded-full border border-white/20 bg-white/10 px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/20"
                 >
-                  開啟返院導航
+                  在頁內開啟返院導航
                 </button>
               ) : null}
             </div>
@@ -1209,8 +1205,8 @@ export function DoctorLocationPage() {
           </h3>
           <p className="mt-1.5 text-sm text-slate-600">
             {nextRouteContext
-              ? `按下後會直接開啟下一家 ${maskPatientName(nextRouteContext.detail.patient.name)} 的 Google 地圖導航。`
-              : "按下後可接續最後一段返院導航。"}
+              ? `按下後會在頁內開啟下一家 ${maskPatientName(nextRouteContext.detail.patient.name)} 的 Google 導航。`
+              : "按下後可在頁內接續最後一段返院導航。"}
           </p>
           <button
             type="button"
@@ -1229,7 +1225,7 @@ export function DoctorLocationPage() {
             即將前往第 {getRouteDisplayOrder(routeSchedules, readyContext.schedule.id) ?? readyContext.schedule.route_order} 站 {maskPatientName(readyContext.detail.patient.name)}
           </h3>
           <p className="mt-1.5 text-sm text-slate-600">
-            請在全頁即時導航視窗中開始出發，避免手機版操作被原頁面框住。
+            請在本頁開始出發；手機會在頁內開啟 Google 導航，抵達後會回到即時導航流程。
           </p>
           <button
             type="button"
@@ -1258,7 +1254,7 @@ export function DoctorLocationPage() {
           <div className="grid gap-3 p-4 xl:grid-cols-[minmax(0,1.25fr)_300px] xl:gap-4 xl:p-5">
             <div className="space-y-4">
               <div className="rounded-[1.5rem] border border-white/10 bg-white/10 px-4 py-4 text-sm text-white/90">
-                返院階段不再顯示內嵌地圖，請直接用按鍵開啟返院導航。
+                返院階段會在頁內開啟 Google 導航，避免手機操作時離開系統流程。
               </div>
               <button
                 type="button"
@@ -1273,10 +1269,10 @@ export function DoctorLocationPage() {
                 }}
                 className="inline-flex w-full items-center justify-center rounded-full bg-brand-coral px-4 py-2.5 text-sm font-semibold text-white transition hover:opacity-90"
               >
-                用 Google 地圖開啟返院導航
+                在頁內開啟返院導航
               </button>
               <p className="text-xs text-white/70">
-                返院改由外接 Google 地圖；是否結束返院由醫師自行操作。
+                若內嵌導航無法載入，可再使用視窗上方的外部 Google 地圖連結。
               </p>
             </div>
             <div className="space-y-3 rounded-[1.5rem] border border-white/10 bg-white/10 p-4">
@@ -1310,7 +1306,7 @@ export function DoctorLocationPage() {
           <p className="font-semibold text-brand-ink">目前狀態</p>
           <p className="mt-1">{navigationSummary}</p>
           <p className="mt-2 text-xs text-slate-500">
-            路線選擇、開始出發、抵達治療與返院導航都會在本頁直接操作；需要 Google 地圖時會另開外部導航。
+            路線選擇、開始出發、抵達治療與返院導航都會在本頁直接操作；需要 Google 地圖時會在頁內開啟導航視窗。
           </p>
         </div>
       </Panel>
@@ -1340,7 +1336,7 @@ export function DoctorLocationPage() {
                   rel="noreferrer"
                   className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-brand-ink"
                 >
-                  外部 Google 地圖
+                  改用外部 Google 地圖
                 </a>
                 <button
                   type="button"
@@ -1350,7 +1346,7 @@ export function DoctorLocationPage() {
                   }}
                   className="rounded-full bg-brand-coral px-4 py-2 text-sm font-semibold text-white"
                 >
-                  {embeddedNavigationWindow.arrivalAction ? "已抵達，關閉導航" : "關閉導航"}
+                  {embeddedNavigationWindow.arrivalAction ? "已抵達，回到即時導航" : "關閉導航"}
                 </button>
               </div>
             </div>
@@ -1366,7 +1362,7 @@ export function DoctorLocationPage() {
               <div className="flex min-h-0 flex-1 items-center justify-center bg-slate-50 p-6 text-center text-sm text-slate-600">
                 <div>
                   <p className="font-semibold text-brand-ink">目前無法內嵌此段導航</p>
-                  <p className="mt-2">請使用上方外部 Google 地圖連結繼續導航。</p>
+                  <p className="mt-2">可使用上方外部 Google 地圖連結繼續導航，或關閉後回到即時導航頁。</p>
                 </div>
               </div>
             )}

@@ -11,6 +11,7 @@ import { DoctorLocationPage } from "../doctor/DoctorPages";
 import {
   AdminDashboardPage,
   AdminDoctorTrackingPage,
+  AdminFamilyLinePage,
   AdminLeaveRequestsPage,
   AdminPatientsPage,
   AdminRemindersPage,
@@ -100,6 +101,14 @@ describe("AdminPages", () => {
   beforeEach(() => {
     window.localStorage.clear();
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        json: async () => ({ status: "ZERO_RESULTS", results: [] })
+      })
+    );
     vi.useRealTimers();
   });
 
@@ -404,6 +413,10 @@ describe("AdminPages", () => {
 
     expect(screen.getByText("路線圖預覽")).toBeInTheDocument();
     expect(screen.getByText("頁內示意路線預覽")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "範圍放大" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "範圍縮小" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "範圍放大" }));
+    expect(screen.getByText("目前範圍：廣域")).toBeInTheDocument();
     expect(screen.getByTitle(/頁內路線底圖/)).toBeInTheDocument();
     expect(screen.getByRole("img", { name: /頁內路線圖預覽/ })).toBeInTheDocument();
     const routeLink = screen.getByRole("link", { name: "用 Google 地圖開啟完整路線" });
@@ -439,7 +452,7 @@ describe("AdminPages", () => {
     expectRouteStopLabel("第 3 站 王○珠");
   });
 
-  it("AdminSchedulesPage 可依下一個停留點最短距離自動排序本次路線", () => {
+  it("AdminSchedulesPage 可依下一個停留點最短距離自動排序本次路線", async () => {
     renderWithProviders(<AdminSchedulesPage />);
 
     selectScheduleFilters();
@@ -451,8 +464,10 @@ describe("AdminPages", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "自動排序" }));
 
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "已依目前點到下一個停留點距離最短的原則完成自動排序。"
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "已依目前點到下一個停留點距離最短的原則完成自動排序。"
+      )
     );
     expect(routeLink.getAttribute("href")).not.toBe(initialHref);
   });
@@ -1119,6 +1134,52 @@ describe("AdminPages", () => {
     await waitFor(() => expect(screen.getByText(/最後同步/)).toBeInTheDocument());
   });
 
+  it("AdminFamilyLinePage 可設定自動發送、選擇家屬並填入 LINE userId", () => {
+    renderWithProviders(<AdminFamilyLinePage />);
+
+    expect(screen.getByRole("heading", { name: "LINE 自動發送設定" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /醫師請假時自動發/ }));
+    fireEvent.change(screen.getByLabelText("王怡萱 LINE userId"), {
+      target: { value: "U1234567890abcdef1234567890abcdef" }
+    });
+    fireEvent.click(screen.getByLabelText("王怡萱 發送勾選"));
+
+    expect(screen.getByText("本次選擇")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("U1234567890abcdef1234567890abcdef")).toBeInTheDocument();
+    expect(window.localStorage.getItem("tcm-family-line-user-bindings")).toContain("cg-001");
+  });
+
+  it("AdminFamilyLinePage 可勾選抵達前提醒與結束後關心並編輯範本後確認送出", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ sentCount: 1 })
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderWithProviders(<AdminFamilyLinePage />);
+
+    fireEvent.click(screen.getByLabelText("醫師抵達前提醒 本次發送勾選"));
+    fireEvent.click(screen.getByLabelText("結束後關心 本次發送勾選"));
+    fireEvent.change(screen.getByLabelText("王怡萱 LINE userId"), {
+      target: { value: "U1234567890abcdef1234567890abcdef" }
+    });
+    fireEvent.click(screen.getByLabelText("王怡萱 發送勾選"));
+
+    fireEvent.change(screen.getByLabelText("目前編輯範本"), {
+      target: { value: "arrival_reminder" }
+    });
+    fireEvent.change(screen.getByLabelText("範本內容"), {
+      target: { value: "您好，{醫師} 即將抵達，請協助準備。" }
+    });
+    fireEvent.click(screen.getByLabelText("確認本次 LINE 發送"));
+    fireEvent.click(screen.getByRole("button", { name: "送出 LINE 群發" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(requestBody.content).toContain("【醫師抵達前提醒】");
+    expect(requestBody.content).toContain("您好，負責醫師 即將抵達，請協助準備。");
+    expect(requestBody.content).toContain("【結束後關心】");
+  });
+
   it("AdminRemindersPage 初始為空，並可新增行政公告與指定醫師通知", async () => {
     renderWithProviders(<AdminRemindersPage />);
 
@@ -1319,6 +1380,62 @@ describe("AdminPages", () => {
       expect(screen.getByRole("status")).toHaveTextContent("請假申請已核准");
       expect(screen.getAllByText("已核准").length).toBeGreaterThan(0);
     });
+  });
+
+  it("AdminLeaveRequestsPage 核准請假時可依設定自動發送 LINE 請假公告", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ sentCount: 1 })
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.localStorage.setItem(
+      "tcm-family-line-settings",
+      JSON.stringify({ doctorLeaveAutoBroadcast: true })
+    );
+    window.localStorage.setItem(
+      "tcm-family-line-user-bindings",
+      JSON.stringify({ "cg-001": "U1234567890abcdef1234567890abcdef" })
+    );
+    window.localStorage.setItem(
+      MOCK_DB_STORAGE_KEY,
+      JSON.stringify({
+        ...createSeedDb(),
+        leave_requests: [
+          {
+            id: "leave-line-auto-001",
+            doctor_id: "doc-001",
+            start_date: "2026-05-01",
+            end_date: "2026-05-02",
+            reason: "院內會議",
+            handoff_note: "請協助檢查上午個案。",
+            status: "pending",
+            rejection_reason: null,
+            created_at: "2026-04-30T08:00:00.000Z",
+            updated_at: "2026-04-30T08:00:00.000Z"
+          }
+        ]
+      })
+    );
+
+    renderWithProviders(<AdminLeaveRequestsPage />);
+    fireEvent.click(screen.getByRole("button", { name: "核准請假" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/admin/family-line/send",
+        expect.objectContaining({
+          method: "POST"
+        })
+      );
+    });
+    const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(requestBody.subject).toBe("醫師請假公告");
+    expect(requestBody.recipients).toEqual([
+      expect.objectContaining({
+        caregiverId: "cg-001",
+        lineUserId: "U1234567890abcdef1234567890abcdef"
+      })
+    ]);
   });
 
   it("AdminLeaveRequestsPage 可由行政端建立請假申請並同步通知中心", async () => {

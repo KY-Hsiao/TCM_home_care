@@ -1,7 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createMapsUrlBuilder } from "./maps-url-builder";
 
 describe("maps url builder", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it("有自訂定位關鍵字時會優先使用關鍵字做 Google 地圖定位", () => {
     const maps = createMapsUrlBuilder();
 
@@ -203,5 +207,48 @@ describe("maps url builder", () => {
     expect(state.embedUrl).toBeNull();
     expect(state.externalUrl).toBeNull();
     expect(state.fallbackReason).toContain("超過目前 Google 路線預覽上限");
+  });
+
+  it("可透過 Google Geocoding API 取得地址座標", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        status: "OK",
+        results: [
+          {
+            formatted_address: "高雄市旗山區延平一路123號",
+            geometry: {
+              location: {
+                lat: 22.88612,
+                lng: 120.48234
+              }
+            }
+          }
+        ]
+      })
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const maps = createMapsUrlBuilder({ embedApiKey: "demo-key" });
+
+    const result = await maps.geocodeAddress({ address: "高雄市旗山區延平一路 123 號" });
+
+    expect(result).toEqual({
+      latitude: 22.88612,
+      longitude: 120.48234,
+      formattedAddress: "高雄市旗山區延平一路123號"
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("https://maps.googleapis.com/maps/api/geocode/json"),
+      expect.any(Object)
+    );
+  });
+
+  it("未設定 API key 時不會送出 geocoding request", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const maps = createMapsUrlBuilder({ embedApiKey: "" });
+
+    await expect(maps.geocodeAddress({ address: "高雄市旗山區延平一路 123 號" })).resolves.toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

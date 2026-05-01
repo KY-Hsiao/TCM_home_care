@@ -6,6 +6,7 @@ import { AppProviders } from "../providers";
 import {
   AdminDashboardPage,
   AdminDoctorTrackingPage,
+  AdminFamilyLinePage,
   AdminRemindersPage,
   AdminTeamCommunicationPage
 } from "../../pages/admin/AdminPages";
@@ -30,6 +31,7 @@ function renderShell(initialEntry: string, element: ReactElement) {
           <Route element={<AppShell />}>
             <Route path={initialEntry} element={element} />
             <Route path="/admin/team-communication" element={<AdminTeamCommunicationPage />} />
+            <Route path="/admin/family-line" element={<AdminFamilyLinePage />} />
             <Route path="/doctor/team-communication" element={<DoctorTeamCommunicationPage />} />
           </Route>
         </Routes>
@@ -128,10 +130,31 @@ describe("AppShell", () => {
       "待處理請假",
       "醫師追蹤",
       "團隊通訊",
+      "家屬聯繫",
       "個案管理",
       "排程管理",
       "角色設置"
     ]);
+  });
+
+  it("行政端可從左側目錄進入家屬聯繫頁", () => {
+    window.localStorage.setItem(
+      SESSION_STORAGE_KEY,
+      JSON.stringify({
+        role: "admin",
+        activeDoctorId: "doc-001",
+        activeAdminId: "admin-001",
+        authenticatedDoctorId: null,
+        authenticatedAdminId: "admin-001"
+      })
+    );
+
+    renderShell("/admin/family-line", <AdminFamilyLinePage />);
+
+    expect(within(screen.getByRole("navigation")).getByRole("link", { name: /家屬聯繫/ })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "LINE 自動發送設定" })).toBeInTheDocument();
+    expect(screen.getByLabelText("目前編輯範本")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "送出 LINE 群發" })).toBeInTheDocument();
   });
 
   it("登入後若有未讀通知，Shell 會明確顯示未讀提示", () => {
@@ -745,17 +768,12 @@ describe("AppShell", () => {
 
     expect(navigationLink).not.toHaveAttribute("target", "_blank");
     expect(returnRecordLink).not.toHaveAttribute("target", "_blank");
+    expect(navigationLink).toHaveAttribute("href", "/doctor/navigation");
 
-    fireEvent.click(navigationLink);
-    let embeddedWindow = screen.getByRole("dialog", { name: "即時導航視窗" });
-    expect(within(embeddedWindow).getAllByRole("heading", { name: "即時導航" }).length).toBeGreaterThan(0);
-    expect(within(embeddedWindow).getByText("目前狀態")).toBeInTheDocument();
-    expect(within(embeddedWindow).queryByRole("button", { name: "開啟即時導航" })).not.toBeInTheDocument();
-    fireEvent.click(within(embeddedWindow).getByRole("button", { name: "關閉視窗" }));
     expect(screen.queryByRole("dialog", { name: "即時導航視窗" })).not.toBeInTheDocument();
 
     fireEvent.click(returnRecordLink);
-    embeddedWindow = screen.getByRole("dialog", { name: "回院病歷視窗" });
+    const embeddedWindow = screen.getByRole("dialog", { name: "回院病歷視窗" });
     expect(within(embeddedWindow).getByLabelText("選擇路線")).toBeInTheDocument();
     expect(within(embeddedWindow).queryByRole("button", { name: "開啟回院病歷視窗" })).not.toBeInTheDocument();
     fireEvent.click(within(embeddedWindow).getByRole("button", { name: "關閉視窗" }));

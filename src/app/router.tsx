@@ -4,6 +4,7 @@ import { RoleSelectPage } from "../pages/role-select/RoleSelectPage";
 import {
   AdminDashboardPage,
   AdminDoctorTrackingPage,
+  AdminFamilyLinePage,
   AdminTeamCommunicationPage,
   AdminLeaveRequestsPage,
   AdminPatientDetailPage,
@@ -45,6 +46,7 @@ export const router = createBrowserRouter([
       { path: "/admin/dashboard", element: <AdminDashboardPage /> },
       { path: "/admin/doctor-tracking", element: <AdminDoctorTrackingPage /> },
       { path: "/admin/team-communication", element: <AdminTeamCommunicationPage /> },
+      { path: "/admin/family-line", element: <AdminFamilyLinePage /> },
       { path: "/admin/patients", element: <AdminPatientsPage /> },
       { path: "/admin/patients/:id", element: <AdminPatientDetailPage /> },
       { path: "/admin/reminders", element: <AdminRemindersPage /> },

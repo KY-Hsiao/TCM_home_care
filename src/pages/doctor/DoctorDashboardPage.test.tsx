@@ -124,8 +124,10 @@ function getFirstRoutePatientName() {
 function expectNavigationWindowOrExternalOpen(openSpy: { mock: { calls: unknown[][] } }) {
   const navigationWindow = screen.queryByRole("dialog", { name: "Google 導航視窗" });
   if (navigationWindow) {
-    expect(within(navigationWindow).getByRole("button", { name: /關閉導航/ })).toBeInTheDocument();
-    expect(within(navigationWindow).getByRole("link", { name: "外部 Google 地圖" })).toBeInTheDocument();
+    expect(
+      within(navigationWindow).getByRole("button", { name: /關閉導航|已抵達，回到即時導航/ })
+    ).toBeInTheDocument();
+    expect(within(navigationWindow).getByRole("link", { name: /外部 Google 地圖/ })).toBeInTheDocument();
     return;
   }
   expect(openSpy.mock.calls.length).toBeGreaterThan(0);
@@ -293,7 +295,7 @@ describe("DoctorDashboardPage", () => {
     const firstPatientName = getFirstRoutePatientName();
     fireEvent.click(screen.getByRole("button", { name: "開始出發" }));
     fireEvent.click(screen.getByRole("button", { name: "已抵達，開始治療" }));
-    expect(screen.getByText(/按下後會直接開啟下一家 .+ 的 Google 地圖導航。/)).toBeInTheDocument();
+    expect(screen.getByText(/按下後會在頁內開啟下一家 .+ 的 Google 導航。/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "完成治療，前往下一家" }));
 
     expectNavigationWindowOrExternalOpen(openSpy);

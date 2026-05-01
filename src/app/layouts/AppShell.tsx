@@ -6,7 +6,6 @@ import { formatDateTimeFull } from "../../shared/utils/format";
 import { isVisitFinished, isVisitUnlocked } from "../../modules/doctor/doctor-page-helpers";
 import { StaffCommunicationDialog } from "../../shared/components/StaffCommunicationDialog";
 import { maskPatientName } from "../../shared/utils/patient-name";
-import { DoctorLocationPage } from "../../pages/doctor/DoctorDashboardAndSchedulePages";
 import { DoctorReturnRecordPage } from "../../pages/doctor/DoctorReturnRecordPage";
 import {
   useTeamCommunicationConversation,
@@ -19,7 +18,7 @@ type DoctorLocationSyncState = {
   lastUpdatedAt: string | null;
 };
 
-type DoctorEmbeddedWindow = "navigation" | "return-records";
+type DoctorEmbeddedWindow = "return-records";
 
 function resolveDoctorLocationBannerTone(status: DoctorLocationSyncState["status"]) {
   if (status === "sharing") {
@@ -480,13 +479,19 @@ export function AppShell() {
               <NavLink
                 key={item.to}
                 to={item.to}
-                onClick={(event) => {
+                onClickCapture={(event) => {
                   if (shellRole !== "doctor") {
                     return;
                   }
-                  if (item.to === "/doctor/navigation") {
+                  if (item.to === "/doctor/return-records") {
                     event.preventDefault();
-                    setDoctorEmbeddedWindow("navigation");
+                    event.stopPropagation();
+                    setDoctorEmbeddedWindow("return-records");
+                  }
+                }}
+                onClick={(event) => {
+                  if (shellRole !== "doctor") {
+                    return;
                   }
                   if (item.to === "/doctor/return-records") {
                     event.preventDefault();
@@ -496,7 +501,6 @@ export function AppShell() {
                 className={({ isActive }) =>
                   `${isDoctorShell ? "block min-w-0 rounded-2xl px-3 py-2 text-sm lg:rounded-3xl lg:px-4 lg:py-3" : "block rounded-3xl px-4 py-3"} transition ${
                     isActive ||
-                    (doctorEmbeddedWindow === "navigation" && item.to === "/doctor/navigation") ||
                     (doctorEmbeddedWindow === "return-records" && item.to === "/doctor/return-records")
                       ? "bg-white text-brand-ink"
                       : "bg-white/5 hover:bg-white/10"
@@ -677,7 +681,7 @@ export function AppShell() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-2 sm:p-4">
           <div
             role="dialog"
-            aria-label={doctorEmbeddedWindow === "navigation" ? "即時導航視窗" : "回院病歷視窗"}
+            aria-label="回院病歷視窗"
             className="flex max-h-[calc(100dvh-1rem)] w-full max-w-6xl flex-col overflow-hidden rounded-[1.5rem] bg-brand-sand shadow-2xl lg:max-h-[calc(100dvh-2rem)] lg:rounded-[2rem]"
           >
             <div className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-200 bg-white px-4 py-3 lg:px-5 lg:py-4">
@@ -686,7 +690,7 @@ export function AppShell() {
                   醫師端視窗
                 </p>
                 <h2 className="mt-1 text-lg font-semibold text-brand-ink lg:text-xl">
-                  {doctorEmbeddedWindow === "navigation" ? "即時導航" : "回院病歷"}
+                  回院病歷
                 </h2>
               </div>
               <button
@@ -698,11 +702,7 @@ export function AppShell() {
               </button>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto p-3 lg:p-5">
-              {doctorEmbeddedWindow === "navigation" ? (
-                <DoctorLocationPage />
-              ) : (
-                <DoctorReturnRecordPage embeddedWindow onCloseWindow={() => setDoctorEmbeddedWindow(null)} />
-              )}
+              <DoctorReturnRecordPage embeddedWindow onCloseWindow={() => setDoctorEmbeddedWindow(null)} />
             </div>
           </div>
         </div>

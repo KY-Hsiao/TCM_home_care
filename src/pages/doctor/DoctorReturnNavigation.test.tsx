@@ -83,7 +83,7 @@ describe("DoctorReturnNavigation", () => {
     expect(returned).toBe(true);
     const navigationWindow = screen.queryByRole("dialog", { name: "Google 導航視窗" });
     if (navigationWindow) {
-      expect(within(navigationWindow).getByRole("link", { name: "外部 Google 地圖" })).toHaveAttribute(
+      expect(within(navigationWindow).getByRole("link", { name: /外部 Google 地圖/ })).toHaveAttribute(
         "href",
         expect.stringContaining(`destination=${destinationQuery}`)
       );

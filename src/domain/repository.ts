@@ -19,6 +19,7 @@ import type {
 import type {
   ConfirmationSource,
   FamilyFollowUpStatus,
+  GeocodingStatus,
   NotificationStatus,
   RecipientRole,
   RouteItemStatus,
@@ -128,6 +129,15 @@ export interface PatientRepository {
   upsertAdmin(admin: AdminUser): void;
   removeAdmin(adminId: string): void;
   upsertPatient(patient: Patient): PatientUpsertResult;
+  updatePatientCoordinates(
+    patientId: string,
+    patch: {
+      homeLatitude: number | null;
+      homeLongitude: number | null;
+      geocodingStatus: GeocodingStatus;
+      googleMapsLink?: string | null;
+    }
+  ): void;
   closePatient(patientId: string, reason?: string): {
     patientId: string;
     closed: boolean;

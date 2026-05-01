@@ -89,6 +89,7 @@ export function statusLabel(status: string): string {
     google_chat: "站內通知",
     web_notice: "站內通知",
     sms: "簡訊",
+    line: "LINE",
     in_person: "現場",
     idle: "待追蹤",
     inside_candidate: "抵達判定中",
@@ -107,6 +108,7 @@ export function channelLabel(channel: ContactChannel): string {
     google_chat: "站內通知",
     web_notice: "站內通知",
     sms: "簡訊",
+    line: "LINE",
     in_person: "現場"
   }[channel];
 }
@@ -142,6 +144,7 @@ export function statusTone(status: string): string {
     google_chat: "bg-emerald-100 text-emerald-800",
     web_notice: "bg-emerald-100 text-emerald-800",
     sms: "bg-sky-100 text-sky-800",
+    line: "bg-emerald-100 text-emerald-800",
     in_person: "bg-stone-200 text-stone-700",
     idle: "bg-slate-100 text-slate-700",
     inside_candidate: "bg-amber-100 text-amber-800",
