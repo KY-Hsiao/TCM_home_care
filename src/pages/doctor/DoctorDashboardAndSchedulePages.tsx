@@ -1104,17 +1104,6 @@ export function DoctorLocationPage() {
       arrivalAction: () => services.visitAutomation.confirmArrival(nextContext.schedule.id, "doctor")
     });
   };
-  const navigationSummary = currentRouteContext
-    ? navigatingContext
-      ? `導航進行中：第 ${getRouteDisplayOrder(routeSchedules, navigatingContext.schedule.id) ?? navigatingContext.schedule.route_order} 站 ${maskPatientName(navigatingContext.detail.patient.name)}`
-      : treatmentContext
-        ? `治療進行中：${maskPatientName(treatmentContext.detail.patient.name)}`
-        : readyContext
-          ? `待出發：第 ${getRouteDisplayOrder(routeSchedules, readyContext.schedule.id) ?? readyContext.schedule.route_order} 站 ${maskPatientName(readyContext.detail.patient.name)}`
-          : "目前路線待確認。"
-    : shouldShowHospitalReturn && activeRoutePlan
-      ? "今日患者已完成，可開啟返院導航。"
-      : "目前沒有可即時導航的路線。";
   const navigationModalContent = (
     <div className="space-y-4 lg:space-y-6">
       <DoctorRouteSelector embedded />
@@ -1301,16 +1290,7 @@ export function DoctorLocationPage() {
 
   return (
     <div className="space-y-4 lg:space-y-6">
-      <Panel title="即時導航">
-        <div className="rounded-[1.25rem] border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-600">
-          <p className="font-semibold text-brand-ink">目前狀態</p>
-          <p className="mt-1">{navigationSummary}</p>
-          <p className="mt-2 text-xs text-slate-500">
-            路線選擇、開始出發、抵達治療與返院導航都會在本頁直接操作；需要 Google 地圖時會在頁內開啟導航視窗。
-          </p>
-        </div>
-      </Panel>
-
+      <h1 className="sr-only">即時導航</h1>
       <div className="mx-auto w-full max-w-6xl pb-[max(1rem,env(safe-area-inset-bottom))]">
         {navigationModalContent}
       </div>
@@ -1320,7 +1300,11 @@ export function DoctorLocationPage() {
           <div
             role="dialog"
             aria-label="Google 導航視窗"
-            className="flex h-[calc(100dvh-1rem)] w-full max-w-5xl flex-col overflow-hidden rounded-[1.35rem] bg-white shadow-2xl lg:h-[calc(100dvh-2rem)] lg:rounded-[2rem]"
+            className={`flex w-full max-w-5xl flex-col overflow-hidden rounded-[1.35rem] bg-white shadow-2xl lg:rounded-[2rem] ${
+              embeddedNavigationWindow.embedUrl
+                ? "h-[calc(100dvh-1rem)] lg:h-[calc(100dvh-2rem)]"
+                : "max-h-[calc(100dvh-1rem)]"
+            }`}
           >
             <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-4 py-3 lg:px-5 lg:py-4">
               <div>
@@ -1359,10 +1343,30 @@ export function DoctorLocationPage() {
                 className="min-h-0 flex-1 border-0"
               />
             ) : (
-              <div className="flex min-h-0 flex-1 items-center justify-center bg-slate-50 p-6 text-center text-sm text-slate-600">
-                <div>
-                  <p className="font-semibold text-brand-ink">目前無法內嵌此段導航</p>
-                  <p className="mt-2">可使用上方外部 Google 地圖連結繼續導航，或關閉後回到即時導航頁。</p>
+              <div className="bg-slate-50 p-4 text-sm text-slate-600 sm:p-6">
+                <div className="mx-auto max-w-lg rounded-[1.25rem] border border-slate-200 bg-white p-4 text-center shadow-sm sm:p-6">
+                  <p className="text-base font-semibold text-brand-ink">目前無法在頁內載入 Google 導航</p>
+                  <p className="mt-2 leading-6">
+                    這通常是手機瀏覽器或 Google Maps 內嵌限制。請直接開啟 Google 導航；抵達後回到本頁按「已抵達，回到即時導航」。
+                  </p>
+                  <a
+                    href={embeddedNavigationWindow.externalUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-4 inline-flex min-h-[52px] w-full items-center justify-center rounded-full bg-brand-forest px-4 py-3 text-base font-bold text-white transition hover:opacity-90"
+                  >
+                    開啟 Google 導航
+                  </a>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      embeddedNavigationWindow.arrivalAction?.();
+                      setEmbeddedNavigationWindow(null);
+                    }}
+                    className="mt-3 inline-flex min-h-[48px] w-full items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-brand-ink transition hover:bg-slate-50"
+                  >
+                    {embeddedNavigationWindow.arrivalAction ? "已抵達，回到即時導航" : "關閉導航"}
+                  </button>
                 </div>
               </div>
             )}

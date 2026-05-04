@@ -723,7 +723,11 @@ describe("AppShell", () => {
     expect(within(summaryList).getByText("定位座標：22.88590, 120.50140")).toBeInTheDocument();
     expect(within(summaryList).getByText(/最後更新：20\d{2}\/\d{2}\/\d{2} 09:30/)).toBeInTheDocument();
     expect(
-      within(summaryList).getByText((text) => text.startsWith("同步案件：第 ") && text.includes(" / "))
+      within(summaryList).getByText(
+        (text) =>
+          (text.startsWith("同步案件：第 ") && text.includes(" / ")) ||
+          text === "同步案件：返院導航"
+      )
     ).toBeInTheDocument();
   });
 
@@ -741,6 +745,10 @@ describe("AppShell", () => {
 
     renderShell("/doctor/navigation", <DoctorLocationPage />);
 
+    const menuButton = screen.getByRole("button", { name: /目錄/ });
+    expect(menuButton).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(menuButton);
+    expect(menuButton).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByRole("link", { name: /即時導航/ })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /排程清單/ })).not.toBeInTheDocument();
     expect(screen.getByText("這是醫師端介面。")).toBeInTheDocument();

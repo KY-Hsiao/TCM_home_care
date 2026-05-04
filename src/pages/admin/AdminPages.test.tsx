@@ -2267,7 +2267,7 @@ describe("AdminPages", () => {
     expect(storedDb.patients.some((patient: { id: string }) => patient.id === "pat-012")).toBe(false);
   });
 
-  it("AdminPatientsPage 不允許刪除已經開始移動或治療中的個案", () => {
+  it("AdminPatientsPage 可刪除已經開始移動或治療中的個案並清除關聯資料", () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
 
     renderWithProviders(<AdminPatientsPage />);
@@ -2275,9 +2275,22 @@ describe("AdminPages", () => {
     fireEvent.click(screen.getByRole("button", { name: "編輯 李○蘭" }));
     fireEvent.click(screen.getByRole("button", { name: "刪除個案" }));
 
-    expect(screen.getByRole("status")).toHaveTextContent("無法刪除 李○蘭");
-    expect(screen.getByRole("button", { name: "編輯 李○蘭" })).toBeInTheDocument();
-    expect(screen.getByRole("dialog", { name: "李○蘭 編輯資料" })).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "已刪除 李○蘭，並清除 3 筆相關排程，其中 1 筆進行中訪視已取消並除名。"
+    );
+    expect(screen.queryByRole("button", { name: "編輯 李○蘭" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+    const storedDb = JSON.parse(window.localStorage.getItem(MOCK_DB_STORAGE_KEY) ?? "{}");
+    expect(storedDb.patients.some((patient: { id: string }) => patient.id === "pat-003")).toBe(false);
+    expect(
+      storedDb.visit_schedules.some((schedule: { patient_id: string }) => schedule.patient_id === "pat-003")
+    ).toBe(false);
+    expect(
+      storedDb.saved_route_plans.some((routePlan: { route_items: Array<{ patient_id: string }> }) =>
+        routePlan.route_items.some((item) => item.patient_id === "pat-003")
+      )
+    ).toBe(false);
   });
 
   it("AdminPatientsPage 可刪除尚未出發的個案", () => {

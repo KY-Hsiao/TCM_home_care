@@ -49,6 +49,7 @@ export type PatientRemoveResult = {
   patientId: string;
   removed: boolean;
   removedScheduleCount: number;
+  removedActiveScheduleCount: number;
   blockedReason: string | null;
 };
 
@@ -57,6 +58,7 @@ export type PatientBatchRemoveResult = {
   removedCount: number;
   blockedCount: number;
   removedScheduleCount: number;
+  removedActiveScheduleCount: number;
 };
 
 export type PatientProfile = {

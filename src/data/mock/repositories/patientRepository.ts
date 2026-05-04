@@ -22,7 +22,6 @@ import { anonymizePatientName, maskPatientName } from "../../../shared/utils/pat
 const ACTIVE_VISIT_STATUSES = [
   "on_the_way",
   "tracking",
-  "proximity_pending",
   "arrived",
   "in_treatment"
 ] as const;
@@ -89,6 +88,7 @@ function removePatientFromDb(
         patientId,
         removed: false,
         removedScheduleCount: 0,
+        removedActiveScheduleCount: 0,
         blockedReason: "找不到指定個案"
       }
     };
@@ -98,19 +98,6 @@ function removePatientFromDb(
   const activeSchedules = patientSchedules.filter((schedule) =>
     ACTIVE_VISIT_STATUSES.includes(schedule.status as (typeof ACTIVE_VISIT_STATUSES)[number])
   );
-
-  if (activeSchedules.length > 0) {
-    return {
-      db,
-      result: {
-        patientId,
-        removed: false,
-        removedScheduleCount: patientSchedules.length,
-        blockedReason: "此個案仍有進行中的訪視流程"
-      }
-    };
-  }
-
   const scheduleIds = new Set(patientSchedules.map((schedule) => schedule.id));
   const caregiverIds = new Set(
     db.caregivers
@@ -168,6 +155,7 @@ function removePatientFromDb(
       patientId,
       removed: true,
       removedScheduleCount: patientSchedules.length,
+      removedActiveScheduleCount: activeSchedules.length,
       blockedReason: null
     }
   };
@@ -596,6 +584,7 @@ export function createPatientRepository(
         patientId,
         removed: false,
         removedScheduleCount: 0,
+        removedActiveScheduleCount: 0,
         blockedReason: null
       };
 
@@ -625,13 +614,17 @@ export function createPatientRepository(
           results: summary.results,
           removedCount: summary.removedCount + (result.removed ? 1 : 0),
           blockedCount: summary.blockedCount + (result.removed ? 0 : 1),
-          removedScheduleCount: summary.removedScheduleCount + (result.removed ? result.removedScheduleCount : 0)
+          removedScheduleCount: summary.removedScheduleCount + (result.removed ? result.removedScheduleCount : 0),
+          removedActiveScheduleCount:
+            summary.removedActiveScheduleCount +
+            (result.removed ? result.removedActiveScheduleCount : 0)
         }),
         {
           results,
           removedCount: 0,
           blockedCount: 0,
-          removedScheduleCount: 0
+          removedScheduleCount: 0,
+          removedActiveScheduleCount: 0
         }
       );
     },

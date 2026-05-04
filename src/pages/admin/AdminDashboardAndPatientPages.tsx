@@ -2437,8 +2437,12 @@ export function AdminPatientsPage() {
     if (selectedPatient?.id === targetPatient.id) {
       syncDraft(nextPatient);
     }
+    const activeScheduleNotice =
+      result.removedActiveScheduleCount > 0
+        ? `，其中 ${result.removedActiveScheduleCount} 筆進行中訪視已取消並除名`
+        : "";
     setRecentAction(
-      `已刪除 ${maskPatientName(targetPatient.name)}，並清除 ${result.removedScheduleCount} 筆相關排程。`
+      `已刪除 ${maskPatientName(targetPatient.name)}，並清除 ${result.removedScheduleCount} 筆相關排程${activeScheduleNotice}。`
     );
     setEditorOpen(false);
   };
@@ -2487,6 +2491,10 @@ export function AdminPatientsPage() {
     }
     setRecentAction(
       `批次刪除完成：已刪除 ${result.removedCount} 位個案，並清除 ${result.removedScheduleCount} 筆相關排程${
+        result.removedActiveScheduleCount > 0
+          ? `，其中 ${result.removedActiveScheduleCount} 筆進行中訪視已取消並除名`
+          : ""
+      }${
         result.blockedCount > 0 ? `，略過 ${result.blockedCount} 位。${firstBlockedReason}` : ""
       }。`
     );

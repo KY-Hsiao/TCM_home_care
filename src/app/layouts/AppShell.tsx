@@ -178,6 +178,7 @@ export function AppShell() {
   const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
   const [isDoctorQuickSummaryOpen, setIsDoctorQuickSummaryOpen] = useState(false);
   const [isStaffCommunicationOpen, setIsStaffCommunicationOpen] = useState(false);
+  const [isDoctorMobileMenuOpen, setIsDoctorMobileMenuOpen] = useState(false);
   const [doctorEmbeddedWindow, setDoctorEmbeddedWindow] = useState<DoctorEmbeddedWindow | null>(null);
   const [passwordForm, setPasswordForm] = useState({
     currentPassword: "",
@@ -200,6 +201,10 @@ export function AppShell() {
       setRole(shellRole);
     }
   }, [session.role, setRole, shellRole]);
+
+  useEffect(() => {
+    setIsDoctorMobileMenuOpen(false);
+  }, [location.pathname]);
 
   useEffect(() => {
     if (shellRole !== "doctor" || !session.authenticatedDoctorId) {
@@ -452,26 +457,43 @@ export function AppShell() {
               : "h-[calc(100dvh-1.5rem)] overflow-y-auto rounded-[1.75rem] p-4 lg:p-5"
           }`}
         >
-          <div>
-            <p className={`tracking-[0.18em] text-brand-sand/70 ${isDoctorShell ? "text-xs" : "text-sm"}`}>
-              中醫居家輔助系統
-            </p>
-            <h1 className={`mt-1.5 font-bold ${isDoctorShell ? "text-lg leading-tight lg:mt-2 lg:text-2xl" : "text-2xl"}`}>
-              中醫居家輔助系統
-            </h1>
-            <p className={`mt-1.5 text-brand-sand/80 ${isDoctorShell ? "text-[11px] lg:mt-2 lg:text-sm" : "text-sm"}`}>
-              {shellRole === "doctor"
-                ? "這是醫師端介面。"
-                : shellRole === "admin"
-                  ? "這是行政端介面。"
-                  : "這是系統共用介面。"}
-            </p>
+          <div className={isDoctorShell ? "flex items-center justify-between gap-3 lg:block" : ""}>
+            <div className="min-w-0">
+              <p className={`tracking-[0.18em] text-brand-sand/70 ${isDoctorShell ? "text-xs" : "text-sm"}`}>
+                中醫居家輔助系統
+              </p>
+              <h1 className={`mt-1.5 font-bold ${isDoctorShell ? "text-lg leading-tight lg:mt-2 lg:text-2xl" : "text-2xl"}`}>
+                中醫居家輔助系統
+              </h1>
+              <p className={`mt-1.5 text-brand-sand/80 ${isDoctorShell ? "hidden text-[11px] lg:mt-2 lg:block lg:text-sm" : "text-sm"}`}>
+                {shellRole === "doctor"
+                  ? "這是醫師端介面。"
+                  : shellRole === "admin"
+                    ? "這是行政端介面。"
+                    : "這是系統共用介面。"}
+              </p>
+            </div>
+            {isDoctorShell ? (
+              <button
+                type="button"
+                aria-expanded={isDoctorMobileMenuOpen}
+                onClick={() => setIsDoctorMobileMenuOpen((open) => !open)}
+                className="inline-flex min-h-[46px] shrink-0 items-center justify-center rounded-2xl bg-white px-5 py-2.5 text-base font-bold text-brand-ink lg:hidden"
+              >
+                目錄
+                {unreadNotificationCount + doctorTeamCommunicationUnreadCount > 0 ? (
+                  <span className="ml-2 rounded-full bg-brand-coral px-2 py-0.5 text-xs font-semibold text-white">
+                    {unreadNotificationCount + doctorTeamCommunicationUnreadCount}
+                  </span>
+                ) : null}
+              </button>
+            ) : null}
           </div>
 
           <nav
             className={
               isDoctorShell
-                ? "mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:mt-5 lg:block lg:space-y-2"
+                ? `${isDoctorMobileMenuOpen ? "mt-3 grid" : "hidden"} grid-cols-1 gap-2 sm:grid-cols-2 lg:mt-5 lg:block lg:space-y-2`
                 : "mt-4 space-y-2"
             }
           >
@@ -496,7 +518,10 @@ export function AppShell() {
                   if (item.to === "/doctor/return-records") {
                     event.preventDefault();
                     setDoctorEmbeddedWindow("return-records");
+                    setIsDoctorMobileMenuOpen(false);
+                    return;
                   }
+                  setIsDoctorMobileMenuOpen(false);
                 }}
                 className={({ isActive }) =>
                   `${isDoctorShell ? "block min-w-0 rounded-2xl px-3 py-2 text-sm lg:rounded-3xl lg:px-4 lg:py-3" : "block rounded-3xl px-4 py-3"} transition ${
@@ -532,7 +557,7 @@ export function AppShell() {
             ))}
           </nav>
           {shellRole === "doctor" ? (
-            <div className="mt-3 space-y-2.5 lg:mt-6 lg:space-y-3">
+            <div className={`${isDoctorMobileMenuOpen ? "mt-3 block" : "hidden"} space-y-2.5 lg:mt-6 lg:block lg:space-y-3`}>
               <div className="rounded-2xl bg-white/10 p-2.5 text-sm lg:rounded-3xl lg:p-4">
                 <button
                   type="button"
