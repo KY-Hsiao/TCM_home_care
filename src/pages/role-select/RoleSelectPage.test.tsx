@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { RoleSelectPage } from "./RoleSelectPage";
 import { MOCK_DB_STORAGE_KEY } from "../../data/mock/db";
 import { createSeedDb } from "../../data/seed";
-import { PASSWORD_STORAGE_KEY, SESSION_STORAGE_KEY } from "../../app/auth-storage";
+import { SESSION_STORAGE_KEY } from "../../app/auth-storage";
 
 describe("RoleSelectPage", () => {
   beforeEach(() => {
@@ -33,7 +33,7 @@ describe("RoleSelectPage", () => {
     expect(screen.getByRole("combobox", { name: "選擇帳號" })).toBeInTheDocument();
     expect(screen.getAllByLabelText("登入密碼")).toHaveLength(1);
     expect(screen.getByRole("option", { name: "醫師 - 蕭坤元醫師" })).toBeInTheDocument();
-    expect(screen.getAllByRole("option", { name: "行政人員" })).toHaveLength(2);
+    expect(screen.getAllByRole("option", { name: "行政人員" })).toHaveLength(1);
     expect(
       screen.getByText(/醫師登入後會立即要求手機瀏覽器定位分享/)
     ).toBeInTheDocument();
@@ -66,26 +66,46 @@ describe("RoleSelectPage", () => {
     expect(screen.getByText("醫師首頁")).toBeInTheDocument();
   });
 
-  it("選行政帳號並輸入該帳號密碼後會進入行政頁", async () => {
-    window.localStorage.setItem(
-      PASSWORD_STORAGE_KEY,
-      JSON.stringify({ "admin:admin-002": "2222" })
-    );
+  it("選行政人員並輸入正確密碼後會用單一行政角色進入行政頁", async () => {
     renderRoleSelect();
 
     fireEvent.change(screen.getByRole("combobox", { name: "選擇帳號" }), {
-      target: { value: "admin:admin-002" }
+      target: { value: "admin:admin-001" }
     });
     fireEvent.change(screen.getByLabelText("登入密碼"), {
-      target: { value: "2222" }
+      target: { value: "0000" }
     });
     fireEvent.click(screen.getByRole("button", { name: "登入並進入" }));
 
     expect(screen.getByText("行政首頁")).toBeInTheDocument();
     await waitFor(() => {
       const session = JSON.parse(window.localStorage.getItem(SESSION_STORAGE_KEY) ?? "{}");
-      expect(session.activeAdminId).toBe("admin-002");
-      expect(session.authenticatedAdminId).toBe("admin-002");
+      expect(session.activeAdminId).toBe("admin-001");
+      expect(session.authenticatedAdminId).toBe("admin-001");
+    });
+  });
+
+  it("既有瀏覽器若存到其他行政帳號，也會收斂成單一行政角色", async () => {
+    window.localStorage.setItem(
+      SESSION_STORAGE_KEY,
+      JSON.stringify({
+        role: "admin",
+        activeDoctorId: "doc-001",
+        activeAdminId: "admin-002",
+        authenticatedDoctorId: null,
+        authenticatedAdminId: "admin-002"
+      })
+    );
+    renderRoleSelect();
+
+    const accountSelect = screen.getByRole("combobox", { name: "選擇帳號" });
+
+    expect(accountSelect).toHaveValue("admin:admin-001");
+    expect(screen.getAllByRole("option", { name: "行政人員" })).toHaveLength(1);
+    await waitFor(() => {
+      const session = JSON.parse(window.localStorage.getItem(SESSION_STORAGE_KEY) ?? "{}");
+      expect(session.activeAdminId).toBe("admin-001");
+      expect(session.authenticatedAdminId).toBe("admin-001");
     });
   });
 

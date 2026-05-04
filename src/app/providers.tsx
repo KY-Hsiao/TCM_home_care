@@ -33,10 +33,11 @@ export function AppProviders({ children }: PropsWithChildren) {
       typeof storedSession.authenticatedDoctorId === "string"
         ? storedSession.authenticatedDoctorId
         : null;
-    const authenticatedAdminId =
+    const storedAuthenticatedAdminId =
       typeof storedSession.authenticatedAdminId === "string"
         ? storedSession.authenticatedAdminId
         : null;
+    const authenticatedAdminId = storedAuthenticatedAdminId ? defaultAdminId : null;
 
     return {
       role: storedSession.role === "admin" ? "admin" : "doctor",
@@ -44,8 +45,7 @@ export function AppProviders({ children }: PropsWithChildren) {
         typeof storedSession.activeDoctorId === "string"
           ? storedSession.activeDoctorId
           : authenticatedDoctorId ?? defaultDoctorId,
-      activeAdminId:
-        authenticatedAdminId ?? defaultAdminId,
+      activeAdminId: authenticatedAdminId ?? defaultAdminId,
       activeRoutePlanId:
         typeof storedSession.activeRoutePlanId === "string"
           ? storedSession.activeRoutePlanId
@@ -54,10 +54,35 @@ export function AppProviders({ children }: PropsWithChildren) {
       authenticatedAdminId
     };
   });
+  const persistDbTimerRef = useRef<number | null>(null);
+  const latestDbRef = useRef(db);
 
   useEffect(() => {
-    persistDb(db);
+    latestDbRef.current = db;
+    if (persistDbTimerRef.current) {
+      window.clearTimeout(persistDbTimerRef.current);
+    }
+    persistDbTimerRef.current = window.setTimeout(() => {
+      persistDb(latestDbRef.current);
+      persistDbTimerRef.current = null;
+    }, 0);
+    return () => {
+      if (persistDbTimerRef.current) {
+        window.clearTimeout(persistDbTimerRef.current);
+        persistDbTimerRef.current = null;
+      }
+    };
   }, [db]);
+
+  useEffect(() => {
+    return () => {
+      if (persistDbTimerRef.current) {
+        window.clearTimeout(persistDbTimerRef.current);
+        persistDbTimerRef.current = null;
+      }
+      persistDb(latestDbRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     return subscribeDbStorage((nextDb) => {
@@ -112,7 +137,7 @@ export function AppProviders({ children }: PropsWithChildren) {
     services,
     session,
     login({ role, userId, password }) {
-      const normalizedUserId = userId || (role === "admin" ? defaultAdminId : defaultDoctorId);
+      const normalizedUserId = role === "admin" ? defaultAdminId : userId || defaultDoctorId;
       const expectedPassword = resolvePassword(storedPasswords, role, normalizedUserId);
       if (password !== expectedPassword) {
         return {
@@ -188,7 +213,7 @@ export function AppProviders({ children }: PropsWithChildren) {
       setSession((current) => ({ ...current, activeDoctorId: doctorId, activeRoutePlanId: null }));
     },
     setActiveAdminId(adminId) {
-      setSession((current) => ({ ...current, activeAdminId: adminId }));
+      setSession((current) => ({ ...current, activeAdminId: defaultAdminId || adminId }));
     },
     setActiveRoutePlanId(routePlanId) {
       setSession((current) => ({ ...current, activeRoutePlanId: routePlanId }));

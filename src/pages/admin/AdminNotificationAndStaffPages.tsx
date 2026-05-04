@@ -171,6 +171,7 @@ export function AdminStaffPage() {
   const [apiTokens, setApiTokens] = useState<AdminApiTokenSettings>(() =>
     loadAdminApiTokenSettings()
   );
+  const [isSecretManagementOpen, setIsSecretManagementOpen] = useState(false);
   const [isTestingGoogleMapsConnection, setIsTestingGoogleMapsConnection] = useState(false);
   const [secretManagementMessage, setSecretManagementMessage] = useState<{
     tone: "success" | "error";
@@ -465,67 +466,103 @@ export function AdminStaffPage() {
       ) : null}
 
       <div className="grid gap-6">
-        <Panel title="機密管理區">
-          <div className="grid gap-3 text-sm lg:grid-cols-3">
-            <label className="block">
-              <span className="mb-1 block font-medium text-brand-ink">LINE Channel Access Token</span>
-              <input
-                type="password"
-                aria-label="LINE Channel Access Token"
-                value={apiTokens.lineChannelAccessToken}
-                onChange={(event) => updateApiToken("lineChannelAccessToken", event.target.value)}
-                placeholder="貼上 LINE Messaging API access token"
-                className="w-full rounded-2xl border border-slate-200 px-4 py-3"
-              />
-            </label>
-            <label className="block">
-              <span className="mb-1 block font-medium text-brand-ink">LINE Channel Secret</span>
-              <input
-                type="password"
-                aria-label="LINE Channel Secret"
-                value={apiTokens.lineChannelSecret}
-                onChange={(event) => updateApiToken("lineChannelSecret", event.target.value)}
-                placeholder="貼上 LINE webhook secret"
-                className="w-full rounded-2xl border border-slate-200 px-4 py-3"
-              />
-            </label>
-            <label className="block">
-              <span className="mb-1 block font-medium text-brand-ink">Google Maps API Key</span>
-              <input
-                type="password"
-                aria-label="Google Maps API Key"
-                value={apiTokens.googleMapsApiKey}
-                onChange={(event) => updateApiToken("googleMapsApiKey", event.target.value)}
-                placeholder="貼上 Geocoding API key"
-                className="w-full rounded-2xl border border-slate-200 px-4 py-3"
-              />
-            </label>
-          </div>
-          <p className="mt-3 text-xs text-slate-500">
-            Token 會保存在這台瀏覽器，用於 LINE 群發/好友同步，以及排程頁 Google 補座標。正式部署仍建議同步設定環境變數。
-          </p>
-          <div className="mt-3 flex flex-wrap items-center gap-2">
+        <Panel
+          title="機密管理區"
+          action={
             <button
               type="button"
-              onClick={() => void testGoogleMapsConnection()}
-              disabled={isTestingGoogleMapsConnection}
-              className="rounded-full border border-emerald-200 bg-white px-4 py-2 text-xs font-semibold text-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+              onClick={() => setIsSecretManagementOpen((current) => !current)}
+              aria-expanded={isSecretManagementOpen}
+              className="rounded-full border border-brand-sand bg-white px-4 py-2 text-sm font-semibold text-brand-forest"
             >
-              {isTestingGoogleMapsConnection ? "測試中" : "測試 Google Maps 連線"}
+              {isSecretManagementOpen ? "收起機密管理" : "顯示機密管理"}
             </button>
-            {secretManagementMessage ? (
-              <span
-                role="status"
-                className={`rounded-full px-3 py-1.5 text-xs font-semibold ${
-                  secretManagementMessage.tone === "success"
-                    ? "bg-emerald-100 text-emerald-800"
-                    : "bg-rose-100 text-rose-700"
-                }`}
-              >
-                {secretManagementMessage.message}
-              </span>
-            ) : null}
-          </div>
+          }
+        >
+          {isSecretManagementOpen ? (
+            <>
+              <div className="grid gap-3 text-sm lg:grid-cols-3">
+                <label className="block">
+                  <span className="mb-1 block font-medium text-brand-ink">LINE Channel Access Token</span>
+                  <a
+                    href="https://developers.line.biz/console/"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mb-2 inline-flex text-xs font-semibold text-emerald-700 underline decoration-emerald-200 underline-offset-4"
+                  >
+                    取得 LINE Channel Access Token
+                  </a>
+                  <input
+                    type="password"
+                    aria-label="LINE Channel Access Token"
+                    value={apiTokens.lineChannelAccessToken}
+                    onChange={(event) => updateApiToken("lineChannelAccessToken", event.target.value)}
+                    placeholder="貼上 LINE Messaging API access token"
+                    className="w-full rounded-2xl border border-slate-200 px-4 py-3"
+                  />
+                </label>
+                <label className="block">
+                  <span className="mb-1 block font-medium text-brand-ink">LINE Channel Secret</span>
+                  <input
+                    type="password"
+                    aria-label="LINE Channel Secret"
+                    value={apiTokens.lineChannelSecret}
+                    onChange={(event) => updateApiToken("lineChannelSecret", event.target.value)}
+                    placeholder="貼上 LINE webhook secret"
+                    className="w-full rounded-2xl border border-slate-200 px-4 py-3"
+                  />
+                </label>
+                <label className="block">
+                  <span className="mb-1 block font-medium text-brand-ink">Google Maps API Key</span>
+                  <a
+                    href="https://console.cloud.google.com/apis/credentials"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mb-2 inline-flex text-xs font-semibold text-emerald-700 underline decoration-emerald-200 underline-offset-4"
+                  >
+                    取得 Google Maps API Key
+                  </a>
+                  <input
+                    type="password"
+                    aria-label="Google Maps API Key"
+                    value={apiTokens.googleMapsApiKey}
+                    onChange={(event) => updateApiToken("googleMapsApiKey", event.target.value)}
+                    placeholder="貼上 Geocoding API key"
+                    className="w-full rounded-2xl border border-slate-200 px-4 py-3"
+                  />
+                </label>
+              </div>
+              <p className="mt-3 text-xs text-slate-500">
+                Token 會保存在這台瀏覽器，用於 LINE 群發/好友同步，以及排程頁 Google 補座標。正式部署仍建議同步設定環境變數。
+              </p>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void testGoogleMapsConnection()}
+                  disabled={isTestingGoogleMapsConnection}
+                  className="rounded-full border border-emerald-200 bg-white px-4 py-2 text-xs font-semibold text-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {isTestingGoogleMapsConnection ? "測試中" : "測試 Google Maps 連線"}
+                </button>
+                {secretManagementMessage ? (
+                  <span
+                    role="status"
+                    className={`rounded-full px-3 py-1.5 text-xs font-semibold ${
+                      secretManagementMessage.tone === "success"
+                        ? "bg-emerald-100 text-emerald-800"
+                        : "bg-rose-100 text-rose-700"
+                    }`}
+                  >
+                    {secretManagementMessage.message}
+                  </span>
+                ) : null}
+              </div>
+            </>
+          ) : (
+            <p className="text-sm text-slate-500">
+              已收納 LINE 與 Google API 欄位。需要修改或測試連線時，請先按「顯示機密管理」。
+            </p>
+          )}
         </Panel>
 
         <Panel

@@ -143,6 +143,7 @@ export function DoctorLeaveRequestPage() {
     tone: "success" | "error";
     message: string;
   } | null>(null);
+  const [deleteConfirmLeaveRequestId, setDeleteConfirmLeaveRequestId] = useState<string | null>(null);
 
   const leaveHistory = useMemo(
     () =>
@@ -151,10 +152,12 @@ export function DoctorLeaveRequestPage() {
         .filter((leaveRequest) => leaveRequest.doctor_id === activeDoctor?.id)
         .sort(
           (left, right) =>
-          new Date(right.created_at).getTime() - new Date(left.created_at).getTime()
+            new Date(right.created_at).getTime() - new Date(left.created_at).getTime()
         ),
     [activeDoctor?.id, repositories]
   );
+  const deleteConfirmLeaveRequest =
+    leaveHistory.find((leaveRequest) => leaveRequest.id === deleteConfirmLeaveRequestId) ?? null;
 
   const handleCreateLeaveRequest = () => {
     if (!activeDoctor) {
@@ -194,13 +197,16 @@ export function DoctorLeaveRequestPage() {
   };
 
   const handleDeleteLeaveRequest = (leaveRequestId: string) => {
-    if (typeof window !== "undefined" && typeof window.confirm === "function") {
-      const confirmed = window.confirm("確定要刪除這筆請假申請嗎？");
-      if (!confirmed) {
-        return;
-      }
+    setStatusFeedback(null);
+    setDeleteConfirmLeaveRequestId(leaveRequestId);
+  };
+
+  const confirmDeleteLeaveRequest = () => {
+    if (!deleteConfirmLeaveRequestId) {
+      return;
     }
-    repositories.staffingRepository.deleteLeaveRequest(leaveRequestId);
+    repositories.staffingRepository.deleteLeaveRequest(deleteConfirmLeaveRequestId);
+    setDeleteConfirmLeaveRequestId(null);
     setStatusFeedback({
       tone: "success",
       message: "請假申請已刪除。"
@@ -372,6 +378,45 @@ export function DoctorLeaveRequestPage() {
             >
               送出請假申請
             </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {deleteConfirmLeaveRequest ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-leave-request-title"
+            className="w-full max-w-md rounded-[28px] bg-white p-5 shadow-2xl lg:rounded-[32px] lg:p-6"
+          >
+            <p className="text-sm font-medium text-rose-600">刪除請假申請</p>
+            <h2 id="delete-leave-request-title" className="mt-1 text-xl font-semibold text-brand-ink">
+              確定刪除這筆請假申請？
+            </h2>
+            <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+              <p className="font-medium text-brand-ink">
+                {deleteConfirmLeaveRequest.start_date} 至 {deleteConfirmLeaveRequest.end_date}
+              </p>
+              <p className="mt-1">{deleteConfirmLeaveRequest.reason}</p>
+            </div>
+            <p className="mt-3 text-sm text-slate-600">刪除後，這筆請假申請紀錄會從醫師端與行政端同步移除。</p>
+            <div className="mt-5 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setDeleteConfirmLeaveRequestId(null)}
+                className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={confirmDeleteLeaveRequest}
+                className="rounded-full bg-rose-600 px-4 py-2 text-sm font-semibold text-white"
+              >
+                確定刪除
+              </button>
             </div>
           </div>
         </div>

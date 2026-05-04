@@ -22,6 +22,7 @@ import { AppShell } from "./AppShell";
 import { SESSION_STORAGE_KEY } from "../auth-storage";
 import { MOCK_DB_STORAGE_KEY } from "../../data/mock/db";
 import { createSeedDb } from "../../data/seed";
+import { ADMIN_API_TOKEN_STORAGE_KEY } from "../../shared/utils/admin-api-tokens";
 
 function renderShell(initialEntry: string, element: ReactElement) {
   return render(
@@ -183,15 +184,40 @@ describe("AppShell", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    renderShell("/admin/staff", <AdminStaffPage />);
+    const { unmount } = renderShell("/admin/staff", <AdminStaffPage />);
     expect(screen.getByRole("heading", { name: "機密管理區" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "顯示機密管理" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByLabelText("LINE Channel Access Token")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("LINE Channel Secret")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Google Maps API Key")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "測試 Google Maps 連線" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "顯示機密管理" }));
+    expect(screen.getByRole("button", { name: "收起機密管理" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("link", { name: "取得 LINE Channel Access Token" })).toHaveAttribute(
+      "href",
+      "https://developers.line.biz/console/"
+    );
+    expect(screen.getByRole("link", { name: "取得 Google Maps API Key" })).toHaveAttribute(
+      "href",
+      "https://console.cloud.google.com/apis/credentials"
+    );
     expect(screen.getByLabelText("LINE Channel Access Token")).toBeInTheDocument();
     expect(screen.getByLabelText("LINE Channel Secret")).toBeInTheDocument();
     expect(screen.getByLabelText("Google Maps API Key")).toBeInTheDocument();
 
+    fireEvent.change(screen.getByLabelText("LINE Channel Access Token"), {
+      target: { value: "browser-line-token" }
+    });
     fireEvent.change(screen.getByLabelText("Google Maps API Key"), {
       target: { value: "browser-google-key" }
     });
+    await waitFor(() =>
+      expect(JSON.parse(window.localStorage.getItem(ADMIN_API_TOKEN_STORAGE_KEY) ?? "{}")).toMatchObject({
+        lineChannelAccessToken: "browser-line-token",
+        googleMapsApiKey: "browser-google-key"
+      })
+    );
     fireEvent.click(screen.getByRole("button", { name: "測試 Google Maps 連線" }));
 
     await waitFor(() =>
@@ -207,6 +233,17 @@ describe("AppShell", () => {
         })
       })
     );
+
+    fireEvent.click(screen.getByRole("button", { name: "收起機密管理" }));
+    expect(screen.queryByLabelText("LINE Channel Access Token")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("LINE Channel Secret")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Google Maps API Key")).not.toBeInTheDocument();
+
+    unmount();
+    renderShell("/admin/staff", <AdminStaffPage />);
+    fireEvent.click(screen.getByRole("button", { name: "顯示機密管理" }));
+    expect(screen.getByLabelText("LINE Channel Access Token")).toHaveValue("browser-line-token");
+    expect(screen.getByLabelText("Google Maps API Key")).toHaveValue("browser-google-key");
   });
 
   it("登入後若有未讀通知，Shell 會明確顯示未讀提示", () => {
@@ -599,7 +636,6 @@ describe("AppShell", () => {
   });
 
   it("醫師端可刪除自己的請假申請紀錄", () => {
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     const seededDb = createSeedDb();
     window.localStorage.setItem(
       MOCK_DB_STORAGE_KEY,
@@ -635,6 +671,8 @@ describe("AppShell", () => {
 
     expect(screen.getByText("上午院內會議")).toBeInTheDocument();
     fireEvent.click(screen.getAllByRole("button", { name: "刪除請假單" })[0]);
+    const deleteDialog = screen.getByRole("dialog", { name: "確定刪除這筆請假申請？" });
+    fireEvent.click(within(deleteDialog).getByRole("button", { name: "確定刪除" }));
 
     expect(screen.getByRole("status")).toHaveTextContent("請假申請已刪除");
     expect(screen.queryByText("上午院內會議")).not.toBeInTheDocument();

@@ -11,6 +11,98 @@ import type {
   VisitAutomationService
 } from "../types";
 import { geolocationScenarios } from "../geolocation/scenarios";
+import { loadAdminApiTokenSettings } from "../../shared/utils/admin-api-tokens";
+
+type ManagedFamilyLineContact = {
+  id: string;
+  displayName: string;
+  lineUserId: string;
+  linkedPatientIds: string[];
+  note: string;
+  source: "webhook" | "official_friend";
+  updatedAt: string;
+};
+
+const MANAGED_CONTACTS_STORAGE_KEY = "tcm-family-line-managed-contacts";
+const SETTINGS_STORAGE_KEY = "tcm-family-line-settings";
+
+function loadArrayStorage<T>(key: string): T[] {
+  if (typeof window === "undefined") {
+    return [];
+  }
+  try {
+    const raw = window.localStorage.getItem(key);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? (parsed as T[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function isDoctorArrivalReminderEnabled() {
+  if (typeof window === "undefined") {
+    return true;
+  }
+  try {
+    const raw = window.localStorage.getItem(SETTINGS_STORAGE_KEY);
+    if (!raw) {
+      return true;
+    }
+    const parsed = JSON.parse(raw) as { doctorArrivalReminder?: boolean };
+    return parsed.doctorArrivalReminder !== false;
+  } catch {
+    return true;
+  }
+}
+
+function loadManagedLineContacts() {
+  return loadArrayStorage<ManagedFamilyLineContact>(MANAGED_CONTACTS_STORAGE_KEY).filter(
+    (contact) =>
+      (contact.source === "webhook" || contact.source === "official_friend") &&
+      typeof contact.lineUserId === "string" &&
+      Array.isArray(contact.linkedPatientIds)
+  );
+}
+
+function normalizeManagedLineContacts(
+  contacts: Array<Partial<ManagedFamilyLineContact> & { userId?: string }>
+): ManagedFamilyLineContact[] {
+  return contacts
+    .map((contact) => {
+      const lineUserId = String(contact.lineUserId ?? contact.userId ?? "").trim();
+      const source: ManagedFamilyLineContact["source"] =
+        contact.source === "official_friend" ? "official_friend" : "webhook";
+      return {
+        id: String(contact.id ?? `line-contact-${lineUserId}`),
+        displayName: String(contact.displayName ?? lineUserId),
+        lineUserId,
+        linkedPatientIds: Array.isArray(contact.linkedPatientIds)
+          ? contact.linkedPatientIds.map((patientId) => String(patientId ?? "").trim()).filter(Boolean)
+          : [],
+        note: String(contact.note ?? ""),
+        source,
+        updatedAt: String(contact.updatedAt ?? new Date().toISOString())
+      };
+    })
+    .filter((contact) => contact.lineUserId);
+}
+
+function saveManagedLineContacts(contacts: ManagedFamilyLineContact[]) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.localStorage.setItem(MANAGED_CONTACTS_STORAGE_KEY, JSON.stringify(contacts));
+}
+
+function resolveScheduleServiceTimeSlot(schedule: VisitSchedule): "上午" | "下午" {
+  if (schedule.service_time_slot.includes("上午")) {
+    return "上午";
+  }
+  if (schedule.service_time_slot.includes("下午")) {
+    return "下午";
+  }
+  return new Date(schedule.scheduled_start_at).getHours() < 13 ? "上午" : "下午";
+}
 
 function haversineDistanceMeters(
   left: { latitude: number; longitude: number },
@@ -72,6 +164,8 @@ export class MockVisitAutomationService implements VisitAutomationService {
 
   private listeners = new Set<() => void>();
 
+  private arrivalReminderInFlight = new Set<string>();
+
   constructor(
     private readonly deps: ServicesContextDeps,
     private readonly geolocationProvider: GeolocationProviderAdapter,
@@ -118,6 +212,183 @@ export class MockVisitAutomationService implements VisitAutomationService {
         ? "通知任務功能已停用，本次不再自動建立醫師通知。"
         : "家屬通知功能已停用，略過自動追蹤訊息。"
     );
+  }
+
+  private async loadLineContactsForPatient(patientId: string) {
+    const localContacts = loadManagedLineContacts();
+    const localMatchedContacts = localContacts.filter(
+      (contact) => contact.linkedPatientIds.includes(patientId) && contact.lineUserId.trim()
+    );
+    if (localMatchedContacts.length > 0 || typeof fetch !== "function") {
+      return localMatchedContacts;
+    }
+
+    try {
+      const response = await fetch("/api/admin/family-line/contacts", { cache: "no-store" });
+      if (!response.ok) {
+        return localMatchedContacts;
+      }
+      const payload = (await response.json().catch(() => ({}))) as {
+        contacts?: Array<Partial<ManagedFamilyLineContact> & { userId?: string }>;
+        friends?: Array<Partial<ManagedFamilyLineContact> & { userId?: string }>;
+      };
+      const contacts = Array.isArray(payload.contacts)
+        ? payload.contacts
+        : Array.isArray(payload.friends)
+          ? payload.friends
+          : [];
+      const normalizedContacts = normalizeManagedLineContacts(contacts);
+      saveManagedLineContacts(normalizedContacts);
+      return normalizedContacts.filter(
+        (contact) => contact.linkedPatientIds.includes(patientId) && contact.lineUserId.trim()
+      );
+    } catch {
+      return localMatchedContacts;
+    }
+  }
+
+  private resolveNextStopDetail(currentSchedule: VisitSchedule): VisitDetail | null {
+    const currentDate = currentSchedule.scheduled_start_at.slice(0, 10);
+    const currentSlot = resolveScheduleServiceTimeSlot(currentSchedule);
+    const currentRouteOrder = currentSchedule.route_order ?? Number.MAX_SAFE_INTEGER;
+    const sameRouteSchedules = this.deps
+      .getRepositories()
+      .visitRepository.getSchedules({
+        doctorId: currentSchedule.assigned_doctor_id,
+        dateFrom: `${currentDate}T00:00:00`,
+        dateTo: `${currentDate}T23:59:59`
+      })
+      .filter((schedule) => {
+        if (schedule.id === currentSchedule.id) {
+          return false;
+        }
+        if (resolveScheduleServiceTimeSlot(schedule) !== currentSlot) {
+          return false;
+        }
+        if (currentSchedule.route_group_id && schedule.route_group_id !== currentSchedule.route_group_id) {
+          return false;
+        }
+        if (["cancelled", "paused", "completed", "followup_pending"].includes(schedule.status)) {
+          return false;
+        }
+        return (schedule.route_order ?? Number.MAX_SAFE_INTEGER) > currentRouteOrder;
+      })
+      .sort((left, right) => {
+        const orderDiff =
+          (left.route_order ?? Number.MAX_SAFE_INTEGER) -
+          (right.route_order ?? Number.MAX_SAFE_INTEGER);
+        if (orderDiff !== 0) {
+          return orderDiff;
+        }
+        return new Date(left.scheduled_start_at).getTime() - new Date(right.scheduled_start_at).getTime();
+      });
+
+    const nextSchedule = sameRouteSchedules[0];
+    return nextSchedule
+      ? this.deps.getRepositories().visitRepository.getScheduleDetail(nextSchedule.id) ?? null
+      : null;
+  }
+
+  private async sendArrivalReminderForNextStop(
+    currentDetail: VisitDetail,
+    runtime: TrackingRuntime,
+    triggeredAt: string
+  ) {
+    if (!isDoctorArrivalReminderEnabled()) {
+      appendEvent(runtime, "LINE 抵達前提醒已停用，略過下一站家屬通知。");
+      this.notify();
+      return;
+    }
+    if (typeof fetch !== "function") {
+      appendEvent(runtime, "目前環境無法呼叫 LINE 發送端點，略過下一站家屬通知。");
+      this.notify();
+      return;
+    }
+
+    const nextDetail = this.resolveNextStopDetail(currentDetail.schedule);
+    if (!nextDetail) {
+      appendEvent(runtime, "目前路線沒有下一站，未發送抵達前提醒。");
+      this.notify();
+      return;
+    }
+    if (this.arrivalReminderInFlight.has(nextDetail.schedule.id)) {
+      return;
+    }
+
+    const contacts = await this.loadLineContactsForPatient(nextDetail.patient.id);
+    if (contacts.length === 0) {
+      appendEvent(runtime, `下一站 ${nextDetail.patient.name} 尚未關聯 LINE 家屬，無法發送抵達前提醒。`);
+      this.notify();
+      return;
+    }
+
+    this.arrivalReminderInFlight.add(nextDetail.schedule.id);
+    const subject = "醫師即將抵達提醒";
+    const content = `您好，${currentDetail.doctor.name} 已完成前一站，接下來會前往 ${nextDetail.patient.name} 的住處。請協助家中環境與個案狀態準備；若臨時不便，請盡快回覆行政人員。`;
+    const recipients = contacts.map((contact) => ({
+      caregiverId: contact.id,
+      caregiverName: contact.displayName,
+      patientId: nextDetail.patient.id,
+      patientName: nextDetail.patient.name,
+      doctorId: currentDetail.doctor.id,
+      doctorName: currentDetail.doctor.name,
+      lineUserId: contact.lineUserId
+    }));
+    const apiTokens = loadAdminApiTokenSettings();
+
+    try {
+      const response = await fetch("/api/admin/family-line/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          subject,
+          content,
+          recipients,
+          lineChannelAccessToken: apiTokens.lineChannelAccessToken
+        })
+      });
+      const payload = (await response.json().catch(() => ({}))) as {
+        sentCount?: number;
+        error?: string;
+      };
+      if (!response.ok) {
+        this.arrivalReminderInFlight.delete(nextDetail.schedule.id);
+        appendEvent(
+          runtime,
+          `下一站 ${nextDetail.patient.name} 抵達前 LINE 發送失敗：${payload.error ?? "LINE 發送端點回傳錯誤"}`
+        );
+        this.notify();
+        return;
+      }
+
+      const now = new Date().toISOString();
+      contacts.forEach((contact) => {
+        this.deps.getRepositories().contactRepository.createContactLog({
+          id: `line-arrival-${nextDetail.schedule.id}-${contact.id}-${Date.now()}`,
+          patient_id: nextDetail.patient.id,
+          visit_schedule_id: nextDetail.schedule.id,
+          caregiver_id: null,
+          doctor_id: currentDetail.doctor.id,
+          admin_user_id: null,
+          channel: "line",
+          subject,
+          content,
+          outcome: "前一站離開後自動發送抵達前提醒",
+          contacted_at: triggeredAt,
+          created_at: now,
+          updated_at: now
+        });
+      });
+      appendEvent(
+        runtime,
+        `已在離開前一站後，發送下一站 ${nextDetail.patient.name} 抵達前 LINE 提醒給 ${payload.sentCount ?? contacts.length} 位家屬。`
+      );
+      this.notify();
+    } catch {
+      this.arrivalReminderInFlight.delete(nextDetail.schedule.id);
+      appendEvent(runtime, "無法連線到 LINE 發送端點，下一站抵達前提醒未送出。");
+      this.notify();
+    }
   }
 
   private handleProviderEvent(event: GeolocationProviderEvent) {
@@ -459,6 +730,7 @@ export class MockVisitAutomationService implements VisitAutomationService {
     runtime.stopReason = "manual_confirmed";
     this.geolocationProvider.stopWatch(scheduleId);
     appendEvent(runtime, `已由 ${confirmedBy} 手動確認離開：${recordedAt}`);
+    void this.sendArrivalReminderForNextStop(detail, runtime, recordedAt);
     this.notify();
   }
 

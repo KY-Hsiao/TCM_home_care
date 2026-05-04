@@ -32,6 +32,7 @@ export function RoleSelectPage() {
   const { repositories, session, login } = useAppContext();
   const doctors = repositories.patientRepository.getDoctors();
   const admins = repositories.patientRepository.getAdmins();
+  const primaryAdmin = admins[0];
   const accountOptions: AccountOption[] = [
     ...doctors.map((doctor) => ({
       key: buildAccountKey("doctor", doctor.id),
@@ -41,18 +42,22 @@ export function RoleSelectPage() {
       description: "進入醫師端導航、今日路線、定位與治療流程。",
       to: "/doctor/navigation"
     })),
-    ...admins.map((admin) => ({
-      key: buildAccountKey("admin", admin.id),
-      role: "admin" as const,
-      userId: admin.id,
-      label: "行政人員",
-      description: "進入行政端通知中心、追蹤地圖、排程管理與行政協作。",
-      to: "/admin/dashboard"
-    }))
+    ...(primaryAdmin
+      ? [
+          {
+            key: buildAccountKey("admin", primaryAdmin.id),
+            role: "admin" as const,
+            userId: primaryAdmin.id,
+            label: "行政人員",
+            description: "進入行政端通知中心、追蹤地圖、排程管理與行政協作。",
+            to: "/admin/dashboard"
+          }
+        ]
+      : [])
   ];
   const defaultAccountKey =
     session.role === "admin"
-      ? buildAccountKey("admin", session.activeAdminId || admins[0]?.id || "admin-001")
+      ? buildAccountKey("admin", primaryAdmin?.id || "admin-001")
       : buildAccountKey("doctor", session.activeDoctorId || doctors[0]?.id || "");
   const [selectedAccountKey, setSelectedAccountKey] = useState(
     accountOptions.some((account) => account.key === defaultAccountKey)

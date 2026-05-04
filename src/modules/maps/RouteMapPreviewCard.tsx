@@ -7,11 +7,15 @@ const previewCanvasHeight = 480;
 const previewMapTileSize = 256;
 const previewMapMinLatitude = -85.05112878;
 const previewMapMaxLatitude = 85.05112878;
-const defaultPreviewZoomIndex = 2;
+const previewMapMinZoom = 2;
+const previewMapMaxZoom = 18;
+const defaultPreviewZoomIndex = 4;
 
 const previewZoomPresets = [
+  { label: "全台", scale: 18, zoomOffset: -7 },
+  { label: "縣市", scale: 12, zoomOffset: -6 },
+  { label: "超全域", scale: 8, zoomOffset: -5 },
   { label: "全域", scale: 4.8, zoomOffset: -3 },
-  { label: "超廣域", scale: 2.8, zoomOffset: -2 },
   { label: "廣域", scale: 1.8, zoomOffset: -1 },
   { label: "標準", scale: 1, zoomOffset: 0 },
   { label: "近距", scale: 0.72, zoomOffset: 1 },
@@ -32,6 +36,10 @@ type PreviewDragState = {
 
 function clampPreviewLatitude(latitude: number) {
   return Math.max(previewMapMinLatitude, Math.min(previewMapMaxLatitude, latitude));
+}
+
+function clampPreviewMapZoom(zoom: number) {
+  return Math.min(previewMapMaxZoom, Math.max(previewMapMinZoom, zoom));
 }
 
 function previewLongitudeToWorld(longitude: number, zoom: number) {
@@ -120,7 +128,7 @@ function buildPreviewCanvasState(
     return null;
   }
 
-  const zoom = Math.min(18, Math.max(3, resolvePreviewMapZoom(bounds.points) + zoomOffset));
+  const zoom = clampPreviewMapZoom(resolvePreviewMapZoom(bounds.points) + zoomOffset);
   const baseCenterWorldX = previewLongitudeToWorld(bounds.longitudeCenter, zoom);
   const baseCenterWorldY = previewLatitudeToWorld(bounds.latitudeCenter, zoom);
   const centerWorldX = baseCenterWorldX - panOffset.x;
@@ -172,7 +180,7 @@ function buildCenterOffsetForPoint(
     return { x: 0, y: 0 };
   }
 
-  const zoom = Math.min(18, Math.max(3, resolvePreviewMapZoom(bounds.points) + zoomOffset));
+  const zoom = clampPreviewMapZoom(resolvePreviewMapZoom(bounds.points) + zoomOffset);
   const baseCenterWorldX = previewLongitudeToWorld(bounds.longitudeCenter, zoom);
   const baseCenterWorldY = previewLatitudeToWorld(bounds.latitudeCenter, zoom);
   const targetWorldX = previewLongitudeToWorld(target.longitude, zoom);

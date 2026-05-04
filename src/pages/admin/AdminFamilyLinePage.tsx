@@ -172,12 +172,17 @@ export function AdminFamilyLinePage() {
   const [selectedSendTypes, setSelectedSendTypes] = useState<FamilyLineTemplateKey[]>(["custom_notice"]);
   const [selectedDoctorId, setSelectedDoctorId] = useState("all");
   const [selectedRecipientIds, setSelectedRecipientIds] = useState<string[]>([]);
+  const [instantMessageDraft, setInstantMessageDraft] = useState<FamilyLineTemplateDraft>({
+    subject: "即時 LINE 群發",
+    content: ""
+  });
   const [isSendConfirmed, setIsSendConfirmed] = useState(false);
   const [sendFeedback, setSendFeedback] = useState<{
     tone: "success" | "error";
     message: string;
   } | null>(null);
   const [isSending, setIsSending] = useState(false);
+  const [isInstantSending, setIsInstantSending] = useState(false);
   const [isSyncingLineFriends, setIsSyncingLineFriends] = useState(false);
   const [apiTokens] = useState(() => loadAdminApiTokenSettings());
 
@@ -276,6 +281,54 @@ export function AdminFamilyLinePage() {
   const sendableRecipients = selectedRecipients.filter((recipient) => recipient.lineUserId.trim());
   const missingLineIdCount = selectedRecipients.length - sendableRecipients.length;
 
+  const buildLineSendRecipients = (targetRecipients: FamilyLineRecipient[]) =>
+    targetRecipients.map((recipient) => ({
+      caregiverId: recipient.id,
+      caregiverName: recipient.displayName,
+      patientId: recipient.patient?.id ?? "",
+      patientName: recipient.patient?.name ?? "",
+      doctorId: resolveRecipientDoctor(recipient)?.id ?? "",
+      doctorName: resolveRecipientDoctor(recipient)?.name ?? "",
+      lineUserId: recipient.lineUserId
+    }));
+
+  const createLineContactLogs = (
+    targetRecipients: FamilyLineRecipient[],
+    subject: string,
+    content: string,
+    outcome: string
+  ) => {
+    const now = new Date().toISOString();
+    targetRecipients.forEach((recipient) => {
+      repositories.contactRepository.createContactLog({
+        id: `line-${Date.now()}-${recipient.id}`,
+        patient_id: recipient.patient?.id ?? null,
+        visit_schedule_id: recipient.schedule?.id ?? null,
+        caregiver_id: null,
+        doctor_id: resolveRecipientDoctor(recipient)?.id ?? null,
+        admin_user_id: null,
+        channel: "line",
+        subject,
+        content,
+        outcome,
+        contacted_at: now,
+        created_at: now,
+        updated_at: now
+      });
+    });
+  };
+
+  const buildLineSendFailureMessage = (payload: {
+    error?: string;
+    results?: Array<{ ok: boolean; status: number; error: string | null }>;
+  }) => {
+    const firstFailure = payload.results?.find((result) => !result.ok);
+    const detail = firstFailure
+      ? `（LINE 狀態 ${firstFailure.status}${firstFailure.error ? `：${firstFailure.error}` : ""}）`
+      : "";
+    return `${payload.error ?? "LINE 發送失敗，請稍後再試。"}${detail}`;
+  };
+
   useEffect(() => {
     setSelectedRecipientIds((current) =>
       current.filter((recipientId) =>
@@ -350,7 +403,7 @@ export function AdminFamilyLinePage() {
 
   const persistManagedLineContact = async (contact: ManagedFamilyLineContact) => {
     try {
-      await fetch("/api/admin/family-line/contacts", {
+      const response = await fetch("/api/admin/family-line/contacts", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -359,8 +412,10 @@ export function AdminFamilyLinePage() {
           note: contact.note
         })
       });
+      return response.ok;
     } catch {
       // 線上 API 失敗時仍保留本機畫面狀態，避免管理操作被中斷。
+      return false;
     }
   };
 
@@ -402,7 +457,7 @@ export function AdminFamilyLinePage() {
     );
   };
 
-  const linkSelectedContactsToPatient = () => {
+  const linkSelectedContactsToPatient = async () => {
     if (!selectedManagedContactIds.length || !bulkLinkPatientId) {
       setSendFeedback({ tone: "error", message: "請先選擇 LINE 好友名單與要關聯的居家個案。" });
       return;
@@ -410,29 +465,83 @@ export function AdminFamilyLinePage() {
 
     const targetPatient = db.patients.find((patient) => patient.id === bulkLinkPatientId);
     const now = new Date().toISOString();
-    const contactsToPersist: ManagedFamilyLineContact[] = [];
+    const contactsToPersist = managedLineContacts
+      .filter((contact) => selectedManagedContactIds.includes(contact.id))
+      .map((contact) => ({
+        ...contact,
+        linkedPatientIds: contact.linkedPatientIds.includes(bulkLinkPatientId)
+          ? contact.linkedPatientIds
+          : [...contact.linkedPatientIds, bulkLinkPatientId],
+        updatedAt: now
+      }));
+    const contactToPersistById = new Map(contactsToPersist.map((contact) => [contact.id, contact]));
     setManagedLineContacts((current) =>
       current.map((contact) => {
-        if (!selectedManagedContactIds.includes(contact.id)) {
-          return contact;
-        }
-        const nextContact = {
-              ...contact,
-              linkedPatientIds: contact.linkedPatientIds.includes(bulkLinkPatientId)
-                ? contact.linkedPatientIds
-                : [...contact.linkedPatientIds, bulkLinkPatientId],
-              updatedAt: now
-        };
-        contactsToPersist.push(nextContact);
-        return nextContact;
+        return contactToPersistById.get(contact.id) ?? contact;
       })
     );
-    contactsToPersist.forEach((contact) => void persistManagedLineContact(contact));
+    const persistedResults = await Promise.all(
+      contactsToPersist.map((contact) => persistManagedLineContact(contact))
+    );
+    const failedPersistCount = persistedResults.filter((isPersisted) => !isPersisted).length;
     setSendFeedback({
-      tone: "success",
+      tone: failedPersistCount > 0 ? "error" : "success",
       message: `已將 ${selectedManagedContactIds.length} 位 LINE 好友關聯到 ${
         targetPatient ? maskPatientName(targetPatient.name) : "指定個案"
-      }。`
+      }，下次開啟會自動帶入。${
+        failedPersistCount > 0
+          ? ` 其中 ${failedPersistCount} 位暫時只保存在本機，後端名單同步失敗時請稍後再按一次關聯。`
+          : " 已同步保存到 LINE 名單資料庫。"
+      }`
+    });
+  };
+
+  const unlinkSelectedContactsFromPatient = async () => {
+    if (!selectedManagedContactIds.length || !bulkLinkPatientId) {
+      setSendFeedback({ tone: "error", message: "請先選擇 LINE 好友名單與要取消關聯的居家個案。" });
+      return;
+    }
+
+    const targetPatient = db.patients.find((patient) => patient.id === bulkLinkPatientId);
+    const now = new Date().toISOString();
+    const contactsToPersist = managedLineContacts
+      .filter(
+        (contact) =>
+          selectedManagedContactIds.includes(contact.id) &&
+          contact.linkedPatientIds.includes(bulkLinkPatientId)
+      )
+      .map((contact) => ({
+        ...contact,
+        linkedPatientIds: contact.linkedPatientIds.filter((patientId) => patientId !== bulkLinkPatientId),
+        updatedAt: now
+      }));
+    if (contactsToPersist.length === 0) {
+      setSendFeedback({
+        tone: "error",
+        message: `所選 LINE 好友目前沒有關聯到 ${targetPatient ? maskPatientName(targetPatient.name) : "指定個案"}。`
+      });
+      return;
+    }
+
+    const contactToPersistById = new Map(contactsToPersist.map((contact) => [contact.id, contact]));
+    setManagedLineContacts((current) =>
+      current.map((contact) => {
+        return contactToPersistById.get(contact.id) ?? contact;
+      })
+    );
+    const persistedResults = await Promise.all(
+      contactsToPersist.map((contact) => persistManagedLineContact(contact))
+    );
+    const failedPersistCount = persistedResults.filter((isPersisted) => !isPersisted).length;
+    setSendFeedback({
+      tone: failedPersistCount > 0 ? "error" : "success",
+      message: `已將 ${contactsToPersist.length} 位 LINE 好友取消與 ${
+        targetPatient ? maskPatientName(targetPatient.name) : "指定個案"
+      } 的關聯，下次開啟會自動帶入。${
+        failedPersistCount > 0
+          ? ` 其中 ${failedPersistCount} 位暫時只保存在本機，後端名單同步失敗時請稍後再按一次取消關聯。`
+          : " 已同步保存到 LINE 名單資料庫。"
+      }`
     });
   };
 
@@ -566,15 +675,7 @@ export function AdminFamilyLinePage() {
           lineChannelAccessToken: apiTokens.lineChannelAccessToken.trim(),
           subject: outboundSubject,
           content: outboundContent,
-          recipients: sendableRecipients.map((recipient) => ({
-            caregiverId: recipient.id,
-            caregiverName: recipient.displayName,
-            patientId: recipient.patient?.id ?? "",
-            patientName: recipient.patient?.name ?? "",
-            doctorId: resolveRecipientDoctor(recipient)?.id ?? "",
-            doctorName: resolveRecipientDoctor(recipient)?.name ?? "",
-            lineUserId: recipient.lineUserId
-          }))
+          recipients: buildLineSendRecipients(sendableRecipients)
         })
       });
       const payload = (await response.json().catch(() => ({}))) as {
@@ -585,35 +686,14 @@ export function AdminFamilyLinePage() {
         results?: Array<{ ok: boolean; status: number; error: string | null }>;
       };
       if (!response.ok) {
-        const firstFailure = payload.results?.find((result) => !result.ok);
-        const detail = firstFailure
-          ? `（LINE 狀態 ${firstFailure.status}${firstFailure.error ? `：${firstFailure.error}` : ""}）`
-          : "";
         setSendFeedback({
           tone: "error",
-          message: `${payload.error ?? "LINE 發送失敗，請稍後再試。"}${detail}`
+          message: buildLineSendFailureMessage(payload)
         });
         return;
       }
 
-      const now = new Date().toISOString();
-      sendableRecipients.forEach((recipient) => {
-        repositories.contactRepository.createContactLog({
-          id: `line-${Date.now()}-${recipient.id}`,
-          patient_id: recipient.patient?.id ?? null,
-          visit_schedule_id: recipient.schedule?.id ?? null,
-          caregiver_id: null,
-          doctor_id: resolveRecipientDoctor(recipient)?.id ?? null,
-          admin_user_id: null,
-          channel: "line",
-          subject: outboundSubject,
-          content: outboundContent,
-          outcome: "LINE 訊息已送出",
-          contacted_at: now,
-          created_at: now,
-          updated_at: now
-        });
-      });
+      createLineContactLogs(sendableRecipients, outboundSubject, outboundContent, "LINE 訊息已送出");
       setSendFeedback({
         tone: "success",
         message: `LINE 群發已送出 ${payload.sentCount ?? sendableRecipients.length} 位家屬${
@@ -630,6 +710,69 @@ export function AdminFamilyLinePage() {
       });
     } finally {
       setIsSending(false);
+    }
+  };
+
+  const sendInstantLineMessage = async () => {
+    setSendFeedback(null);
+    const subject = instantMessageDraft.subject.trim() || "即時 LINE 群發";
+    const content = instantMessageDraft.content.trim();
+    if (!content) {
+      setSendFeedback({ tone: "error", message: "請先填寫即時群發訊息內容。" });
+      return;
+    }
+    if (!selectedRecipients.length) {
+      setSendFeedback({ tone: "error", message: "請先勾選要即時群發的收件人。" });
+      return;
+    }
+    if (!sendableRecipients.length) {
+      setSendFeedback({ tone: "error", message: "已選收件人尚未有 LINE userId，無法即時群發。" });
+      return;
+    }
+
+    setIsInstantSending(true);
+    try {
+      const response = await fetch("/api/admin/family-line/send", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          lineChannelAccessToken: apiTokens.lineChannelAccessToken.trim(),
+          subject,
+          content,
+          recipients: buildLineSendRecipients(sendableRecipients)
+        })
+      });
+      const payload = (await response.json().catch(() => ({}))) as {
+        error?: string;
+        sentCount?: number;
+        failedCount?: number;
+        attemptedCount?: number;
+        results?: Array<{ ok: boolean; status: number; error: string | null }>;
+      };
+      if (!response.ok) {
+        setSendFeedback({
+          tone: "error",
+          message: buildLineSendFailureMessage(payload)
+        });
+        return;
+      }
+
+      createLineContactLogs(sendableRecipients, subject, content, "LINE 即時群發已送出");
+      setSendFeedback({
+        tone: "success",
+        message: `LINE 即時群發已送出 ${payload.sentCount ?? sendableRecipients.length} 位家屬${
+          typeof payload.attemptedCount === "number" ? `（本次送出 ${payload.attemptedCount} 位）` : ""
+        }。${missingLineIdCount > 0 ? `另有 ${missingLineIdCount} 位缺 LINE userId 已略過。` : ""}`
+      });
+    } catch {
+      setSendFeedback({
+        tone: "error",
+        message: "無法連線到 LINE 發送端點，請確認部署與網路狀態。"
+      });
+    } finally {
+      setIsInstantSending(false);
     }
   };
 
@@ -669,6 +812,160 @@ export function AdminFamilyLinePage() {
         </div>
       ) : null}
 
+      <Panel title="發送對象">
+        <div className="space-y-3">
+          <div className="grid gap-3 md:grid-cols-[1fr_auto_auto] md:items-end">
+            <label className="block text-sm">
+              <span className="mb-1 block font-medium text-brand-ink">篩選醫師</span>
+              <select
+                aria-label="篩選醫師"
+                value={selectedDoctorId}
+                onChange={(event) => setSelectedDoctorId(event.target.value)}
+                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
+              >
+                <option value="all">全部醫師</option>
+                {db.doctors.map((doctor) => (
+                  <option key={doctor.id} value={doctor.id}>
+                    {doctor.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              type="button"
+              onClick={selectAllFilteredRecipients}
+              className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-brand-ink"
+            >
+              全選目前名單
+            </button>
+            <button
+              type="button"
+              onClick={clearSelectedRecipients}
+              className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-brand-ink"
+            >
+              清除選擇
+            </button>
+          </div>
+          {filteredRecipients.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-8 text-center text-sm text-slate-500">
+              目前沒有可發送的 LINE 好友。請先在 LINE 名單管理中重新整理 webhook 好友，並關聯到居家個案。
+            </div>
+          ) : (
+            <div className="grid gap-3 lg:grid-cols-2">
+              {filteredRecipients.map((recipient) => {
+                const isSelected = selectedRecipientIds.includes(recipient.id);
+                return (
+                  <div
+                    key={recipient.id}
+                    className={`rounded-2xl border p-4 ${
+                      isSelected ? "border-brand-forest bg-emerald-50/70" : "border-slate-200 bg-white"
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <label className="flex min-w-0 items-start gap-3">
+                        <input
+                          type="checkbox"
+                          aria-label={`${recipient.displayName} 發送勾選`}
+                          checked={isSelected}
+                          onChange={() => toggleRecipient(recipient.id)}
+                          className="mt-1 h-4 w-4"
+                        />
+                        <span className="min-w-0">
+                          <span className="block font-semibold text-brand-ink">
+                            {recipient.displayName} / {recipient.relationshipLabel}
+                          </span>
+                          <span className="mt-1 block text-sm text-slate-600">
+                            {recipient.linkedPatients.length
+                              ? recipient.linkedPatients.map((patient) => maskPatientName(patient.name)).join("、")
+                              : "未關聯個案"}
+                            ｜{recipient.linkedDoctors.length
+                              ? recipient.linkedDoctors.map((doctor) => doctor.name).join("、")
+                              : "未指定醫師"}
+                          </span>
+                          <span className="mt-1 block text-xs text-slate-500">
+                            最近排程：{recipient.schedule ? formatDateTimeFull(recipient.schedule.scheduled_start_at) : "尚無排程"}
+                          </span>
+                        </span>
+                      </label>
+                      <Badge value={resolveRecipientLineStatus(recipient.lineUserId)} compact />
+                    </div>
+                    <label className="mt-3 block text-sm">
+                      <span className="mb-1 block font-medium text-brand-ink">LINE userId</span>
+                      <div className="break-all rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-slate-700">
+                        {recipient.lineUserId}
+                      </div>
+                    </label>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </Panel>
+
+      <Panel title="即時群發訊息">
+        <div className="space-y-3 text-sm">
+          <label className="block">
+              <span className="mb-1 block font-medium text-brand-ink">即時群發標題</span>
+              <input
+                aria-label="即時群發標題"
+                value={instantMessageDraft.subject}
+                onChange={(event) =>
+                  setInstantMessageDraft((current) => ({
+                    ...current,
+                    subject: event.target.value
+                  }))
+                }
+                className="w-full rounded-2xl border border-slate-200 px-4 py-3"
+              />
+          </label>
+          <label className="block">
+              <span className="mb-1 block font-medium text-brand-ink">即時群發內容</span>
+              <textarea
+                aria-label="即時群發內容"
+                value={instantMessageDraft.content}
+                onChange={(event) =>
+                  setInstantMessageDraft((current) => ({
+                    ...current,
+                    content: event.target.value
+                  }))
+                }
+                rows={6}
+                placeholder="輸入要立刻推播給所選 LINE 家屬的訊息"
+                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
+              />
+          </label>
+          <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={selectAllFilteredRecipients}
+                className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-brand-ink"
+              >
+                全選目前名單
+              </button>
+              <button
+                type="button"
+                onClick={clearSelectedRecipients}
+                className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-brand-ink"
+              >
+                清除選擇
+              </button>
+              <button
+                type="button"
+                onClick={sendInstantLineMessage}
+                disabled={isInstantSending}
+                className="rounded-full bg-brand-forest px-5 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-400"
+              >
+                {isInstantSending ? "即時發送中" : "即時發送 LINE 群發"}
+              </button>
+          </div>
+          <p className="text-xs text-slate-500">
+            已選 {selectedRecipients.length} 位；可即時發送 {sendableRecipients.length} 位。
+            {missingLineIdCount > 0 ? ` ${missingLineIdCount} 位缺 LINE userId 會略過。` : ""}
+          </p>
+        </div>
+      </Panel>
+
       <div className="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
         <Panel title="LINE 自動發送設定">
           <div className="space-y-3 text-sm">
@@ -681,7 +978,7 @@ export function AdminFamilyLinePage() {
               {
                 key: "doctorArrivalReminder" as const,
                 title: "醫師抵達前提醒",
-                detail: "醫師接近個案地址或即將出發時，提醒家屬準備。"
+                detail: "醫師離開前一站後，自動提醒下一站家屬準備。"
               },
               {
                 key: "afterReturnCare" as const,
@@ -713,7 +1010,7 @@ export function AdminFamilyLinePage() {
           </div>
         </Panel>
 
-        <Panel title="公告內容">
+        <Panel title="範本群發">
           <div className="space-y-3 text-sm">
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
               <p className="font-semibold text-brand-ink">本次發送項目</p>
@@ -762,9 +1059,9 @@ export function AdminFamilyLinePage() {
                 </select>
               </label>
               <label className="block">
-                <span className="mb-1 block font-medium text-brand-ink">篩選醫師</span>
+                <span className="mb-1 block font-medium text-brand-ink">範本套用醫師</span>
                 <select
-                  aria-label="篩選醫師"
+                  aria-label="範本套用醫師"
                   value={selectedDoctorId}
                   onChange={(event) => setSelectedDoctorId(event.target.value)}
                   className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
@@ -845,7 +1142,7 @@ export function AdminFamilyLinePage() {
         </Panel>
       </div>
 
-      <Panel title="LINE 名單管理">
+      <Panel title="LINE 名單與個案關聯">
         <div className="grid gap-4 xl:grid-cols-[0.8fr_1.2fr]">
           <div className="space-y-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm">
             <p className="text-sm text-slate-600">
@@ -869,7 +1166,7 @@ export function AdminFamilyLinePage() {
 
           <div className="space-y-3">
             <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm">
-              <div className="grid gap-3 md:grid-cols-[1fr_auto_auto_auto] md:items-end">
+              <div className="grid gap-3 md:grid-cols-[1fr_auto_auto_auto_auto] md:items-end">
                 <label className="block">
                   <span className="mb-1 block font-medium text-brand-ink">批次關聯到個案</span>
                   <select
@@ -902,14 +1199,21 @@ export function AdminFamilyLinePage() {
                 </button>
                 <button
                   type="button"
-                  onClick={linkSelectedContactsToPatient}
+                  onClick={() => void linkSelectedContactsToPatient()}
                   className="rounded-full bg-brand-forest px-4 py-2 text-xs font-semibold text-white"
                 >
                   關聯所選好友
                 </button>
+                <button
+                  type="button"
+                  onClick={() => void unlinkSelectedContactsFromPatient()}
+                  className="rounded-full border border-rose-200 bg-white px-4 py-2 text-xs font-semibold text-rose-700"
+                >
+                  取消所選關聯
+                </button>
               </div>
               <p className="mt-2 text-xs text-slate-500">
-                已選 {selectedManagedContactIds.length} 位 LINE 好友；可把多位好友一次註記到同一個居家個案。
+                已選 {selectedManagedContactIds.length} 位 LINE 好友；可把多位好友一次註記到同一個居家個案，也可批次取消既有關聯。
               </p>
             </div>
 
@@ -965,62 +1269,6 @@ export function AdminFamilyLinePage() {
         </div>
       </Panel>
 
-      <Panel title="發送人員">
-        {filteredRecipients.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-8 text-center text-sm text-slate-500">
-            目前沒有可發送的 LINE 好友。請先在 LINE 名單管理中重新整理 webhook 好友，並關聯到居家個案。
-          </div>
-        ) : (
-          <div className="grid gap-3 lg:grid-cols-2">
-            {filteredRecipients.map((recipient) => {
-            const isSelected = selectedRecipientIds.includes(recipient.id);
-            return (
-              <div
-                key={recipient.id}
-                className={`rounded-2xl border p-4 ${
-                  isSelected ? "border-brand-forest bg-emerald-50/70" : "border-slate-200 bg-white"
-                }`}
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <label className="flex min-w-0 items-start gap-3">
-                    <input
-                      type="checkbox"
-                      aria-label={`${recipient.displayName} 發送勾選`}
-                      checked={isSelected}
-                      onChange={() => toggleRecipient(recipient.id)}
-                      className="mt-1 h-4 w-4"
-                    />
-                    <span className="min-w-0">
-                      <span className="block font-semibold text-brand-ink">
-                        {recipient.displayName} / {recipient.relationshipLabel}
-                      </span>
-                      <span className="mt-1 block text-sm text-slate-600">
-                        {recipient.linkedPatients.length
-                          ? recipient.linkedPatients.map((patient) => maskPatientName(patient.name)).join("、")
-                          : "未關聯個案"}
-                        ｜{recipient.linkedDoctors.length
-                          ? recipient.linkedDoctors.map((doctor) => doctor.name).join("、")
-                          : "未指定醫師"}
-                      </span>
-                      <span className="mt-1 block text-xs text-slate-500">
-                        最近排程：{recipient.schedule ? formatDateTimeFull(recipient.schedule.scheduled_start_at) : "尚無排程"}
-                      </span>
-                    </span>
-                  </label>
-                  <Badge value={resolveRecipientLineStatus(recipient.lineUserId)} compact />
-                </div>
-                <label className="mt-3 block text-sm">
-                  <span className="mb-1 block font-medium text-brand-ink">LINE userId</span>
-                  <div className="break-all rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-slate-700">
-                    {recipient.lineUserId}
-                  </div>
-                </label>
-              </div>
-            );
-            })}
-          </div>
-        )}
-      </Panel>
     </div>
   );
 }

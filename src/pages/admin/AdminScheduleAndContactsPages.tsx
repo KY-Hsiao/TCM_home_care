@@ -377,6 +377,29 @@ function sortPlannerRows(rows: PlannerRow[]) {
   });
 }
 
+function arePlannerRowsEqual(leftRows: PlannerRow[], rightRows: PlannerRow[]) {
+  if (leftRows.length !== rightRows.length) {
+    return false;
+  }
+  return leftRows.every((leftRow, index) => {
+    const rightRow = rightRows[index];
+    return (
+      rightRow &&
+      leftRow.patientId === rightRow.patientId &&
+      leftRow.name === rightRow.name &&
+      leftRow.address === rightRow.address &&
+      leftRow.latitude === rightRow.latitude &&
+      leftRow.longitude === rightRow.longitude &&
+      leftRow.geocodingStatus === rightRow.geocodingStatus &&
+      leftRow.geocodedAddress === rightRow.geocodedAddress &&
+      leftRow.checked === rightRow.checked &&
+      leftRow.routeOrder === rightRow.routeOrder &&
+      leftRow.status === rightRow.status &&
+      leftRow.scheduleId === rightRow.scheduleId
+    );
+  });
+}
+
 function reorderCheckedPlannerRows(rows: PlannerRow[], activePatientId: string, targetPatientId: string) {
   if (activePatientId === targetPatientId) {
     return rows;
@@ -1025,7 +1048,10 @@ export function AdminSchedulesPage() {
   const [recentAction, setRecentAction] = useState<string | null>(null);
   const autoGeocodingRequestKeyRef = useRef<string | null>(null);
 
-  const doctors = repositories.patientRepository.getDoctors();
+  const doctors = useMemo(
+    () => [...db.doctors],
+    [db.doctors]
+  );
   const selectedDoctor = doctors.find((doctor) => doctor.id === selectedDoctorId);
   const patientsById = useMemo(
     () => new Map(db.patients.map((patient) => [patient.id, patient])),
@@ -1036,12 +1062,12 @@ export function AdminSchedulesPage() {
     [doctors]
   );
   const savedRoutePlans = useMemo(
-    () => repositories.visitRepository.getSavedRoutePlans(),
-    [repositories]
+    () => [...db.saved_route_plans],
+    [db.saved_route_plans]
   );
   const allSchedules = useMemo(
-    () => repositories.visitRepository.getSchedules(),
-    [repositories]
+    () => [...db.visit_schedules],
+    [db.visit_schedules]
   );
   const allScheduleRows = useMemo(
     () =>
@@ -1106,13 +1132,17 @@ export function AdminSchedulesPage() {
   const slotPatients = useMemo(
     () =>
       selectedDoctorId && effectiveSelectedWeekday && selectedTimeSlot
-        ? repositories.patientRepository.getPatientsByDoctorSlot({
-            doctorId: selectedDoctorId,
-            weekday: effectiveSelectedWeekday,
-            serviceTimeSlot: selectedTimeSlot
-          })
+        ? [...db.patients]
+            .filter(
+              (patient) =>
+                patient.status === "active" &&
+                patient.preferred_doctor_id === selectedDoctorId &&
+                patient.preferred_service_slot ===
+                  `${effectiveSelectedWeekday}${selectedTimeSlot}`
+            )
+            .sort((left, right) => left.chart_number.localeCompare(right.chart_number, "zh-Hant"))
         : [],
-    [repositories, effectiveSelectedWeekday, selectedDoctorId, selectedTimeSlot]
+    [db.patients, effectiveSelectedWeekday, selectedDoctorId, selectedTimeSlot]
   );
   const sortedPlannerRows = useMemo(() => sortPlannerRows(plannerRows), [plannerRows]);
   const checkedRows = useMemo(
@@ -1229,11 +1259,15 @@ export function AdminSchedulesPage() {
     if (routeDateMode === "ad_hoc") {
       return;
     }
-    if (selectedWeekday && !availableWeekdays.includes(selectedWeekday as (typeof weekdayOptions)[number])) {
+    const validWeekdays =
+      selectedRouteDateOption?.weekdayOptions.length
+        ? selectedRouteDateOption.weekdayOptions
+        : availableWeekdays;
+    if (selectedWeekday && !validWeekdays.includes(selectedWeekday as (typeof weekdayOptions)[number])) {
       setSelectedWeekday("");
       setSelectedTimeSlot("");
     }
-  }, [availableWeekdays, routeDateMode, selectedWeekday]);
+  }, [availableWeekdays, routeDateMode, selectedRouteDateOption, selectedWeekday]);
 
   useEffect(() => {
     if (selectedSavedRoutePlanId) {
@@ -1295,15 +1329,21 @@ export function AdminSchedulesPage() {
 
   useEffect(() => {
     if (!selectedDoctorId || !effectiveSelectedWeekday || !selectedTimeSlot) {
-      setPlannerRows([]);
+      if (plannerRows.length > 0) {
+        setPlannerRows([]);
+      }
       return;
     }
     if (selectedSavedRoutePlanId) {
       return;
     }
-    setPlannerRows(buildPlannerRowsFromSlotPatients(slotPatients));
+    setPlannerRows((current) => {
+      const nextRows = buildPlannerRowsFromSlotPatients(slotPatients);
+      return arePlannerRowsEqual(current, nextRows) ? current : nextRows;
+    });
   }, [
     effectiveSelectedWeekday,
+    plannerRows.length,
     selectedDoctorId,
     selectedSavedRoutePlanId,
     selectedTimeSlot,
@@ -1318,18 +1358,29 @@ export function AdminSchedulesPage() {
       setSelectedSavedRoutePlanId("");
       return;
     }
-    setPlannerRows(buildPlannerRowsFromRoutePlan(selectedSavedRoutePlan, patientsById));
+    setPlannerRows((current) => {
+      const nextRows = buildPlannerRowsFromRoutePlan(selectedSavedRoutePlan, patientsById);
+      return arePlannerRowsEqual(current, nextRows) ? current : nextRows;
+    });
   }, [patientsById, selectedSavedRoutePlan, selectedSavedRoutePlanId]);
 
   useEffect(() => {
     const savedRoutePlanIdSet = new Set(savedRoutePlans.map((routePlan) => routePlan.id));
-    setSelectedSavedRoutePlanIds((current) =>
-      current.filter((routePlanId) => savedRoutePlanIdSet.has(routePlanId))
+    const nextSelectedRoutePlanIds = selectedSavedRoutePlanIds.filter((routePlanId) =>
+      savedRoutePlanIdSet.has(routePlanId)
     );
+    if (
+      nextSelectedRoutePlanIds.length !== selectedSavedRoutePlanIds.length ||
+      nextSelectedRoutePlanIds.some(
+        (routePlanId, index) => routePlanId !== selectedSavedRoutePlanIds[index]
+      )
+    ) {
+      setSelectedSavedRoutePlanIds(nextSelectedRoutePlanIds);
+    }
     if (selectedSavedRoutePlanId && !savedRoutePlanIdSet.has(selectedSavedRoutePlanId)) {
       setSelectedSavedRoutePlanId("");
     }
-  }, [savedRoutePlans, selectedSavedRoutePlanId]);
+  }, [savedRoutePlans, selectedSavedRoutePlanId, selectedSavedRoutePlanIds]);
 
   const resetPlanner = () => {
     setSelectedDoctorId("");
@@ -2981,6 +3032,7 @@ export function AdminLeaveRequestsPage() {
   const [createEndDate, setCreateEndDate] = useState(new Date().toISOString().slice(0, 10));
   const [createReason, setCreateReason] = useState("行政代填請假");
   const [createHandoffNote, setCreateHandoffNote] = useState("請協助檢查受影響個案");
+  const [deleteConfirmLeaveRequestId, setDeleteConfirmLeaveRequestId] = useState<string | null>(null);
 
   const leaveRequests = useMemo(
     () =>
@@ -3019,6 +3071,8 @@ export function AdminLeaveRequestsPage() {
     leaveRequests.find((leaveRequest) => leaveRequest.id === selectedLeaveRequestId) ??
     pendingLeaveRequests[0] ??
     leaveRequests[0];
+  const deleteConfirmLeaveRequest =
+    leaveRequests.find((leaveRequest) => leaveRequest.id === deleteConfirmLeaveRequestId) ?? null;
   const impactedSchedules = selectedLeaveRequest
     ? repositories.staffingRepository.getImpactedSchedules(
         selectedLeaveRequest.doctor_id,
@@ -3051,6 +3105,7 @@ export function AdminLeaveRequestsPage() {
   useEffect(() => {
     setRejectionReasonDraft(selectedLeaveRequest?.rejection_reason ?? "");
     setIsRejecting(false);
+    setDeleteConfirmLeaveRequestId(null);
   }, [selectedLeaveRequest?.id, selectedLeaveRequest?.rejection_reason]);
 
   useEffect(() => {
@@ -3209,13 +3264,15 @@ export function AdminLeaveRequestsPage() {
     if (!selectedLeaveRequest) {
       return;
     }
-    if (typeof window !== "undefined" && typeof window.confirm === "function") {
-      const confirmed = window.confirm("確定要刪除這筆請假案件嗎？");
-      if (!confirmed) {
-        return;
-      }
+    setDeleteConfirmLeaveRequestId(selectedLeaveRequest.id);
+  };
+
+  const confirmDeleteLeaveRequest = () => {
+    if (!deleteConfirmLeaveRequestId) {
+      return;
     }
-    repositories.staffingRepository.deleteLeaveRequest(selectedLeaveRequest.id);
+    repositories.staffingRepository.deleteLeaveRequest(deleteConfirmLeaveRequestId);
+    setDeleteConfirmLeaveRequestId(null);
     setStatusFeedback({
       tone: "success",
       message: "請假案件已刪除。"
@@ -3571,6 +3628,42 @@ export function AdminLeaveRequestsPage() {
           )}
         </Panel>
       </div>
+
+      {deleteConfirmLeaveRequest ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-leave-request-title"
+            className="w-full max-w-md rounded-[28px] bg-white p-6 shadow-2xl"
+          >
+            <p className="text-sm font-medium text-rose-600">刪除請假案件</p>
+            <h2 id="delete-leave-request-title" className="mt-2 text-xl font-semibold text-brand-ink">
+              確定刪除這筆請假案件？
+            </h2>
+            <p className="mt-3 text-sm text-slate-600">
+              {deleteConfirmLeaveRequest.start_date} 至 {deleteConfirmLeaveRequest.end_date}
+              ，原因：{deleteConfirmLeaveRequest.reason}。刪除後會同步移除對應通知中心項目。
+            </p>
+            <div className="mt-6 flex flex-wrap justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setDeleteConfirmLeaveRequestId(null)}
+                className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-brand-ink"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={confirmDeleteLeaveRequest}
+                className="rounded-full border border-rose-200 bg-white px-4 py-2 text-sm font-semibold text-rose-600"
+              >
+                確定刪除
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
