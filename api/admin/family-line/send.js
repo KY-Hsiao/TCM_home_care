@@ -11,7 +11,8 @@ function normalizeRecipients(recipients) {
   if (!Array.isArray(recipients)) {
     return [];
   }
-  return recipients
+  const seenLineUserIds = new Set();
+  const normalizedRecipients = recipients
     .map((recipient) => ({
       caregiverId: String(recipient?.caregiverId ?? ""),
       caregiverName: String(recipient?.caregiverName ?? ""),
@@ -20,6 +21,21 @@ function normalizeRecipients(recipients) {
       lineUserId: String(recipient?.lineUserId ?? "").trim()
     }))
     .filter((recipient) => isRequiredString(recipient.lineUserId));
+  return normalizedRecipients.filter((recipient) => {
+    if (seenLineUserIds.has(recipient.lineUserId)) {
+      return false;
+    }
+    seenLineUserIds.add(recipient.lineUserId);
+    return true;
+  });
+}
+
+function chunkRecipients(recipients, size) {
+  const chunks = [];
+  for (let index = 0; index < recipients.length; index += size) {
+    chunks.push(recipients.slice(index, index + size));
+  }
+  return chunks;
 }
 
 export default async function handler(request, response) {
@@ -49,15 +65,15 @@ export default async function handler(request, response) {
 
   const text = `${subject}\n\n${content}`;
   const results = [];
-  for (const recipient of recipients) {
-    const lineResponse = await fetch("https://api.line.me/v2/bot/message/push", {
+  for (const recipientBatch of chunkRecipients(recipients, 500)) {
+    const lineResponse = await fetch("https://api.line.me/v2/bot/message/multicast", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${channelAccessToken}`,
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        to: recipient.lineUserId,
+        to: recipientBatch.map((recipient) => recipient.lineUserId),
         messages: [
           {
             type: "text",
@@ -68,12 +84,15 @@ export default async function handler(request, response) {
     });
 
     const responseText = await lineResponse.text();
-    results.push({
-      caregiverId: recipient.caregiverId,
-      patientId: recipient.patientId,
-      ok: lineResponse.ok,
-      status: lineResponse.status,
-      error: lineResponse.ok ? null : responseText
+    recipientBatch.forEach((recipient) => {
+      results.push({
+        caregiverId: recipient.caregiverId,
+        patientId: recipient.patientId,
+        lineUserId: recipient.lineUserId,
+        ok: lineResponse.ok,
+        status: lineResponse.status,
+        error: lineResponse.ok ? null : responseText
+      });
     });
   }
 
@@ -81,6 +100,9 @@ export default async function handler(request, response) {
   if (failed.length > 0) {
     setJson(response, 502, {
       error: `LINE 部分或全部發送失敗：成功 ${results.length - failed.length} 位，失敗 ${failed.length} 位。`,
+      sentCount: results.length - failed.length,
+      failedCount: failed.length,
+      attemptedCount: results.length,
       results
     });
     return;
@@ -88,6 +110,8 @@ export default async function handler(request, response) {
 
   setJson(response, 200, {
     sentCount: results.length,
+    failedCount: 0,
+    attemptedCount: results.length,
     results
   });
 }

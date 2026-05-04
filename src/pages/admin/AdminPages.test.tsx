@@ -1378,6 +1378,9 @@ describe("AdminPages", () => {
     expect(requestBody.content).toContain("【醫師抵達前提醒】");
     expect(requestBody.content).toContain("您好，負責醫師 即將抵達，請協助準備。");
     expect(requestBody.content).toContain("【結束後關心】");
+    await waitFor(() => {
+      expect(screen.getByRole("status")).toHaveTextContent("LINE 群發已送出 1 位家屬");
+    });
   });
 
   it("AdminRemindersPage 初始為空，並可新增行政公告與指定醫師通知", async () => {

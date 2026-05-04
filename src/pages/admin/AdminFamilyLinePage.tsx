@@ -547,11 +547,18 @@ export function AdminFamilyLinePage() {
       const payload = (await response.json().catch(() => ({}))) as {
         error?: string;
         sentCount?: number;
+        failedCount?: number;
+        attemptedCount?: number;
+        results?: Array<{ ok: boolean; status: number; error: string | null }>;
       };
       if (!response.ok) {
+        const firstFailure = payload.results?.find((result) => !result.ok);
+        const detail = firstFailure
+          ? `（LINE 狀態 ${firstFailure.status}${firstFailure.error ? `：${firstFailure.error}` : ""}）`
+          : "";
         setSendFeedback({
           tone: "error",
-          message: payload.error ?? "LINE 發送失敗，請稍後再試。"
+          message: `${payload.error ?? "LINE 發送失敗，請稍後再試。"}${detail}`
         });
         return;
       }
@@ -576,7 +583,9 @@ export function AdminFamilyLinePage() {
       });
       setSendFeedback({
         tone: "success",
-        message: `LINE 已送出 ${payload.sentCount ?? sendableRecipients.length} 位家屬。${
+        message: `LINE 群發已送出 ${payload.sentCount ?? sendableRecipients.length} 位家屬${
+          typeof payload.attemptedCount === "number" ? `（本次送出 ${payload.attemptedCount} 位）` : ""
+        }。${
           missingLineIdCount > 0 ? `另有 ${missingLineIdCount} 位缺 LINE userId 已略過。` : ""
         }`
       });
