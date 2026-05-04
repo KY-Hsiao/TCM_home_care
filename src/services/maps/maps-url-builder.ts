@@ -6,6 +6,7 @@ import type {
   RouteMapPreviewState
 } from "../types";
 import { resolveLocationKeyword } from "../../shared/utils/location-keyword";
+import { loadAdminApiTokenSettings } from "../../shared/utils/admin-api-tokens";
 
 const MAX_ROUTE_PREVIEW_WAYPOINTS = 9;
 
@@ -15,6 +16,8 @@ type GoogleGeocodingResponse = {
   formattedAddress?: string;
   reason?: string;
   error?: string;
+  status?: string;
+  error_message?: string;
 };
 
 function formatCoordinateQuery(latitude: number | null, longitude: number | null): string | null {
@@ -161,14 +164,21 @@ export function createMapsUrlBuilder(options?: { embedApiKey?: string | null }):
           headers: {
             "Content-Type": "application/json"
           },
-          body: JSON.stringify({ address: normalizedAddress }),
+          body: JSON.stringify({
+            address: normalizedAddress,
+            googleMapsApiKey: loadAdminApiTokenSettings().googleMapsApiKey.trim()
+          }),
           signal
         });
         const payload = (await response.json().catch(() => null)) as GoogleGeocodingResponse | null;
         if (!response.ok) {
           lastGeocodeError =
             payload?.error ??
-            (payload?.reason ? `Google Geocoding API 回傳 ${payload.reason}` : `補座標 API HTTP ${response.status}`);
+            (payload?.reason || payload?.status
+              ? `Google Geocoding API 回傳 ${payload.reason ?? payload.status}${
+                  payload?.error_message ? `：${payload.error_message}` : ""
+                }`
+              : `補座標 API HTTP ${response.status}`);
           return null;
         }
 

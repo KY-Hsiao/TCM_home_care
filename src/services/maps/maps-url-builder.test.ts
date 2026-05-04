@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createMapsUrlBuilder } from "./maps-url-builder";
+import { ADMIN_API_TOKEN_STORAGE_KEY } from "../../shared/utils/admin-api-tokens";
 
 describe("maps url builder", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    window.localStorage.clear();
   });
 
   it("有自訂定位關鍵字時會優先使用關鍵字做 Google 地圖定位", () => {
@@ -232,7 +234,39 @@ describe("maps url builder", () => {
       "/api/maps/geocode",
       expect.objectContaining({
         method: "POST",
-        body: JSON.stringify({ address: "高雄市旗山區延平一路 123 號" })
+        body: JSON.stringify({
+          address: "高雄市旗山區延平一路 123 號",
+          googleMapsApiKey: ""
+        })
+      })
+    );
+  });
+
+  it("補座標時會帶入行政端輸入的 Google Maps API key", async () => {
+    window.localStorage.setItem(
+      ADMIN_API_TOKEN_STORAGE_KEY,
+      JSON.stringify({ googleMapsApiKey: "browser-google-key" })
+    );
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        latitude: 22.88612,
+        longitude: 120.48234,
+        formattedAddress: "高雄市旗山區延平一路123號"
+      })
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const maps = createMapsUrlBuilder();
+
+    await maps.geocodeAddress({ address: "高雄市旗山區延平一路 123 號" });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/maps/geocode",
+      expect.objectContaining({
+        body: JSON.stringify({
+          address: "高雄市旗山區延平一路 123 號",
+          googleMapsApiKey: "browser-google-key"
+        })
       })
     );
   });

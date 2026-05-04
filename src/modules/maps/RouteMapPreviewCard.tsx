@@ -7,9 +7,11 @@ const previewCanvasHeight = 480;
 const previewMapTileSize = 256;
 const previewMapMinLatitude = -85.05112878;
 const previewMapMaxLatitude = 85.05112878;
-const defaultPreviewZoomIndex = 1;
+const defaultPreviewZoomIndex = 2;
 
 const previewZoomPresets = [
+  { label: "全域", scale: 4.8, zoomOffset: -3 },
+  { label: "超廣域", scale: 2.8, zoomOffset: -2 },
   { label: "廣域", scale: 1.8, zoomOffset: -1 },
   { label: "標準", scale: 1, zoomOffset: 0 },
   { label: "近距", scale: 0.72, zoomOffset: 1 },
@@ -189,6 +191,7 @@ function buildUnresolvedPreviewPoints(route: RouteMapInput) {
       label: `${index + 1}`,
       pointName: waypoint.label ?? waypoint.address,
       address: waypoint.address,
+      geocodingFailureReason: waypoint.geocodingFailureReason ?? null,
       latitude: waypoint.latitude,
       longitude: waypoint.longitude
     }))
@@ -479,7 +482,11 @@ export function RouteMapPreviewCard({
                 <div key={`${point.key}-legend-missing`} className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-amber-800">
                   <span className="font-semibold">{point.label}</span>
                   <span className="ml-2 font-semibold">{point.pointName}</span>
-                  <span className="ml-2">缺少座標，未畫入預覽圖，需補座標後重新排程。</span>
+                  <span className="ml-2">
+                    {point.geocodingFailureReason
+                      ? `缺少座標，未畫入預覽圖。Google 回傳原因：${point.geocodingFailureReason}`
+                      : "缺少座標，未畫入預覽圖，需補座標後重新排程。"}
+                  </span>
                 </div>
               ))}
             </div>
@@ -502,7 +509,11 @@ export function RouteMapPreviewCard({
                 <div key={`${point.key}-missing-only`} className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2">
                   <span className="font-semibold">{point.label}</span>
                   <span className="ml-2 font-semibold">{point.pointName}</span>
-                  <span className="ml-2">缺少座標，未畫入預覽圖。</span>
+                  <span className="ml-2">
+                    {point.geocodingFailureReason
+                      ? `缺少座標，未畫入預覽圖。Google 回傳原因：${point.geocodingFailureReason}`
+                      : "缺少座標，未畫入預覽圖。"}
+                  </span>
                 </div>
               ))}
             </div>

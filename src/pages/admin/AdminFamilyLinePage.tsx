@@ -6,6 +6,7 @@ import { Badge } from "../../shared/ui/Badge";
 import { Panel } from "../../shared/ui/Panel";
 import { formatDateTimeFull } from "../../shared/utils/format";
 import { maskPatientName } from "../../shared/utils/patient-name";
+import { loadAdminApiTokenSettings } from "../../shared/utils/admin-api-tokens";
 
 type FamilyLineAutomationSettings = {
   doctorLeaveAutoBroadcast: boolean;
@@ -178,6 +179,7 @@ export function AdminFamilyLinePage() {
   } | null>(null);
   const [isSending, setIsSending] = useState(false);
   const [isSyncingLineFriends, setIsSyncingLineFriends] = useState(false);
+  const [apiTokens] = useState(() => loadAdminApiTokenSettings());
 
   useEffect(() => {
     window.localStorage.removeItem(LEGACY_BINDINGS_STORAGE_KEY);
@@ -441,7 +443,14 @@ export function AdminFamilyLinePage() {
       setSendFeedback(null);
     }
     try {
-      const response = await fetch("/api/admin/family-line/friends", { cache: "no-store" });
+      const response = await fetch("/api/admin/family-line/friends", {
+        cache: "no-store",
+        headers: apiTokens.lineChannelAccessToken.trim()
+          ? {
+              "X-Line-Channel-Access-Token": apiTokens.lineChannelAccessToken.trim()
+            }
+          : undefined
+      });
       const payload = (await response.json().catch(() => ({}))) as {
         error?: string;
         warning?: string;
@@ -554,6 +563,7 @@ export function AdminFamilyLinePage() {
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
+          lineChannelAccessToken: apiTokens.lineChannelAccessToken.trim(),
           subject: outboundSubject,
           content: outboundContent,
           recipients: sendableRecipients.map((recipient) => ({

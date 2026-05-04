@@ -47,7 +47,10 @@ export default async function handler(request, response) {
     return;
   }
 
-  const channelAccessToken = process.env.LINE_CHANNEL_ACCESS_TOKEN;
+  const body = request.body ?? {};
+  const channelAccessToken =
+    String(body.lineChannelAccessToken ?? "").trim() ||
+    process.env.LINE_CHANNEL_ACCESS_TOKEN;
   if (!isRequiredString(channelAccessToken)) {
     setJson(response, 503, {
       error: "尚未設定 LINE_CHANNEL_ACCESS_TOKEN，無法呼叫 LINE Messaging API。"
@@ -55,7 +58,6 @@ export default async function handler(request, response) {
     return;
   }
 
-  const body = request.body ?? {};
   const subject = String(body.subject ?? "").trim();
   const content = String(body.content ?? "").trim();
   const recipients = normalizeRecipients(body.recipients);

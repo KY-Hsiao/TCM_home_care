@@ -8,6 +8,7 @@ import { Badge } from "../../shared/ui/Badge";
 import { Panel } from "../../shared/ui/Panel";
 import { formatDateOnly, formatDateTimeFull } from "../../shared/utils/format";
 import { maskPatientName } from "../../shared/utils/patient-name";
+import { loadAdminApiTokenSettings } from "../../shared/utils/admin-api-tokens";
 
 type RouteTimeSlot = "上午" | "下午";
 type PlannerStatus = "scheduled" | "paused" | "on_the_way" | "in_treatment" | "completed";
@@ -51,6 +52,25 @@ type AutoScheduleCarryoverCandidate = {
   checkedPatientCount: number;
 };
 
+type ManagedFamilyLineContactSnapshot = {
+  id: string;
+  userId?: string;
+  displayName: string;
+  lineUserId?: string;
+  linkedPatientIds: string[];
+  note?: string;
+  source?: "webhook" | "official_friend";
+  updatedAt?: string;
+};
+
+type LeaveLineRecipient = {
+  id: string;
+  displayName: string;
+  lineUserId: string;
+  matchedPatientIds: string[];
+  matchedPatientNames: string[];
+};
+
 const weekdayOptions = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"] as const;
 const routeTimeSlotOptions: RouteTimeSlot[] = ["上午", "下午"];
 const routeStartLocation = {
@@ -65,7 +85,7 @@ const routeEndLocation = {
 } as const;
 const routeDatePreviewWindowDays = 30;
 const familyLineSettingsStorageKey = "tcm-family-line-settings";
-const familyLineBindingsStorageKey = "tcm-family-line-user-bindings";
+const familyLineManagedContactsStorageKey = "tcm-family-line-managed-contacts";
 const weekdayToIndex: Record<(typeof weekdayOptions)[number], number> = {
   星期一: 1,
   星期二: 2,
@@ -413,6 +433,77 @@ function loadFamilyLineJson<T>(key: string, fallback: T): T {
   }
 }
 
+function loadFamilyLineArray<T>(key: string): T[] {
+  if (typeof window === "undefined") {
+    return [];
+  }
+  try {
+    const raw = window.localStorage.getItem(key);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? (parsed as T[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function normalizeManagedFamilyLineContacts(contacts: ManagedFamilyLineContactSnapshot[]) {
+  return contacts
+    .map((contact) => {
+      const lineUserId = String(contact.lineUserId ?? contact.userId ?? "").trim();
+      return {
+        ...contact,
+        id: contact.id || `line-contact-${lineUserId}`,
+        displayName: contact.displayName || lineUserId,
+        lineUserId,
+        linkedPatientIds: Array.isArray(contact.linkedPatientIds)
+          ? contact.linkedPatientIds.map((patientId) => String(patientId ?? "").trim()).filter(Boolean)
+          : []
+      };
+    })
+    .filter((contact) => contact.lineUserId);
+}
+
+function loadManagedFamilyLineContacts() {
+  return normalizeManagedFamilyLineContacts(
+    loadFamilyLineArray<ManagedFamilyLineContactSnapshot>(familyLineManagedContactsStorageKey)
+  );
+}
+
+function buildLeaveLineRecipients(input: {
+  contacts: ManagedFamilyLineContactSnapshot[];
+  impactedPatientIds: Set<string>;
+  patientNameById: Map<string, string>;
+}) {
+  const recipientByLineUserId = new Map<string, LeaveLineRecipient>();
+  input.contacts.forEach((contact) => {
+    const lineUserId = String(contact.lineUserId ?? contact.userId ?? "").trim();
+    if (!lineUserId) {
+      return;
+    }
+    const matchedPatientIds = contact.linkedPatientIds.filter((patientId) =>
+      input.impactedPatientIds.has(patientId)
+    );
+    if (!matchedPatientIds.length) {
+      return;
+    }
+    const existing = recipientByLineUserId.get(lineUserId);
+    const nextPatientIds = [
+      ...(existing?.matchedPatientIds ?? []),
+      ...matchedPatientIds
+    ].filter((patientId, index, patientIds) => patientIds.indexOf(patientId) === index);
+    recipientByLineUserId.set(lineUserId, {
+      id: contact.id,
+      displayName: contact.displayName,
+      lineUserId,
+      matchedPatientIds: nextPatientIds,
+      matchedPatientNames: nextPatientIds.map((patientId) => input.patientNameById.get(patientId) ?? patientId)
+    });
+  });
+  return Array.from(recipientByLineUserId.values()).sort((left, right) =>
+    left.displayName.localeCompare(right.displayName, "zh-Hant")
+  );
+}
+
 function hasPlannedRouteForSlot(input: {
   doctorId: string;
   routeDate: string;
@@ -717,6 +808,8 @@ function buildRoutePreviewInput(input: {
     waypoints: input.checkedRows.map((row) => ({
       address: row.address,
       label: `第 ${row.routeOrder ?? "-"} 站 ${maskPatientName(row.name)}`,
+      geocodingFailureReason:
+        row.geocodingStatus === "failed" ? row.geocodedAddress ?? null : null,
       latitude: row.latitude,
       longitude: row.longitude
     })),
@@ -2873,6 +2966,10 @@ export function AdminRemindersPage() {
 export function AdminLeaveRequestsPage() {
   const { repositories, db } = useAppContext();
   const [selectedLeaveRequestId, setSelectedLeaveRequestId] = useState<string>("");
+  const [selectedLeaveLineRecipientIds, setSelectedLeaveLineRecipientIds] = useState<string[]>([]);
+  const [managedLineContacts, setManagedLineContacts] = useState<ManagedFamilyLineContactSnapshot[]>(() =>
+    loadManagedFamilyLineContacts()
+  );
   const [statusFeedback, setStatusFeedback] = useState<{
     tone: "success" | "error";
     message: string;
@@ -2929,11 +3026,72 @@ export function AdminLeaveRequestsPage() {
         selectedLeaveRequest.end_date
       )
     : [];
+  const impactedPatientIds = useMemo(
+    () => new Set(impactedSchedules.map((schedule) => schedule.patient_id)),
+    [impactedSchedules]
+  );
+  const patientNameById = useMemo(
+    () => new Map(db.patients.map((patient) => [patient.id, maskPatientName(patient.name)])),
+    [db.patients]
+  );
+  const leaveLineRecipients = useMemo(
+    () =>
+      buildLeaveLineRecipients({
+        contacts: managedLineContacts,
+        impactedPatientIds,
+        patientNameById
+      }),
+    [impactedPatientIds, managedLineContacts, patientNameById]
+  );
+  const leaveLineRecipientIdsKey = leaveLineRecipients.map((recipient) => recipient.id).join("|");
+  const selectedLeaveLineRecipients = leaveLineRecipients.filter((recipient) =>
+    selectedLeaveLineRecipientIds.includes(recipient.id)
+  );
 
   useEffect(() => {
     setRejectionReasonDraft(selectedLeaveRequest?.rejection_reason ?? "");
     setIsRejecting(false);
   }, [selectedLeaveRequest?.id, selectedLeaveRequest?.rejection_reason]);
+
+  useEffect(() => {
+    setSelectedLeaveLineRecipientIds(leaveLineRecipients.map((recipient) => recipient.id));
+  }, [selectedLeaveRequest?.id, leaveLineRecipientIdsKey]);
+
+  useEffect(() => {
+    if (import.meta.env.MODE === "test") {
+      return;
+    }
+    let cancelled = false;
+    void fetch("/api/admin/family-line/contacts", { cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok) {
+          return;
+        }
+        const payload = (await response.json().catch(() => ({}))) as {
+          contacts?: ManagedFamilyLineContactSnapshot[];
+          friends?: ManagedFamilyLineContactSnapshot[];
+        };
+        const contacts = Array.isArray(payload.contacts)
+          ? payload.contacts
+          : Array.isArray(payload.friends)
+            ? payload.friends
+            : [];
+        const normalizedContacts = normalizeManagedFamilyLineContacts(contacts);
+        if (!cancelled) {
+          setManagedLineContacts(normalizedContacts);
+          window.localStorage.setItem(
+            familyLineManagedContactsStorageKey,
+            JSON.stringify(normalizedContacts)
+          );
+        }
+      })
+      .catch(() => {
+        // 後端名單暫時無法讀取時，保留本機已保存的 webhook 名單供請假通知使用。
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const createAdminLeaveRequest = () => {
     if (!createDoctorId) {
@@ -2971,7 +3129,7 @@ export function AdminLeaveRequestsPage() {
     });
   };
 
-  const updateLeaveStatus = (status: "pending" | "approved" | "rejected") => {
+  const updateLeaveStatus = async (status: "pending" | "approved" | "rejected") => {
     if (!selectedLeaveRequest) {
       return;
     }
@@ -2985,52 +3143,61 @@ export function AdminLeaveRequestsPage() {
     repositories.staffingRepository.updateLeaveRequestStatus(selectedLeaveRequest.id, status, {
       rejectionReason: status === "rejected" ? rejectionReasonDraft : null
     });
-    if (status === "approved" && typeof fetch === "function") {
+    let lineSendMessage = "";
+    let lineSendTone: "success" | "error" = "success";
+    if (status === "approved" && typeof fetch === "function" && selectedLeaveLineRecipients.length > 0) {
       const settings = loadFamilyLineJson(familyLineSettingsStorageKey, {
         doctorLeaveAutoBroadcast: false
       });
-      const lineBindings = loadFamilyLineJson<Record<string, string>>(familyLineBindingsStorageKey, {});
-      if (settings.doctorLeaveAutoBroadcast) {
-        const doctorName =
-          db.doctors.find((item) => item.id === selectedLeaveRequest.doctor_id)?.name ??
-          selectedLeaveRequest.doctor_id;
-        const impactedPatientIds = new Set(impactedSchedules.map((schedule) => schedule.patient_id));
-        const recipients = db.caregivers
-          .filter(
-            (caregiver) =>
-              caregiver.receives_notifications &&
-              impactedPatientIds.has(caregiver.patient_id) &&
-              Boolean(lineBindings[caregiver.id]?.trim())
-          )
-          .map((caregiver) => ({
-            caregiverId: caregiver.id,
-            caregiverName: caregiver.name,
-            patientId: caregiver.patient_id,
-            patientName:
-              db.patients.find((patient) => patient.id === caregiver.patient_id)?.name ?? caregiver.patient_id,
-            lineUserId: lineBindings[caregiver.id]
-          }));
-        if (recipients.length > 0) {
-          void fetch("/api/admin/family-line/send", {
+      const doctorName =
+        db.doctors.find((item) => item.id === selectedLeaveRequest.doctor_id)?.name ??
+        selectedLeaveRequest.doctor_id;
+      if (settings.doctorLeaveAutoBroadcast || selectedLeaveLineRecipients.length > 0) {
+        try {
+          const lineResponse = await fetch("/api/admin/family-line/send", {
             method: "POST",
             headers: {
               "Content-Type": "application/json"
             },
             body: JSON.stringify({
+              lineChannelAccessToken: loadAdminApiTokenSettings().lineChannelAccessToken.trim(),
               subject: "醫師請假公告",
               content: `您好，${doctorName} ${selectedLeaveRequest.start_date} 至 ${selectedLeaveRequest.end_date} 請假，原訂居家訪視可能需改派或改期。行政人員會再與您確認後續安排。`,
-              recipients
+              recipients: selectedLeaveLineRecipients.map((recipient) => ({
+                caregiverId: recipient.id,
+                caregiverName: recipient.displayName,
+                patientId: recipient.matchedPatientIds[0] ?? "",
+                patientName: recipient.matchedPatientNames.join("、"),
+                doctorId: selectedLeaveRequest.doctor_id,
+                doctorName,
+                lineUserId: recipient.lineUserId
+              }))
             })
           });
+          const payload = (await lineResponse.json().catch(() => ({}))) as {
+            error?: string;
+            sentCount?: number;
+            failedCount?: number;
+            attemptedCount?: number;
+          };
+          if (lineResponse.ok) {
+            lineSendMessage = ` 已發送 LINE 請假公告 ${payload.sentCount ?? selectedLeaveLineRecipients.length} 位。`;
+          } else {
+            lineSendTone = "error";
+            lineSendMessage = ` 但 LINE 請假公告發送失敗：${payload.error ?? `HTTP ${lineResponse.status}`}。`;
+          }
+        } catch {
+          lineSendTone = "error";
+          lineSendMessage = " 但無法連線到 LINE 發送端點。";
         }
       }
     }
     setStatusFeedback(
       {
-        tone: "success",
+        tone: lineSendTone,
         message:
           status === "approved"
-            ? "請假申請已核准。"
+            ? `請假申請已核准。${lineSendMessage}`
             : status === "rejected"
               ? "請假申請已駁回，並已記錄駁回理由。"
               : "已取消駁回，請假申請已恢復待處理。"
@@ -3216,10 +3383,75 @@ export function AdminLeaveRequestsPage() {
 
               {selectedLeaveRequest.status === "pending" ? (
                 <div className="space-y-3">
+                  <div className="rounded-2xl border border-emerald-100 bg-emerald-50/60 p-4 text-sm">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <p className="font-semibold text-brand-ink">LINE 請假通知對象</p>
+                        <p className="mt-1 text-xs text-slate-600">
+                          依受影響個案比對「LINE 家屬聯繫」已關聯患者名單；核准請假時只會傳送給已勾選對象。
+                        </p>
+                      </div>
+                      {leaveLineRecipients.length > 0 ? (
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setSelectedLeaveLineRecipientIds(leaveLineRecipients.map((recipient) => recipient.id))
+                            }
+                            className="rounded-full border border-emerald-200 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-700"
+                          >
+                            全選通知
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedLeaveLineRecipientIds([])}
+                            className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600"
+                          >
+                            清除通知
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
+                    {leaveLineRecipients.length > 0 ? (
+                      <div className="mt-3 grid gap-2 md:grid-cols-2">
+                        {leaveLineRecipients.map((recipient) => (
+                          <label
+                            key={recipient.id}
+                            className="flex items-start gap-3 rounded-2xl border border-emerald-100 bg-white px-3 py-2"
+                          >
+                            <input
+                              type="checkbox"
+                              aria-label={`${recipient.displayName} LINE 請假通知勾選`}
+                              checked={selectedLeaveLineRecipientIds.includes(recipient.id)}
+                              onChange={(event) =>
+                                setSelectedLeaveLineRecipientIds((current) =>
+                                  event.target.checked
+                                    ? [...current, recipient.id]
+                                    : current.filter((recipientId) => recipientId !== recipient.id)
+                                )
+                              }
+                              className="mt-1 h-4 w-4"
+                            />
+                            <span className="min-w-0">
+                              <span className="block font-semibold text-brand-ink">{recipient.displayName}</span>
+                              <span className="mt-1 block text-xs text-slate-600">
+                                關聯個案：{recipient.matchedPatientNames.join("、")}
+                              </span>
+                              <span className="mt-1 block break-all text-xs text-slate-500">{recipient.lineUserId}</span>
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="mt-3 rounded-2xl border border-dashed border-emerald-200 bg-white px-4 py-3 text-xs text-slate-600">
+                        受影響個案尚未關聯任何 LINE 好友。請先到 LINE 家屬聯繫重新整理 webhook 名單，並把好友關聯到患者。
+                      </div>
+                    )}
+                  </div>
                   <div className="flex flex-wrap gap-2">
                     <button
                       type="button"
-                      onClick={() => updateLeaveStatus("approved")}
+                      onClick={() => void updateLeaveStatus("approved")}
                       className="rounded-full bg-brand-forest px-4 py-2 text-xs font-semibold text-white"
                     >
                       核准請假
@@ -3254,7 +3486,7 @@ export function AdminLeaveRequestsPage() {
                       <div className="flex flex-wrap gap-2">
                         <button
                           type="button"
-                          onClick={() => updateLeaveStatus("rejected")}
+                          onClick={() => void updateLeaveStatus("rejected")}
                           className="rounded-full bg-rose-600 px-4 py-2 text-xs font-semibold text-white"
                         >
                           確認駁回
@@ -3277,7 +3509,7 @@ export function AdminLeaveRequestsPage() {
                 <div className="flex flex-wrap gap-2">
                   <button
                     type="button"
-                    onClick={() => updateLeaveStatus("pending")}
+                    onClick={() => void updateLeaveStatus("pending")}
                     className="rounded-full border border-amber-200 bg-amber-50 px-4 py-2 text-xs font-semibold text-amber-700"
                   >
                     取消駁回

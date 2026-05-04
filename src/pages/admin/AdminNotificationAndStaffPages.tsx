@@ -1,8 +1,13 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useAppContext } from "../../app/use-app-context";
 import type { AdminUser, Doctor } from "../../domain/models";
 import { Badge } from "../../shared/ui/Badge";
 import { Panel } from "../../shared/ui/Panel";
+import {
+  loadAdminApiTokenSettings,
+  persistAdminApiTokenSettings,
+  type AdminApiTokenSettings
+} from "../../shared/utils/admin-api-tokens";
 
 type ManageableRole = "doctor" | "admin";
 
@@ -163,6 +168,14 @@ export function AdminStaffPage() {
   const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [activeServiceDay, setActiveServiceDay] = useState<ServiceDay>(serviceDayOptions[0]);
   const [recentAction, setRecentAction] = useState<string | null>(null);
+  const [apiTokens, setApiTokens] = useState<AdminApiTokenSettings>(() =>
+    loadAdminApiTokenSettings()
+  );
+  const [isTestingGoogleMapsConnection, setIsTestingGoogleMapsConnection] = useState(false);
+  const [secretManagementMessage, setSecretManagementMessage] = useState<{
+    tone: "success" | "error";
+    message: string;
+  } | null>(null);
   const staffList = useMemo<StaffListItem[]>(
     () =>
       [
@@ -200,6 +213,66 @@ export function AdminStaffPage() {
   const currentDoctorAssignments = draft.originalRole === "doctor" && draft.sourceId
     ? db.visit_schedules.filter((schedule) => schedule.assigned_doctor_id === draft.sourceId).length
     : 0;
+
+  useEffect(() => {
+    persistAdminApiTokenSettings(apiTokens);
+  }, [apiTokens]);
+
+  const updateApiToken = (key: keyof AdminApiTokenSettings, value: string) => {
+    setApiTokens((current) => ({
+      ...current,
+      [key]: value
+    }));
+    if (key === "googleMapsApiKey") {
+      setSecretManagementMessage(null);
+    }
+  };
+
+  const testGoogleMapsConnection = async () => {
+    setIsTestingGoogleMapsConnection(true);
+    setSecretManagementMessage(null);
+    try {
+      const response = await fetch("/api/maps/geocode", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          address: "旗山醫院",
+          googleMapsApiKey: apiTokens.googleMapsApiKey.trim()
+        })
+      });
+      const payload = (await response.json().catch(() => ({}))) as {
+        latitude?: number;
+        longitude?: number;
+        formattedAddress?: string;
+        reason?: string;
+        error?: string;
+      };
+      if (!response.ok) {
+        setSecretManagementMessage({
+          tone: "error",
+          message:
+            payload.error ??
+            (payload.reason
+              ? `Google Maps 連線失敗：${payload.reason}`
+              : `Google Maps 連線失敗：HTTP ${response.status}`)
+        });
+        return;
+      }
+      setSecretManagementMessage({
+        tone: "success",
+        message: `Google Maps Geocoding 連線正常，測試座標：${payload.latitude}, ${payload.longitude}（${payload.formattedAddress ?? "旗山醫院"}）`
+      });
+    } catch {
+      setSecretManagementMessage({
+        tone: "error",
+        message: "無法連線到 Google Maps 測試端點，請確認部署與網路狀態。"
+      });
+    } finally {
+      setIsTestingGoogleMapsConnection(false);
+    }
+  };
 
   const syncDraftFromSelection = (staffKey: string) => {
     const nextDraft = staffKey.startsWith("new:")
@@ -392,6 +465,69 @@ export function AdminStaffPage() {
       ) : null}
 
       <div className="grid gap-6">
+        <Panel title="機密管理區">
+          <div className="grid gap-3 text-sm lg:grid-cols-3">
+            <label className="block">
+              <span className="mb-1 block font-medium text-brand-ink">LINE Channel Access Token</span>
+              <input
+                type="password"
+                aria-label="LINE Channel Access Token"
+                value={apiTokens.lineChannelAccessToken}
+                onChange={(event) => updateApiToken("lineChannelAccessToken", event.target.value)}
+                placeholder="貼上 LINE Messaging API access token"
+                className="w-full rounded-2xl border border-slate-200 px-4 py-3"
+              />
+            </label>
+            <label className="block">
+              <span className="mb-1 block font-medium text-brand-ink">LINE Channel Secret</span>
+              <input
+                type="password"
+                aria-label="LINE Channel Secret"
+                value={apiTokens.lineChannelSecret}
+                onChange={(event) => updateApiToken("lineChannelSecret", event.target.value)}
+                placeholder="貼上 LINE webhook secret"
+                className="w-full rounded-2xl border border-slate-200 px-4 py-3"
+              />
+            </label>
+            <label className="block">
+              <span className="mb-1 block font-medium text-brand-ink">Google Maps API Key</span>
+              <input
+                type="password"
+                aria-label="Google Maps API Key"
+                value={apiTokens.googleMapsApiKey}
+                onChange={(event) => updateApiToken("googleMapsApiKey", event.target.value)}
+                placeholder="貼上 Geocoding API key"
+                className="w-full rounded-2xl border border-slate-200 px-4 py-3"
+              />
+            </label>
+          </div>
+          <p className="mt-3 text-xs text-slate-500">
+            Token 會保存在這台瀏覽器，用於 LINE 群發/好友同步，以及排程頁 Google 補座標。正式部署仍建議同步設定環境變數。
+          </p>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => void testGoogleMapsConnection()}
+              disabled={isTestingGoogleMapsConnection}
+              className="rounded-full border border-emerald-200 bg-white px-4 py-2 text-xs font-semibold text-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {isTestingGoogleMapsConnection ? "測試中" : "測試 Google Maps 連線"}
+            </button>
+            {secretManagementMessage ? (
+              <span
+                role="status"
+                className={`rounded-full px-3 py-1.5 text-xs font-semibold ${
+                  secretManagementMessage.tone === "success"
+                    ? "bg-emerald-100 text-emerald-800"
+                    : "bg-rose-100 text-rose-700"
+                }`}
+              >
+                {secretManagementMessage.message}
+              </span>
+            ) : null}
+          </div>
+        </Panel>
+
         <Panel
           title="角色設置 / 人員管理"
           action={

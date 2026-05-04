@@ -112,7 +112,9 @@ export default async function handler(request, response) {
     return;
   }
 
-  const channelAccessToken = process.env.LINE_CHANNEL_ACCESS_TOKEN;
+  const channelAccessToken =
+    String(request.headers?.["x-line-channel-access-token"] ?? "").trim() ||
+    process.env.LINE_CHANNEL_ACCESS_TOKEN;
 
   try {
     await ensureFamilyLineContactsTable();

@@ -493,6 +493,52 @@ describe("AdminPages", () => {
     );
   });
 
+  it("AdminSchedulesPage 補座標失敗時會在地圖預覽顯示 Google 回傳原因", async () => {
+    const customDb = createSeedDb();
+    customDb.patients = customDb.patients.map((patient) =>
+      patient.id === "pat-001"
+        ? {
+            ...patient,
+            home_latitude: null,
+            home_longitude: null,
+            geocoding_status: "missing" as const
+          }
+        : patient
+    );
+    customDb.visit_schedules = customDb.visit_schedules.map((schedule) =>
+      schedule.patient_id === "pat-001"
+        ? {
+            ...schedule,
+            home_latitude_snapshot: null,
+            home_longitude_snapshot: null,
+            geofence_status: "coordinate_missing" as const
+          }
+        : schedule
+    );
+    window.localStorage.setItem(MOCK_DB_STORAGE_KEY, JSON.stringify(customDb));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 422,
+        json: async () => ({
+          reason: "ZERO_RESULTS",
+          error: "Google Geocoding API 回傳 ZERO_RESULTS：找不到「高雄市旗山區延平一路 128 號」的座標"
+        })
+      })
+    );
+
+    renderWithProviders(<AdminSchedulesPage />);
+    selectScheduleFilters();
+
+    await waitFor(() =>
+      expect(
+        screen.getAllByText(/Google Geocoding API 回傳 ZERO_RESULTS/).length
+      ).toBeGreaterThan(0)
+    );
+    expect(screen.getByText(/Google 回傳原因：Google Geocoding API 回傳 ZERO_RESULTS/)).toBeInTheDocument();
+  });
+
   it("AdminSchedulesPage 可拖曳調整本次路線排序", () => {
     renderWithProviders(<AdminSchedulesPage />);
 
@@ -1645,7 +1691,7 @@ describe("AdminPages", () => {
     });
   });
 
-  it("AdminLeaveRequestsPage 核准請假時可依設定自動發送 LINE 請假公告", async () => {
+  it("AdminLeaveRequestsPage 核准請假時會依已關聯患者的 LINE 名單發送請假公告", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({ sentCount: 1 })
@@ -1656,13 +1702,45 @@ describe("AdminPages", () => {
       JSON.stringify({ doctorLeaveAutoBroadcast: true })
     );
     window.localStorage.setItem(
-      "tcm-family-line-user-bindings",
-      JSON.stringify({ "cg-001": "U1234567890abcdef1234567890abcdef" })
+      "tcm-family-line-managed-contacts",
+      JSON.stringify([
+        {
+          id: "line-contact-leave-a",
+          displayName: "王先生 LINE",
+          lineUserId: "U1234567890abcdef1234567890abcdef",
+          linkedPatientIds: ["pat-001"],
+          note: "主要照顧者",
+          source: "webhook",
+          updatedAt: "2026-05-01T00:00:00.000Z"
+        },
+        {
+          id: "line-contact-unmatched",
+          displayName: "未受影響家屬 LINE",
+          lineUserId: "Uunmatched1234567890abcdef12345",
+          linkedPatientIds: ["pat-999"],
+          note: "",
+          source: "webhook",
+          updatedAt: "2026-05-01T00:00:00.000Z"
+        }
+      ])
     );
+    const customDb = createSeedDb();
+    customDb.visit_schedules = [
+      ...customDb.visit_schedules,
+      {
+        ...customDb.visit_schedules[0],
+        id: "vs-leave-line-001",
+        patient_id: "pat-001",
+        assigned_doctor_id: "doc-001",
+        scheduled_start_at: "2026-05-01T09:00:00+08:00",
+        scheduled_end_at: "2026-05-01T10:00:00+08:00",
+        status: "scheduled"
+      }
+    ];
     window.localStorage.setItem(
       MOCK_DB_STORAGE_KEY,
       JSON.stringify({
-        ...createSeedDb(),
+        ...customDb,
         leave_requests: [
           {
             id: "leave-line-auto-001",
@@ -1681,6 +1759,9 @@ describe("AdminPages", () => {
     );
 
     renderWithProviders(<AdminLeaveRequestsPage />);
+    expect(screen.getByLabelText("王先生 LINE LINE 請假通知勾選")).toBeChecked();
+    expect(screen.queryByLabelText("未受影響家屬 LINE LINE 請假通知勾選")).not.toBeInTheDocument();
+
     fireEvent.click(screen.getByRole("button", { name: "核准請假" }));
 
     await waitFor(() => {
@@ -1695,7 +1776,11 @@ describe("AdminPages", () => {
     expect(requestBody.subject).toBe("醫師請假公告");
     expect(requestBody.recipients).toEqual([
       expect.objectContaining({
-        caregiverId: "cg-001",
+        caregiverId: "line-contact-leave-a",
+        caregiverName: "王先生 LINE",
+        patientId: "pat-001",
+        patientName: "王○珠",
+        doctorId: "doc-001",
         lineUserId: "U1234567890abcdef1234567890abcdef"
       })
     ]);

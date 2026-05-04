@@ -88,6 +88,7 @@ export type RouteMapLocation = {
   address: string;
   locationKeyword?: string | null;
   label?: string | null;
+  geocodingFailureReason?: string | null;
   latitude: number | null;
   longitude: number | null;
 };

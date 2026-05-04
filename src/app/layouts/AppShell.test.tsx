@@ -8,6 +8,7 @@ import {
   AdminDoctorTrackingPage,
   AdminFamilyLinePage,
   AdminRemindersPage,
+  AdminStaffPage,
   AdminTeamCommunicationPage
 } from "../../pages/admin/AdminPages";
 import {
@@ -153,9 +154,59 @@ describe("AppShell", () => {
     renderShell("/admin/family-line", <AdminFamilyLinePage />);
 
     expect(within(screen.getByRole("navigation")).getByRole("link", { name: /LINE 家屬聯繫/ })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "API Token 設定" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("LINE Channel Access Token")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Google Maps API Key")).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "LINE 自動發送設定" })).toBeInTheDocument();
     expect(screen.getByLabelText("目前編輯範本")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "送出 LINE 群發" })).toBeInTheDocument();
+  });
+
+  it("行政端角色設置會集中顯示機密管理區並可測試 Google Maps Geocoding 連線", async () => {
+    window.localStorage.setItem(
+      SESSION_STORAGE_KEY,
+      JSON.stringify({
+        role: "admin",
+        activeDoctorId: "doc-001",
+        activeAdminId: "admin-001",
+        authenticatedDoctorId: null,
+        authenticatedAdminId: "admin-001"
+      })
+    );
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        latitude: 22.88794,
+        longitude: 120.48341,
+        formattedAddress: "高雄市旗山區中學路60號"
+      })
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderShell("/admin/staff", <AdminStaffPage />);
+    expect(screen.getByRole("heading", { name: "機密管理區" })).toBeInTheDocument();
+    expect(screen.getByLabelText("LINE Channel Access Token")).toBeInTheDocument();
+    expect(screen.getByLabelText("LINE Channel Secret")).toBeInTheDocument();
+    expect(screen.getByLabelText("Google Maps API Key")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Google Maps API Key"), {
+      target: { value: "browser-google-key" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "測試 Google Maps 連線" }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent("Google Maps Geocoding 連線正常")
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/maps/geocode",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          address: "旗山醫院",
+          googleMapsApiKey: "browser-google-key"
+        })
+      })
+    );
   });
 
   it("登入後若有未讀通知，Shell 會明確顯示未讀提示", () => {

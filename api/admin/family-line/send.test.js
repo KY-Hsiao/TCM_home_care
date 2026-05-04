@@ -107,4 +107,30 @@ describe("/api/admin/family-line/send", () => {
       })
     );
   });
+
+  it("未設定環境變數時可使用前端送入的 LINE token", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => ""
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await callSend({
+      lineChannelAccessToken: "browser-line-token",
+      subject: "群發測試",
+      content: "請注意訪視異動",
+      recipients: [{ caregiverId: "cg-001", patientId: "pat-001", lineUserId: "U111" }]
+    });
+
+    expect(result.statusCode).toBe(200);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.line.me/v2/bot/message/multicast",
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: "Bearer browser-line-token"
+        })
+      })
+    );
+  });
 });
