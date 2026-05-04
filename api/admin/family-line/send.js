@@ -18,6 +18,8 @@ function normalizeRecipients(recipients) {
       caregiverName: String(recipient?.caregiverName ?? ""),
       patientId: String(recipient?.patientId ?? ""),
       patientName: String(recipient?.patientName ?? ""),
+      doctorId: String(recipient?.doctorId ?? ""),
+      doctorName: String(recipient?.doctorName ?? ""),
       lineUserId: String(recipient?.lineUserId ?? "").trim()
     }))
     .filter((recipient) => isRequiredString(recipient.lineUserId));
@@ -88,6 +90,7 @@ export default async function handler(request, response) {
       results.push({
         caregiverId: recipient.caregiverId,
         patientId: recipient.patientId,
+        doctorId: recipient.doctorId,
         lineUserId: recipient.lineUserId,
         ok: lineResponse.ok,
         status: lineResponse.status,

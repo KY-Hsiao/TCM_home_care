@@ -27,6 +27,7 @@ type FamilyLineRecipient = {
   linkedPatients: Patient[];
   schedule: VisitSchedule | null;
   doctor: Doctor | null;
+  linkedDoctors: Doctor[];
   lineUserId: string;
 };
 
@@ -205,6 +206,17 @@ export function AdminFamilyLinePage() {
         ? repositories.visitRepository.getSchedules({ patientId: primaryPatient.id })
         : [];
       const schedule = resolveLatestSchedule(schedules);
+      const linkedDoctorIds = linkedPatients
+        .flatMap((patient) => {
+          const latestSchedule = resolveLatestSchedule(
+            repositories.visitRepository.getSchedules({ patientId: patient.id })
+          );
+          return [patient.preferred_doctor_id, latestSchedule?.assigned_doctor_id];
+        })
+        .filter((doctorId): doctorId is string => Boolean(doctorId));
+      const linkedDoctors = db.doctors.filter(
+        (doctor) => linkedDoctorIds.includes(doctor.id)
+      );
       const doctor =
         schedule
           ? db.doctors.find((item) => item.id === schedule.assigned_doctor_id) ?? null
@@ -219,6 +231,7 @@ export function AdminFamilyLinePage() {
         linkedPatients,
         schedule,
         doctor,
+        linkedDoctors,
         lineUserId: contact.lineUserId
       });
     });
@@ -229,7 +242,9 @@ export function AdminFamilyLinePage() {
     if (selectedDoctorId === "all") {
       return recipients;
     }
-    return recipients.filter((recipient) => recipient.doctor?.id === selectedDoctorId);
+    return recipients.filter((recipient) =>
+      recipient.linkedDoctors.some((doctor) => doctor.id === selectedDoctorId)
+    );
   }, [recipients, selectedDoctorId]);
 
   const selectedRecipients = filteredRecipients.filter((recipient) =>
@@ -281,6 +296,12 @@ export function AdminFamilyLinePage() {
     }
     setSelectedRecipientIds(focusedRecipients.map((recipient) => recipient.id));
   }, [focusedPatientId, recipients]);
+
+  const resolveRecipientDoctor = (recipient: FamilyLineRecipient) =>
+    selectedDoctorId === "all"
+      ? recipient.doctor
+      : recipient.linkedDoctors.find((doctor) => doctor.id === selectedDoctorId) ??
+        recipient.doctor;
 
   const toggleSetting = (key: keyof FamilyLineAutomationSettings) => {
     setSettings((current) => ({
@@ -540,6 +561,8 @@ export function AdminFamilyLinePage() {
             caregiverName: recipient.displayName,
             patientId: recipient.patient?.id ?? "",
             patientName: recipient.patient?.name ?? "",
+            doctorId: resolveRecipientDoctor(recipient)?.id ?? "",
+            doctorName: resolveRecipientDoctor(recipient)?.name ?? "",
             lineUserId: recipient.lineUserId
           }))
         })
@@ -570,7 +593,7 @@ export function AdminFamilyLinePage() {
           patient_id: recipient.patient?.id ?? null,
           visit_schedule_id: recipient.schedule?.id ?? null,
           caregiver_id: null,
-          doctor_id: recipient.doctor?.id ?? null,
+          doctor_id: resolveRecipientDoctor(recipient)?.id ?? null,
           admin_user_id: null,
           channel: "line",
           subject: outboundSubject,
@@ -965,7 +988,9 @@ export function AdminFamilyLinePage() {
                         {recipient.linkedPatients.length
                           ? recipient.linkedPatients.map((patient) => maskPatientName(patient.name)).join("、")
                           : "未關聯個案"}
-                        ｜{recipient.doctor?.name ?? "未指定醫師"}
+                        ｜{recipient.linkedDoctors.length
+                          ? recipient.linkedDoctors.map((doctor) => doctor.name).join("、")
+                          : "未指定醫師"}
                       </span>
                       <span className="mt-1 block text-xs text-slate-500">
                         最近排程：{recipient.schedule ? formatDateTimeFull(recipient.schedule.scheduled_start_at) : "尚無排程"}

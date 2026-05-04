@@ -1378,9 +1378,69 @@ describe("AdminPages", () => {
     expect(requestBody.content).toContain("【醫師抵達前提醒】");
     expect(requestBody.content).toContain("您好，負責醫師 即將抵達，請協助準備。");
     expect(requestBody.content).toContain("【結束後關心】");
+    expect(requestBody.recipients[0]).toEqual(
+      expect.objectContaining({
+        doctorId: "doc-001",
+        doctorName: "蕭坤元醫師"
+      })
+    );
     await waitFor(() => {
       expect(screen.getByRole("status")).toHaveTextContent("LINE 群發已送出 1 位家屬");
     });
+  });
+
+  it("AdminFamilyLinePage 群發會依關聯個案對應到關聯醫師", async () => {
+    const customDb = createSeedDb();
+    customDb.patients = customDb.patients.map((patient) =>
+      patient.id === "pat-002"
+        ? {
+            ...patient,
+            preferred_doctor_id: "doc-002"
+          }
+        : patient
+    );
+    window.localStorage.setItem(MOCK_DB_STORAGE_KEY, JSON.stringify(customDb));
+    window.localStorage.setItem(
+      "tcm-family-line-managed-contacts",
+      JSON.stringify([
+        {
+          id: "line-contact-multi",
+          displayName: "跨醫師家屬 LINE",
+          lineUserId: "Umulti1234567890abcdef1234567890",
+          linkedPatientIds: ["pat-001", "pat-002"],
+          note: "",
+          source: "webhook",
+          updatedAt: "2026-05-01T00:00:00.000Z"
+        }
+      ])
+    );
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ sentCount: 1, attemptedCount: 1 })
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderWithProviders(<AdminFamilyLinePage />);
+
+    fireEvent.change(screen.getByLabelText("篩選醫師"), {
+      target: { value: "doc-002" }
+    });
+    expect(screen.getByLabelText("跨醫師家屬 LINE 發送勾選")).toBeInTheDocument();
+    expect(screen.getByText(/蕭坤元醫師、支援醫師|支援醫師、蕭坤元醫師/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText("醫師抵達前提醒 本次發送勾選"));
+    fireEvent.click(screen.getByLabelText("跨醫師家屬 LINE 發送勾選"));
+    fireEvent.click(screen.getByLabelText("確認本次 LINE 發送"));
+    fireEvent.click(screen.getByRole("button", { name: "送出 LINE 群發" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(requestBody.recipients[0]).toEqual(
+      expect.objectContaining({
+        doctorId: "doc-002",
+        doctorName: "支援醫師",
+        lineUserId: "Umulti1234567890abcdef1234567890"
+      })
+    );
   });
 
   it("AdminRemindersPage 初始為空，並可新增行政公告與指定醫師通知", async () => {

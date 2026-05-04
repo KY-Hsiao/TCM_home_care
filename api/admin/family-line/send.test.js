@@ -50,7 +50,7 @@ describe("/api/admin/family-line/send", () => {
       subject: "群發測試",
       content: "請注意訪視異動",
       recipients: [
-        { caregiverId: "cg-001", patientId: "pat-001", lineUserId: "U111" },
+        { caregiverId: "cg-001", patientId: "pat-001", doctorId: "doc-001", lineUserId: "U111" },
         { caregiverId: "cg-002", patientId: "pat-002", lineUserId: "U222" },
         { caregiverId: "cg-003", patientId: "pat-003", lineUserId: "U111" }
       ]
@@ -59,6 +59,12 @@ describe("/api/admin/family-line/send", () => {
     expect(result.statusCode).toBe(200);
     expect(result.body.sentCount).toBe(2);
     expect(result.body.failedCount).toBe(0);
+    expect(result.body.results[0]).toEqual(
+      expect.objectContaining({
+        doctorId: "doc-001",
+        lineUserId: "U111"
+      })
+    );
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledWith(
       "https://api.line.me/v2/bot/message/multicast",
