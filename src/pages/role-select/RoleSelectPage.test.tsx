@@ -1,54 +1,95 @@
 import { AppProviders } from "../../app/providers";
-import { fireEvent, render, screen } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it } from "vitest";
 import { RoleSelectPage } from "./RoleSelectPage";
 import { MOCK_DB_STORAGE_KEY } from "../../data/mock/db";
 import { createSeedDb } from "../../data/seed";
+import { PASSWORD_STORAGE_KEY, SESSION_STORAGE_KEY } from "../../app/auth-storage";
 
 describe("RoleSelectPage", () => {
   beforeEach(() => {
     window.localStorage.clear();
   });
 
-  it("會顯示醫師與行政兩個登入入口，且預設密碼提示為 0000", () => {
+  function renderRoleSelect() {
     render(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={["/"]}>
         <AppProviders>
-          <RoleSelectPage />
+          <Routes>
+            <Route path="/" element={<RoleSelectPage />} />
+            <Route path="/doctor/navigation" element={<div>醫師首頁</div>} />
+            <Route path="/admin/dashboard" element={<div>行政首頁</div>} />
+          </Routes>
         </AppProviders>
       </MemoryRouter>
     );
+  }
 
-    expect(screen.getByText("居家醫師")).toBeInTheDocument();
-    expect(screen.getByText("行政管理")).toBeInTheDocument();
-    expect(screen.getByText("共用行政帳號")).toBeInTheDocument();
-    expect(screen.getByText("行政人員")).toBeInTheDocument();
+  it("會顯示單一帳號下拉與單一密碼欄位，且預設密碼提示為 0000", () => {
+    renderRoleSelect();
+
+    expect(screen.getByText("登入系統")).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "選擇帳號" })).toBeInTheDocument();
+    expect(screen.getAllByLabelText("登入密碼")).toHaveLength(1);
+    expect(screen.getByRole("option", { name: "醫師 - 蕭坤元醫師" })).toBeInTheDocument();
+    expect(screen.getAllByRole("option", { name: "行政人員" })).toHaveLength(2);
     expect(
       screen.getByText(/醫師登入後會立即要求手機瀏覽器定位分享/)
     ).toBeInTheDocument();
-    expect(screen.getAllByText(/預設密碼為 `0000`/).length).toBeGreaterThan(0);
-    expect(screen.getAllByRole("button", { name: "登入並進入" }).length).toBe(2);
+    expect(screen.getByText(/預設密碼為 `0000`/)).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "登入並進入" })).toHaveLength(1);
   });
 
   it("密碼錯誤時會顯示錯誤訊息", () => {
-    render(
-      <MemoryRouter>
-        <AppProviders>
-          <RoleSelectPage />
-        </AppProviders>
-      </MemoryRouter>
-    );
+    renderRoleSelect();
 
-    fireEvent.change(screen.getAllByLabelText("登入密碼")[0], {
+    fireEvent.change(screen.getByLabelText("登入密碼"), {
       target: { value: "1111" }
     });
-    fireEvent.click(screen.getAllByRole("button", { name: "登入並進入" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "登入並進入" }));
 
     expect(screen.getByRole("status")).toHaveTextContent("密碼錯誤");
   });
 
-  it("若帳號有未讀通知，登入頁會先顯示未讀提醒", () => {
+  it("選醫師帳號並輸入正確密碼後會進入醫師頁", () => {
+    renderRoleSelect();
+
+    fireEvent.change(screen.getByRole("combobox", { name: "選擇帳號" }), {
+      target: { value: "doctor:doc-001" }
+    });
+    fireEvent.change(screen.getByLabelText("登入密碼"), {
+      target: { value: "0000" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "登入並進入" }));
+
+    expect(screen.getByText("醫師首頁")).toBeInTheDocument();
+  });
+
+  it("選行政帳號並輸入該帳號密碼後會進入行政頁", async () => {
+    window.localStorage.setItem(
+      PASSWORD_STORAGE_KEY,
+      JSON.stringify({ "admin:admin-002": "2222" })
+    );
+    renderRoleSelect();
+
+    fireEvent.change(screen.getByRole("combobox", { name: "選擇帳號" }), {
+      target: { value: "admin:admin-002" }
+    });
+    fireEvent.change(screen.getByLabelText("登入密碼"), {
+      target: { value: "2222" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "登入並進入" }));
+
+    expect(screen.getByText("行政首頁")).toBeInTheDocument();
+    await waitFor(() => {
+      const session = JSON.parse(window.localStorage.getItem(SESSION_STORAGE_KEY) ?? "{}");
+      expect(session.activeAdminId).toBe("admin-002");
+      expect(session.authenticatedAdminId).toBe("admin-002");
+    });
+  });
+
+  it("若帳號有未讀通知，登入頁會依目前選取帳號顯示未讀提醒", () => {
     const seededDb = createSeedDb();
     window.localStorage.setItem(
       MOCK_DB_STORAGE_KEY,
@@ -97,15 +138,15 @@ describe("RoleSelectPage", () => {
       })
     );
 
-    render(
-      <MemoryRouter>
-        <AppProviders>
-          <RoleSelectPage />
-        </AppProviders>
-      </MemoryRouter>
-    );
+    renderRoleSelect();
 
-    expect(screen.getByText("這個醫師帳號目前有 1 則未讀通知，登入後請先查看通知中心。")).toBeInTheDocument();
-    expect(screen.getByText("行政人員目前有 1 則未讀通知，登入後請先查看通知中心。")).toBeInTheDocument();
+    expect(screen.getByText("醫師 - 蕭坤元醫師 目前有 1 則未讀通知，登入後請先查看通知中心。")).toBeInTheDocument();
+    expect(screen.queryByText("行政人員 目前有 1 則未讀通知，登入後請先查看通知中心。")).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByRole("combobox", { name: "選擇帳號" }), {
+      target: { value: "admin:admin-001" }
+    });
+
+    expect(screen.getByText("行政人員 目前有 1 則未讀通知，登入後請先查看通知中心。")).toBeInTheDocument();
   });
 });

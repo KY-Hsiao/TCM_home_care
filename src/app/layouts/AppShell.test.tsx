@@ -64,8 +64,9 @@ describe("AppShell", () => {
     expect(screen.queryByText("角色切換")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "登出" }));
 
-    expect(screen.getByText("居家醫師")).toBeInTheDocument();
-    expect(screen.getByText("行政管理")).toBeInTheDocument();
+    expect(screen.getByText("登入系統")).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "選擇帳號" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "登入並進入" })).toBeInTheDocument();
   });
 
   it("行政頁醫師追蹤頁不再顯示快捷聯絡醫師區塊", () => {

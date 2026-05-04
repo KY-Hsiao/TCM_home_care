@@ -35,7 +35,7 @@ export function AppProviders({ children }: PropsWithChildren) {
         : null;
     const authenticatedAdminId =
       typeof storedSession.authenticatedAdminId === "string"
-        ? defaultAdminId
+        ? storedSession.authenticatedAdminId
         : null;
 
     return {
@@ -112,7 +112,7 @@ export function AppProviders({ children }: PropsWithChildren) {
     services,
     session,
     login({ role, userId, password }) {
-      const normalizedUserId = role === "admin" ? defaultAdminId : userId;
+      const normalizedUserId = userId || (role === "admin" ? defaultAdminId : defaultDoctorId);
       const expectedPassword = resolvePassword(storedPasswords, role, normalizedUserId);
       if (password !== expectedPassword) {
         return {
@@ -125,12 +125,12 @@ export function AppProviders({ children }: PropsWithChildren) {
         ...current,
         role,
         activeDoctorId: role === "doctor" ? normalizedUserId : current.activeDoctorId,
-        activeAdminId: role === "admin" ? defaultAdminId : current.activeAdminId,
+        activeAdminId: role === "admin" ? normalizedUserId : current.activeAdminId,
         activeRoutePlanId: role === "doctor" ? null : current.activeRoutePlanId,
         authenticatedDoctorId:
           role === "doctor" ? normalizedUserId : current.authenticatedDoctorId,
         authenticatedAdminId:
-          role === "admin" ? defaultAdminId : current.authenticatedAdminId
+          role === "admin" ? normalizedUserId : current.authenticatedAdminId
       }));
 
       return {
