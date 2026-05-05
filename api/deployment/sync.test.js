@@ -27,12 +27,12 @@ async function importHandlerWithQuery(queryMock) {
       query: queryMock
     }))
   }));
-  return (await import("./index.js")).default;
+  return (await import("./sync.js")).default;
 }
 
 async function callAppDb(handler, method, body) {
   const response = createResponse();
-  await handler({ method, body }, response);
+  await handler({ method, body, query: { resource: "app-db" } }, response);
   return {
     statusCode: response.statusCode,
     headers: response.headers,
@@ -61,7 +61,7 @@ function createMinimalDb() {
   };
 }
 
-describe("/api/app-db", () => {
+describe("/api/deployment/sync?resource=app-db", () => {
   afterEach(() => {
     vi.resetModules();
     vi.doUnmock("@neondatabase/serverless");
@@ -147,5 +147,15 @@ describe("/api/app-db", () => {
     expect(result.statusCode).toBe(503);
     expect(result.body.reason).toBe("DATABASE_NOT_CONFIGURED");
     expect(result.body.error).toContain("DATABASE_URL");
+  });
+
+  it("原本部署同步路徑仍維持 POST 限制", async () => {
+    const handler = await importHandlerWithQuery(vi.fn());
+    const response = createResponse();
+
+    await handler({ method: "GET", query: {} }, response);
+
+    expect(response.statusCode).toBe(405);
+    expect(JSON.parse(response.body).error).toBe("Method Not Allowed");
   });
 });

@@ -1,6 +1,6 @@
 import { appDbSchema, type AppDb } from "../domain/models";
 
-const APP_DB_SYNC_ENDPOINT = "/api/app-db";
+const APP_DB_SYNC_ENDPOINT = "/api/deployment/sync?resource=app-db";
 const APP_DB_SYNC_DEBOUNCE_MS = 800;
 const TIMESTAMP_FIELD_NAMES = [
   "updated_at",
