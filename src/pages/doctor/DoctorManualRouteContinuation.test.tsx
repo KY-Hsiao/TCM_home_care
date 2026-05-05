@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SESSION_STORAGE_KEY } from "../../app/auth-storage";
@@ -119,7 +119,7 @@ describe("DoctorManualRouteContinuation", () => {
     vi.restoreAllMocks();
   });
 
-  it("單人紀錄開始行程時，會外接目前這一家的導航", () => {
+  it("單人紀錄開始行程時，會在頁內開啟目前這一家的導航", () => {
     const openSpy = vi.spyOn(window, "open").mockReturnValue(window);
 
     renderLocationPage();
@@ -130,13 +130,15 @@ describe("DoctorManualRouteContinuation", () => {
     openCurrentPatientDetail(currentDetail.patient.name);
     fireEvent.click(screen.getByRole("button", { name: "開始行程" }));
 
-    expect(openSpy).toHaveBeenCalled();
-    expect(String(openSpy.mock.lastCall?.[0] ?? "")).toContain(
-      `destination=${encodeURIComponent(currentDetail.schedule.address_snapshot)}`
+    const navigationWindow = screen.getByRole("dialog", { name: "Google 導航視窗" });
+    expect(openSpy).not.toHaveBeenCalled();
+    expect(within(navigationWindow).getByRole("link", { name: /外部 Google 地圖/ })).toHaveAttribute(
+      "href",
+      expect.stringContaining(`destination=${encodeURIComponent(currentDetail.schedule.address_snapshot)}`)
     );
   });
 
-  it("單人紀錄治療完成後接續下一站時，會外接下一家的導航", () => {
+  it("單人紀錄治療完成後接續下一站時，會在頁內開啟下一家的導航", () => {
     const openSpy = vi.spyOn(window, "open").mockReturnValue(window);
 
     renderLocationPage();
@@ -161,11 +163,14 @@ describe("DoctorManualRouteContinuation", () => {
     openCurrentPatientDetail(currentDetail.patient.name);
     fireEvent.click(screen.getByRole("button", { name: "啟程去下一個據點" }));
 
-    expect(openSpy).toHaveBeenCalled();
-    expect(String(openSpy.mock.lastCall?.[0] ?? "")).toContain(
-      `destination=${encodeURIComponent(nextDetail.schedule.address_snapshot)}`
+    const navigationWindow = screen.getByRole("dialog", { name: "Google 導航視窗" });
+    const externalLink = within(navigationWindow).getByRole("link", { name: /外部 Google 地圖/ });
+    expect(openSpy).not.toHaveBeenCalled();
+    expect(externalLink).toHaveAttribute(
+      "href",
+      expect.stringContaining(`destination=${encodeURIComponent(nextDetail.schedule.address_snapshot)}`)
     );
-    expect(String(openSpy.mock.lastCall?.[0] ?? "")).not.toContain(
+    expect(externalLink.getAttribute("href") ?? "").not.toContain(
       `destination=${encodeURIComponent(currentDetail.schedule.address_snapshot)}`
     );
   });

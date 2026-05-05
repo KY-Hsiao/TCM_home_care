@@ -24,13 +24,13 @@ const patientServiceNeedOptions = ["中藥", "針灸"] as const;
 const routeTimeSlotOptions = ["上午", "下午"] as const;
 const trackingMapOrigin = {
   address: "旗山醫院",
-  latitude: 22.88794,
-  longitude: 120.48341
+  latitude: 22.880693,
+  longitude: 120.483276
 } as const;
 const trackingMapDestination = {
   address: "旗山醫院",
-  latitude: 22.88794,
-  longitude: 120.48341
+  latitude: 22.880693,
+  longitude: 120.483276
 } as const;
 const locationStaleThresholdMs = 5 * 60 * 1000;
 const trackingMapTileSize = 256;
@@ -1049,6 +1049,9 @@ export function AdminDoctorTrackingPage() {
     startClientY: number;
     startCenterWorldX: number;
     startCenterWorldY: number;
+    startZoom: number;
+    clientToMapScaleX: number;
+    clientToMapScaleY: number;
   } | null>(null);
   const autoCenteredDoctorKeyRef = useRef<string>("");
   const [trackingMapSize, setTrackingMapSize] = useState<{ width: number; height: number }>(
@@ -1877,13 +1880,17 @@ export function AdminDoctorTrackingPage() {
                     return;
                   }
                   const currentTarget = event.currentTarget;
+                  const mapRect = currentTarget.getBoundingClientRect();
                   currentTarget.setPointerCapture(event.pointerId);
                   dragStateRef.current = {
                     pointerId: event.pointerId,
                     startClientX: event.clientX,
                     startClientY: event.clientY,
                     startCenterWorldX: trackingLongitudeToWorld(trackingMapView.centerLongitude, trackingMapView.zoom),
-                    startCenterWorldY: trackingLatitudeToWorld(trackingMapView.centerLatitude, trackingMapView.zoom)
+                    startCenterWorldY: trackingLatitudeToWorld(trackingMapView.centerLatitude, trackingMapView.zoom),
+                    startZoom: trackingMapView.zoom,
+                    clientToMapScaleX: trackingMapSize.width / Math.max(mapRect.width, 1),
+                    clientToMapScaleY: trackingMapSize.height / Math.max(mapRect.height, 1)
                   };
                 }}
                 onPointerMove={(event) => {
@@ -1891,14 +1898,19 @@ export function AdminDoctorTrackingPage() {
                     return;
                   }
                   const dragState = dragStateRef.current;
-                  const nextCenterWorldX = dragState.startCenterWorldX - (event.clientX - dragState.startClientX);
-                  const nextCenterWorldY = dragState.startCenterWorldY - (event.clientY - dragState.startClientY);
+                  if (dragState.pointerId !== event.pointerId) {
+                    return;
+                  }
+                  const deltaMapX = (event.clientX - dragState.startClientX) * dragState.clientToMapScaleX;
+                  const deltaMapY = (event.clientY - dragState.startClientY) * dragState.clientToMapScaleY;
+                  const nextCenterWorldX = dragState.startCenterWorldX - deltaMapX;
+                  const nextCenterWorldY = dragState.startCenterWorldY - deltaMapY;
                   setTrackingMapView((current) =>
                     current
                       ? {
                           ...current,
-                          centerLongitude: trackingWorldToLongitude(nextCenterWorldX, current.zoom),
-                          centerLatitude: trackingWorldToLatitude(nextCenterWorldY, current.zoom)
+                          centerLongitude: trackingWorldToLongitude(nextCenterWorldX, dragState.startZoom),
+                          centerLatitude: trackingWorldToLatitude(nextCenterWorldY, dragState.startZoom)
                         }
                       : current
                   );
@@ -1917,57 +1929,7 @@ export function AdminDoctorTrackingPage() {
                 }}
                 className="relative mt-3 h-[420px] overflow-hidden rounded-[1.35rem] border border-slate-200 bg-slate-100 touch-none cursor-grab active:cursor-grabbing lg:h-[560px] 2xl:h-[620px]"
               >
-                <div className="absolute inset-0 z-0 bg-[#eef3ee]">
-                  {visibleMapTiles.map((tile) => (
-                    <img
-                      key={tile.key}
-                      src={tile.src}
-                      alt=""
-                      draggable={false}
-                      className="pointer-events-none absolute select-none"
-                      style={{
-                        left: tile.left,
-                        top: tile.top,
-                        width: trackingMapTileSize,
-                        height: trackingMapTileSize
-                      }}
-                    />
-                  ))}
-                </div>
-                <div
-                  className="absolute right-3 top-3 z-20 flex flex-col gap-2"
-                  onPointerDown={(event) => event.stopPropagation()}
-                >
-                  <span
-                    aria-label="目前地圖縮放層級"
-                    className="rounded-full border border-white/80 bg-white/95 px-3 py-1.5 text-center text-[11px] font-semibold text-slate-600 shadow-sm backdrop-blur"
-                  >
-                    縮放 {trackingMapView.zoom}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      updateTrackingMapZoom(1);
-                    }}
-                    disabled={isTrackingZoomInDisabled}
-                    className="rounded-full border border-white/80 bg-white/95 px-3 py-2 text-xs font-semibold text-brand-ink shadow-sm backdrop-blur disabled:cursor-not-allowed disabled:opacity-45"
-                  >
-                    放大地圖
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      updateTrackingMapZoom(-1);
-                    }}
-                    disabled={isTrackingZoomOutDisabled}
-                    className="rounded-full border border-white/80 bg-white/95 px-3 py-2 text-xs font-semibold text-brand-ink shadow-sm backdrop-blur disabled:cursor-not-allowed disabled:opacity-45"
-                  >
-                    縮小地圖
-                  </button>
-                </div>
-                <div className="pointer-events-none absolute inset-0 z-[1] bg-[radial-gradient(circle_at_top,_rgba(255,255,255,0.16),_transparent_40%),linear-gradient(180deg,rgba(255,255,255,0.06),rgba(15,23,42,0.03))]" />
+                <div className="absolute inset-0 z-0 bg-[#eef3ee]" />
                 <svg
                   viewBox={`0 0 ${trackingMapSize.width} ${trackingMapSize.height}`}
                   className="pointer-events-none absolute inset-0 z-10 h-full w-full select-none"
@@ -1976,7 +1938,30 @@ export function AdminDoctorTrackingPage() {
                     <filter id="tracking-marker-shadow" x="-50%" y="-50%" width="200%" height="200%">
                       <feDropShadow dx="0" dy="1.2" stdDeviation="1.8" floodColor="#0f172a" floodOpacity="0.28" />
                     </filter>
+                    <linearGradient id="tracking-map-sheen" x1="0" x2="0" y1="0" y2="1">
+                      <stop offset="0%" stopColor="#ffffff" stopOpacity="0.18" />
+                      <stop offset="100%" stopColor="#0f172a" stopOpacity="0.04" />
+                    </linearGradient>
                   </defs>
+                  {visibleMapTiles.map((tile) => (
+                    <image
+                      key={tile.key}
+                      href={tile.src}
+                      x={tile.left}
+                      y={tile.top}
+                      width={trackingMapTileSize}
+                      height={trackingMapTileSize}
+                      preserveAspectRatio="none"
+                    />
+                  ))}
+                  <rect
+                    x="0"
+                    y="0"
+                    width={trackingMapSize.width}
+                    height={trackingMapSize.height}
+                    fill="url(#tracking-map-sheen)"
+                    opacity="0.45"
+                  />
                   <polyline
                     points={trackingMapScreenPoints.routeStops.map((point) => `${point.x},${point.y}`).join(" ")}
                     fill="none"
@@ -2093,6 +2078,39 @@ export function AdminDoctorTrackingPage() {
                     );
                   })}
                 </svg>
+                <div
+                  className="absolute right-3 top-3 z-20 flex flex-col gap-2"
+                  onPointerDown={(event) => event.stopPropagation()}
+                >
+                  <span
+                    aria-label="目前地圖縮放層級"
+                    className="rounded-full border border-white/80 bg-white/95 px-3 py-1.5 text-center text-[11px] font-semibold text-slate-600 shadow-sm backdrop-blur"
+                  >
+                    縮放 {trackingMapView.zoom}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      updateTrackingMapZoom(1);
+                    }}
+                    disabled={isTrackingZoomInDisabled}
+                    className="rounded-full border border-white/80 bg-white/95 px-3 py-2 text-xs font-semibold text-brand-ink shadow-sm backdrop-blur disabled:cursor-not-allowed disabled:opacity-45"
+                  >
+                    放大地圖
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      updateTrackingMapZoom(-1);
+                    }}
+                    disabled={isTrackingZoomOutDisabled}
+                    className="rounded-full border border-white/80 bg-white/95 px-3 py-2 text-xs font-semibold text-brand-ink shadow-sm backdrop-blur disabled:cursor-not-allowed disabled:opacity-45"
+                  >
+                    縮小地圖
+                  </button>
+                </div>
                 <div className="absolute left-3 top-3 z-20 rounded-full bg-white/92 px-3 py-1 text-[11px] font-semibold text-brand-ink shadow-sm">
                   可拖曳移動地圖，請改用右上角按鍵放大或縮小，重新點醫師姓名可回到醫師中心
                 </div>

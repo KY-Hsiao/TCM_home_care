@@ -1019,6 +1019,8 @@ describe("AdminPages", () => {
     const decodedRouteUrl = decodeURIComponent(routeLink.getAttribute("href") ?? "");
 
     expect(decodedRouteUrl).toContain(activeSchedule.address_snapshot);
+    expect(decodedRouteUrl).toContain("22.880693,120.483276");
+    expect(decodedRouteUrl).not.toContain("22.88794,120.48341");
     expect(decodedRouteUrl).not.toContain(pausedSchedule.address_snapshot);
     expect(decodedRouteUrl).not.toContain(completedSchedule.address_snapshot);
   });
@@ -1065,6 +1067,24 @@ describe("AdminPages", () => {
 
   it("AdminDoctorTrackingPage 在桌機版會停止滾輪縮放，但保留拖曳與按鍵縮放", async () => {
     const originalMatchMedia = window.matchMedia;
+    const originalSetPointerCapture = Element.prototype.setPointerCapture;
+    const originalReleasePointerCapture = Element.prototype.releasePointerCapture;
+    const boundingRectSpy = vi
+      .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+      .mockImplementation(
+        () =>
+          ({
+            width: 480,
+            height: 220,
+            top: 0,
+            left: 0,
+            right: 480,
+            bottom: 220,
+            x: 0,
+            y: 0,
+            toJSON: () => ({})
+          }) as DOMRect
+      );
     window.matchMedia = vi.fn().mockImplementation(() => ({
       matches: true,
       media: "(min-width: 1024px) and (hover: hover) and (pointer: fine)",
@@ -1075,6 +1095,8 @@ describe("AdminPages", () => {
       removeListener: vi.fn(),
       dispatchEvent: vi.fn()
     }));
+    Element.prototype.setPointerCapture = vi.fn();
+    Element.prototype.releasePointerCapture = vi.fn();
 
     renderWithProviders(<AdminDoctorTrackingPage />);
 
@@ -1107,7 +1129,56 @@ describe("AdminPages", () => {
       expect(zoomLabel.textContent).not.toBe(zoomAfterOutText);
     });
 
+    const trackingMap = screen.getByLabelText("蕭坤元醫師 追蹤地圖");
+    await waitFor(() => {
+      expect(trackingMap.querySelector("image")).toBeTruthy();
+      expect(trackingMap.querySelector("circle[stroke='#ffffff']")).toBeTruthy();
+    });
+    boundingRectSpy.mockImplementation(
+      () =>
+        ({
+          width: 240,
+          height: 110,
+          top: 0,
+          left: 0,
+          right: 240,
+          bottom: 110,
+          x: 0,
+          y: 0,
+          toJSON: () => ({})
+        }) as DOMRect
+    );
+    const tileBeforeDrag = trackingMap.querySelector("image");
+    const markerBeforeDrag = trackingMap.querySelector("circle[stroke='#ffffff']");
+    const tileXBeforeDrag = Number(tileBeforeDrag?.getAttribute("x"));
+    const markerXBeforeDrag = Number(markerBeforeDrag?.getAttribute("cx"));
+
+    const dispatchMapPointerEvent = (eventName: string, clientX: number, clientY: number) => {
+      const pointerEvent = new MouseEvent(eventName, {
+        bubbles: true,
+        cancelable: true,
+        clientX,
+        clientY
+      });
+      Object.defineProperty(pointerEvent, "pointerId", { value: 8 });
+      fireEvent(trackingMap, pointerEvent);
+    };
+
+    dispatchMapPointerEvent("pointerdown", 100, 100);
+    dispatchMapPointerEvent("pointermove", 110, 100);
+
+    await waitFor(() => {
+      const tileAfterDrag = trackingMap.querySelector("image");
+      const markerAfterDrag = trackingMap.querySelector("circle[stroke='#ffffff']");
+      const tileDelta = Number(tileAfterDrag?.getAttribute("x")) - tileXBeforeDrag;
+      const markerDelta = Number(markerAfterDrag?.getAttribute("cx")) - markerXBeforeDrag;
+      expect(tileDelta).toBeGreaterThan(10);
+      expect(markerDelta).toBeCloseTo(tileDelta, 3);
+    });
+
     window.matchMedia = originalMatchMedia;
+    Element.prototype.setPointerCapture = originalSetPointerCapture;
+    Element.prototype.releasePointerCapture = originalReleasePointerCapture;
   });
 
   it("AdminDoctorTrackingPage 會標示定位延遲與尚未收到定位", () => {

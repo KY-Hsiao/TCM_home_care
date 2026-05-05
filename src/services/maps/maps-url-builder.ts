@@ -105,9 +105,6 @@ export function createMapsUrlBuilder(options?: { embedApiKey?: string | null }):
       originLatitude,
       originLongitude
     }) {
-      if (!embedApiKey) {
-        return null;
-      }
       const origin = formatCoordinateQuery(originLatitude ?? null, originLongitude ?? null);
       if (!origin) {
         return null;
@@ -118,6 +115,9 @@ export function createMapsUrlBuilder(options?: { embedApiKey?: string | null }):
         latitude: destinationLatitude,
         longitude: destinationLongitude
       });
+      if (!embedApiKey) {
+        return `https://maps.google.com/maps?f=d&saddr=${encodeURIComponent(origin)}&daddr=${encodeURIComponent(destination)}&dirflg=d&output=embed`;
+      }
       return `https://www.google.com/maps/embed/v1/directions?key=${encodeURIComponent(embedApiKey)}&origin=${encodeURIComponent(origin)}&destination=${encodeURIComponent(destination)}&mode=driving`;
     },
     buildRouteDirectionsUrl(input) {
