@@ -3,54 +3,53 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>系統內嵌導航</title>
+  <title>Google 內嵌導航</title>
   <style>
-    body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans TC",sans-serif;background:#eaf4f0;color:#172033}.wrap{min-height:100vh;padding:14px;box-sizing:border-box;display:grid;gap:12px}.panel{border-radius:24px;background:#fff;box-shadow:0 14px 36px rgba(15,23,42,.15);overflow:hidden}.head{padding:16px 18px}.eyebrow{margin:0;color:#d76a5f;font-size:12px;font-weight:800;letter-spacing:.16em}h1{margin:8px 0 4px;font-size:28px}.hint{margin:0;color:#64748b;font-size:14px;line-height:1.6}.map{position:relative;height:58vh;min-height:370px;background:linear-gradient(135deg,#bbf7d0,#dbeafe 55%,#fde68a);overflow:hidden}.road{position:absolute;height:18px;background:#fff;border:1px solid rgba(15,23,42,.12);border-radius:999px;box-shadow:0 4px 8px rgba(15,23,42,.12)}.a{left:-12%;right:-8%;top:28%;transform:rotate(-12deg)}.b{left:-18%;right:-10%;top:62%;transform:rotate(18deg)}.c{left:47%;top:-15%;width:18px;height:130%;transform:rotate(8deg)}.route{position:absolute;left:50%;top:18%;height:64%;width:10px;transform:translateX(-50%);border-radius:999px;background:repeating-linear-gradient(to bottom,#2563eb 0 18px,transparent 18px 30px);filter:drop-shadow(0 3px 4px rgba(15,23,42,.28))}.origin,.dest{position:absolute;left:50%;display:grid;place-items:center;border-radius:999px;border:5px solid #fff;box-shadow:0 10px 24px rgba(15,23,42,.32);font-weight:900;color:#fff}.origin{bottom:17%;width:58px;height:58px;background:#2563eb;font-size:28px;transform:translate(-50%,50%) rotate(0deg)}.dest{top:18%;width:50px;height:50px;background:#dc2626;font-size:22px;transform:translate(-50%,-50%)}.banner{position:absolute;left:14px;right:14px;bottom:14px;border-radius:22px;background:rgba(15,23,42,.88);color:#fff;padding:14px 16px}.banner strong{display:block;font-size:20px}.banner span{display:block;margin-top:5px;color:#dbeafe;font-size:13px;line-height:1.45}.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;padding:12px}.metric{border-radius:18px;background:#f1f5f9;padding:11px 12px}.metric span{display:block;color:#64748b;font-size:11px;font-weight:800;letter-spacing:.08em}.metric strong{display:block;margin-top:4px;font-size:17px}.stops{padding:14px;display:grid;gap:10px}.stop{border-radius:18px;background:#f8fafc;border:1px solid #e2e8f0;padding:12px 14px}.stop span{display:block;color:#64748b;font-size:11px;font-weight:800;letter-spacing:.08em}.stop strong{display:block;margin-top:4px;word-break:break-word;line-height:1.45}.note{border-radius:18px;background:#fff7ed;color:#9a3412;padding:12px 14px;font-size:13px;line-height:1.6}@media(max-width:560px){.metrics{grid-template-columns:1fr}.map{height:56vh;min-height:350px}}
+    body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans TC",sans-serif;background:#eaf4f0;color:#172033}.wrap{min-height:100vh;padding:12px;box-sizing:border-box;display:grid;grid-template-rows:auto minmax(390px,1fr) auto;gap:10px}.panel{border-radius:22px;background:#fff;box-shadow:0 12px 30px rgba(15,23,42,.14);overflow:hidden}.head{padding:14px 16px}.eyebrow{margin:0;color:#d76a5f;font-size:12px;font-weight:800;letter-spacing:.16em}h1{margin:6px 0 4px;font-size:25px}.hint{margin:0;color:#64748b;font-size:13px;line-height:1.5}.map-panel{position:relative;min-height:390px}.map{height:58vh;min-height:390px}.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:10px}.metric{border-radius:16px;background:#f1f5f9;padding:9px 11px}.metric span{display:block;color:#64748b;font-size:11px;font-weight:800;letter-spacing:.08em}.metric strong{display:block;margin-top:4px;font-size:16px}.instructions{max-height:32vh;overflow:auto;padding:10px 14px;border-top:1px solid #e2e8f0}.instructions:empty:before{content:'正在計算路線與導航指示';color:#64748b;font-size:14px}.adp,.adp table{font-family:inherit}.adp-placemark{border-radius:14px;overflow:hidden}.status{padding:10px 14px;border-top:1px solid #e2e8f0;color:#64748b;font-size:13px;line-height:1.5}.warning{border-radius:18px;background:#fff7ed;color:#9a3412;margin:10px;padding:12px 14px;font-size:13px;line-height:1.6}.hidden{display:none}@media(max-width:560px){.wrap{padding:8px}.metrics{grid-template-columns:1fr}.map{height:56vh;min-height:360px}.instructions{max-height:36vh}}
   </style>
 </head>
 <body>
   <main class="wrap">
     <section class="panel">
       <div class="head">
-        <p class="eyebrow">系統內嵌導航地圖</p>
-        <h1>依地圖指引前進</h1>
-        <p class="hint">本畫面留在程式內運作，顯示目前位置、目的地、前進方向與距離。抵達後請按外層「已抵達」。</p>
-      </div>
-      <div class="map">
-        <div class="road a"></div><div class="road b"></div><div class="road c"></div>
-        <div class="route"></div><div id="destMarker" class="dest">●</div><div id="originMarker" class="origin">▲</div>
-        <div class="banner"><strong>朝目的地前進</strong><span id="destText">讀取目的地中</span></div>
-      </div>
-      <div class="metrics">
-        <div class="metric"><span>距離</span><strong id="distanceText">等待定位</strong></div>
-        <div class="metric"><span>方向</span><strong id="bearingText">—</strong></div>
-        <div class="metric"><span>模式</span><strong>開車</strong></div>
+        <p class="eyebrow">Google 內嵌導航</p>
+        <h1>依 Google 路線指示前進</h1>
+        <p class="hint">本畫面留在程式內，使用 Google Maps JavaScript API 計算路線、顯示地圖與逐步方向指示。抵達後請按外層「已抵達」。</p>
       </div>
     </section>
-    <section class="panel"><div class="stops">
-      <div class="stop"><span>目前位置</span><strong id="originText">等待醫師定位</strong></div>
-      <div class="stop"><span>目的地</span><strong id="destinationText">讀取目的地中</strong></div>
-      <div class="note">這是系統內建的地圖式導航畫面，不會跳出程式外。若未來要做真正道路轉彎與語音指示，需再接路線規劃 API。</div>
-    </div></section>
+    <section class="panel map-panel">
+      <div id="map" class="map"></div>
+      <div id="fallback" class="warning hidden"></div>
+      <div class="metrics">
+        <div class="metric"><span>距離</span><strong id="distanceText">等待定位</strong></div>
+        <div class="metric"><span>時間</span><strong id="durationText">—</strong></div>
+        <div class="metric"><span>模式</span><strong>開車</strong></div>
+      </div>
+      <div id="directionsPanel" class="instructions"></div>
+      <div id="statusText" class="status">正在啟動 Google 內嵌導航。</div>
+    </section>
   </main>
   <script>
     const params=new URLSearchParams(location.search);
-    const destination=params.get('destination')||'目的地';
+    const key=params.get('key')||'';
+    const destinationText=params.get('destination')||'目的地';
     const dlat=Number(params.get('dlat'));
     const dlng=Number(params.get('dlng'));
-    let currentLat=Number(params.get('olat'));
-    let currentLng=Number(params.get('olng'));
+    let olat=Number(params.get('olat'));
+    let olng=Number(params.get('olng'));
     const hasDest=Number.isFinite(dlat)&&Number.isFinite(dlng);
-    const hasOrigin=Number.isFinite(currentLat)&&Number.isFinite(currentLng);
+    const hasOrigin=Number.isFinite(olat)&&Number.isFinite(olng);
     const $=id=>document.getElementById(id);
-    $('destText').textContent=destination;
-    $('destinationText').textContent=destination;
-    function distanceMeters(a,b,c,d){const R=6371000,p=x=>x*Math.PI/180;const A=p(c-a),B=p(d-b);const s=Math.sin(A/2)**2+Math.cos(p(a))*Math.cos(p(c))*Math.sin(B/2)**2;return R*2*Math.atan2(Math.sqrt(s),Math.sqrt(1-s));}
-    function bearing(a,b,c,d){const p=x=>x*Math.PI/180;const y=Math.sin(p(d-b))*Math.cos(p(c));const x=Math.cos(p(a))*Math.sin(p(c))-Math.sin(p(a))*Math.cos(p(c))*Math.cos(p(d-b));return (Math.atan2(y,x)*180/Math.PI+360)%360;}
-    function fmt(m){if(!Number.isFinite(m))return'等待定位';return m>=1000?(m/1000).toFixed(1)+' 公里':Math.round(m)+' 公尺';}
-    function update(lat,lng){if(Number.isFinite(lat)&&Number.isFinite(lng)){$('originText').textContent=lat.toFixed(5)+', '+lng.toFixed(5);}if(hasDest&&Number.isFinite(lat)&&Number.isFinite(lng)){const dist=distanceMeters(lat,lng,dlat,dlng);const br=Math.round(bearing(lat,lng,dlat,dlng));$('distanceText').textContent=fmt(dist);$('bearingText').textContent=br+'°';$('originMarker').style.transform='translate(-50%,50%) rotate('+br+'deg)';}}
-    if(hasOrigin)update(currentLat,currentLng);
-    if(navigator.geolocation){navigator.geolocation.watchPosition(pos=>update(pos.coords.latitude,pos.coords.longitude),()=>{}, {enableHighAccuracy:true,maximumAge:5000,timeout:12000});}
+    let map,directionsService,directionsRenderer,currentMarker,lastRouteAt=0,lastOrigin=null;
+    function setStatus(text){$('statusText').textContent=text;}
+    function showFallback(text){$('fallback').classList.remove('hidden');$('fallback').textContent=text;setStatus(text);}
+    function fmtMeters(m){return m>=1000?(m/1000).toFixed(1)+' 公里':Math.round(m)+' 公尺';}
+    function loadGoogle(){if(!key){showFallback('缺少 Google Maps API key，無法啟動 Google 內嵌導航。請在行政端或環境變數設定 Google Maps API key，並啟用 Maps JavaScript API 與 Directions API。');return;}const s=document.createElement('script');s.src='https://maps.googleapis.com/maps/api/js?key='+encodeURIComponent(key)+'&callback=initMap&libraries=routes&language=zh-TW';s.async=true;s.defer=true;s.onerror=()=>showFallback('Google Maps JavaScript API 載入失敗，請確認 API key、網域限制與啟用服務。');document.head.appendChild(s);}
+    window.initMap=()=>{if(!hasDest){showFallback('目的地缺少座標，無法計算導航路線。請先補座標。');return;}const dest={lat:dlat,lng:dlng};const start=hasOrigin?{lat:olat,lng:olng}:dest;map=new google.maps.Map($('map'),{center:start,zoom:16,mapTypeControl:false,streetViewControl:false,fullscreenControl:false});directionsService=new google.maps.DirectionsService();directionsRenderer=new google.maps.DirectionsRenderer({map,panel:$('directionsPanel'),suppressMarkers:false,preserveViewport:false});new google.maps.Marker({position:dest,map,label:'目的地'});if(hasOrigin){updateOrigin(start.lat,start.lng,true);}setStatus('Google 內嵌導航已啟動，正在等待即時定位。');startWatch();};
+    function updateOrigin(lat,lng,force){const origin={lat,lng};if(!currentMarker){currentMarker=new google.maps.Marker({position:origin,map,label:'目前',icon:{path:google.maps.SymbolPath.FORWARD_CLOSED_ARROW,scale:6,fillColor:'#2563eb',fillOpacity:1,strokeColor:'#fff',strokeWeight:2}});}else{currentMarker.setPosition(origin);}map.setCenter(origin);const now=Date.now();const moved=!lastOrigin||google.maps.geometry?true:true;if(force||now-lastRouteAt>12000){route(origin);lastRouteAt=now;lastOrigin=origin;}}
+    function route(origin){const dest={lat:dlat,lng:dlng};directionsService.route({origin,destination:dest,travelMode:google.maps.TravelMode.DRIVING,unitSystem:google.maps.UnitSystem.METRIC},(result,status)=>{if(status==='OK'&&result){directionsRenderer.setDirections(result);const leg=result.routes[0]?.legs[0];if(leg){$('distanceText').textContent=leg.distance?.text||'—';$('durationText').textContent=leg.duration?.text||'—';setStatus('路線已更新；請依地圖與下方逐步指示前進。');}}else{showFallback('Google 無法計算路線：'+status);}});}
+    function startWatch(){if(!navigator.geolocation){showFallback('此瀏覽器不支援定位，無法進行即時導航。');return;}navigator.geolocation.watchPosition(pos=>{updateOrigin(pos.coords.latitude,pos.coords.longitude,false);},err=>{setStatus('定位尚未授權或暫時失敗：'+err.message+'。請允許瀏覽器定位。');},{enableHighAccuracy:true,maximumAge:5000,timeout:12000});}
+    loadGoogle();
   </script>
 </body>
 </html>
