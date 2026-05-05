@@ -44,6 +44,164 @@ function resolveEmbedApiKey(defaultEmbedApiKey: string) {
   return defaultEmbedApiKey || loadAdminApiTokenSettings().googleMapsApiKey.trim();
 }
 
+function escapeHtml(value: string) {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function buildInternalNavigationDataUrl(input: {
+  origin: string | null;
+  destination: string;
+  externalUrl: string;
+}) {
+  const originText = input.origin ?? "尚未取得醫師目前定位";
+  const html = `<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans TC", sans-serif;
+      background: #f8fafc;
+      color: #172033;
+    }
+    body {
+      margin: 0;
+      background: linear-gradient(180deg, #f8fafc 0%, #eef6f2 100%);
+    }
+    .wrap {
+      min-height: 100vh;
+      box-sizing: border-box;
+      padding: 20px;
+      display: grid;
+      place-items: center;
+    }
+    .card {
+      width: min(720px, 100%);
+      box-sizing: border-box;
+      border: 1px solid #dbe3df;
+      border-radius: 28px;
+      background: #fff;
+      box-shadow: 0 20px 50px rgba(15, 23, 42, 0.12);
+      padding: 24px;
+    }
+    .eyebrow {
+      margin: 0;
+      color: #d76a5f;
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0.18em;
+    }
+    h1 {
+      margin: 10px 0 8px;
+      font-size: clamp(24px, 5vw, 36px);
+      line-height: 1.15;
+    }
+    .hint {
+      margin: 0;
+      color: #64748b;
+      font-size: 15px;
+      line-height: 1.7;
+    }
+    .route {
+      margin-top: 22px;
+      display: grid;
+      gap: 12px;
+    }
+    .stop {
+      border: 1px solid #e2e8f0;
+      border-radius: 20px;
+      padding: 16px;
+      background: #f8fafc;
+    }
+    .stop span {
+      display: block;
+      color: #64748b;
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+    }
+    .stop strong {
+      display: block;
+      margin-top: 6px;
+      font-size: 17px;
+      line-height: 1.45;
+      word-break: break-word;
+    }
+    .arrow {
+      width: 38px;
+      height: 38px;
+      border-radius: 999px;
+      display: grid;
+      place-items: center;
+      background: #2f6f5e;
+      color: white;
+      font-weight: 900;
+      margin: -4px auto;
+    }
+    .actions {
+      display: grid;
+      gap: 10px;
+      margin-top: 22px;
+    }
+    .button {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 54px;
+      border-radius: 999px;
+      text-decoration: none;
+      color: white;
+      background: #2f6f5e;
+      font-weight: 800;
+      font-size: 16px;
+    }
+    .note {
+      margin: 14px 0 0;
+      border-radius: 18px;
+      background: #fff7ed;
+      color: #9a3412;
+      padding: 12px 14px;
+      font-size: 13px;
+      line-height: 1.6;
+    }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <section class="card" aria-label="內嵌導航系統">
+      <p class="eyebrow">內嵌導航系統</p>
+      <h1>導航進行中</h1>
+      <p class="hint">本畫面是系統內建的導航操作介面。醫師可保持在此頁面，抵達後使用頁面上方或外層的「已抵達」按鈕回寫狀態。</p>
+      <div class="route">
+        <div class="stop">
+          <span>起點</span>
+          <strong>${escapeHtml(originText)}</strong>
+        </div>
+        <div class="arrow">↓</div>
+        <div class="stop">
+          <span>目的地</span>
+          <strong>${escapeHtml(input.destination)}</strong>
+        </div>
+      </div>
+      <div class="actions">
+        <a class="button" href="${escapeHtml(input.externalUrl)}" target="_blank" rel="noreferrer">開啟 Google Maps 實際導航</a>
+      </div>
+      <p class="note">若瀏覽器或 Google Maps 不允許真正逐步導航嵌入 iframe，系統仍會保留本內嵌導航操作介面；實際語音與逐步導航請用上方按鈕啟動 Google Maps。</p>
+    </section>
+  </main>
+</body>
+</html>`;
+
+  return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
+}
+
 function buildRouteWaypointQuery(waypoints: RouteMapInput["waypoints"]) {
   return waypoints.map((waypoint) => resolveMapQuery(waypoint)).join("|");
 }
@@ -110,19 +268,23 @@ export function createMapsUrlBuilder(options?: { embedApiKey?: string | null }):
       originLongitude
     }) {
       const origin = formatCoordinateQuery(originLatitude ?? null, originLongitude ?? null);
-      if (!origin) {
-        return null;
-      }
-      const resolvedEmbedApiKey = resolveEmbedApiKey(embedApiKey);
-      if (!resolvedEmbedApiKey) {
-        return null;
-      }
       const destination = resolveMapQuery({
         address: destinationAddress,
         locationKeyword: destinationKeyword,
         latitude: destinationLatitude,
         longitude: destinationLongitude
       });
+      const externalUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}${
+        origin ? `&origin=${encodeURIComponent(origin)}` : ""
+      }&travelmode=driving`;
+      const resolvedEmbedApiKey = resolveEmbedApiKey(embedApiKey);
+      if (!origin || !resolvedEmbedApiKey) {
+        return buildInternalNavigationDataUrl({
+          origin,
+          destination,
+          externalUrl
+        });
+      }
       return `https://www.google.com/maps/embed/v1/directions?key=${encodeURIComponent(resolvedEmbedApiKey)}&origin=${encodeURIComponent(origin)}&destination=${encodeURIComponent(destination)}&mode=driving`;
     },
     buildRouteDirectionsUrl(input) {
