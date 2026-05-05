@@ -126,4 +126,37 @@ describe("mock db loader", () => {
       "route-fresh-001"
     ]);
   });
+
+  it("會自動修正既有旗山醫院路線起終點舊座標", () => {
+    const seeded = createSeedDb();
+    const legacyRoutePlan = {
+      ...seeded.saved_route_plans[0],
+      start_address: "旗山醫院",
+      start_latitude: 22.88794,
+      start_longitude: 120.48341,
+      end_address: "旗山醫院",
+      end_latitude: 22.88794,
+      end_longitude: 120.48341
+    };
+
+    window.localStorage.setItem(
+      MOCK_DB_STORAGE_KEY,
+      JSON.stringify({
+        ...seeded,
+        saved_route_plans: [legacyRoutePlan]
+      })
+    );
+
+    const db = loadDb();
+    const persistedDb = JSON.parse(window.localStorage.getItem(MOCK_DB_STORAGE_KEY) ?? "{}");
+    const migratedRoutePlan = db.saved_route_plans[0];
+    const persistedRoutePlan = persistedDb.saved_route_plans[0];
+
+    expect(migratedRoutePlan.start_latitude).toBe(22.880693);
+    expect(migratedRoutePlan.start_longitude).toBe(120.483276);
+    expect(migratedRoutePlan.end_latitude).toBe(22.880693);
+    expect(migratedRoutePlan.end_longitude).toBe(120.483276);
+    expect(persistedRoutePlan.start_latitude).toBe(22.880693);
+    expect(persistedRoutePlan.end_longitude).toBe(120.483276);
+  });
 });

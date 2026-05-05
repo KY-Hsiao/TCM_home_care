@@ -75,13 +75,13 @@ const weekdayOptions = ["星期一", "星期二", "星期三", "星期四", "星
 const routeTimeSlotOptions: RouteTimeSlot[] = ["上午", "下午"];
 const routeStartLocation = {
   address: "旗山醫院",
-  latitude: 22.88794,
-  longitude: 120.48341
+  latitude: 22.880693,
+  longitude: 120.483276
 } as const;
 const routeEndLocation = {
   address: "旗山醫院",
-  latitude: 22.88794,
-  longitude: 120.48341
+  latitude: 22.880693,
+  longitude: 120.483276
 } as const;
 const routeDatePreviewWindowDays = 30;
 const familyLineSettingsStorageKey = "tcm-family-line-settings";

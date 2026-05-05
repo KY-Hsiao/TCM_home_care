@@ -6,6 +6,11 @@ const RECOVERY_KEY_PREFIX = "tcm-home-care-mvp-db-recovery";
 const ROUTE_PLAN_RETENTION_DAYS = 30;
 const REMOVED_LEGACY_DOCTOR_ID = "doc-002";
 const REMOVED_LEGACY_DOCTOR_NAME = "林若謙醫師";
+const HOSPITAL_ADDRESS = "旗山醫院";
+const HOSPITAL_LATITUDE = 22.880693;
+const HOSPITAL_LONGITUDE = 120.483276;
+const LEGACY_HOSPITAL_LATITUDE = 22.88794;
+const LEGACY_HOSPITAL_LONGITUDE = 120.48341;
 
 function formatLocalDate(date: Date) {
   const year = date.getFullYear();
@@ -99,8 +104,46 @@ function removeLegacyLinDoctorSeed(db: AppDb): AppDb {
   };
 }
 
+function isLegacyHospitalCoordinate(latitude: number | null, longitude: number | null) {
+  return latitude === LEGACY_HOSPITAL_LATITUDE && longitude === LEGACY_HOSPITAL_LONGITUDE;
+}
+
+function normalizeHospitalRoutePlanEndpoints(db: AppDb): AppDb {
+  let didChange = false;
+  const savedRoutePlans = db.saved_route_plans.map((routePlan) => {
+    const shouldFixStart =
+      routePlan.start_address === HOSPITAL_ADDRESS &&
+      isLegacyHospitalCoordinate(routePlan.start_latitude, routePlan.start_longitude);
+    const shouldFixEnd =
+      routePlan.end_address === HOSPITAL_ADDRESS &&
+      isLegacyHospitalCoordinate(routePlan.end_latitude, routePlan.end_longitude);
+
+    if (!shouldFixStart && !shouldFixEnd) {
+      return routePlan;
+    }
+
+    didChange = true;
+    return {
+      ...routePlan,
+      start_latitude: shouldFixStart ? HOSPITAL_LATITUDE : routePlan.start_latitude,
+      start_longitude: shouldFixStart ? HOSPITAL_LONGITUDE : routePlan.start_longitude,
+      end_latitude: shouldFixEnd ? HOSPITAL_LATITUDE : routePlan.end_latitude,
+      end_longitude: shouldFixEnd ? HOSPITAL_LONGITUDE : routePlan.end_longitude
+    };
+  });
+
+  return didChange
+    ? {
+        ...db,
+        saved_route_plans: savedRoutePlans
+      }
+    : db;
+}
+
 function seedAndPersistDb(): AppDb {
-  const seeded = removeExpiredSavedRoutePlans(removeLegacyLinDoctorSeed(createSeedDb()));
+  const seeded = normalizeHospitalRoutePlanEndpoints(
+    removeExpiredSavedRoutePlans(removeLegacyLinDoctorSeed(createSeedDb()))
+  );
   window.localStorage.setItem(MOCK_DB_STORAGE_KEY, JSON.stringify(seeded));
   return seeded;
 }
@@ -120,7 +163,9 @@ function parseDbSnapshot(raw: string | null): AppDb | null {
 
 export function loadDb(): AppDb {
   if (typeof window === "undefined") {
-    return removeExpiredSavedRoutePlans(removeLegacyLinDoctorSeed(createSeedDb()));
+    return normalizeHospitalRoutePlanEndpoints(
+      removeExpiredSavedRoutePlans(removeLegacyLinDoctorSeed(createSeedDb()))
+    );
   }
 
   const raw = window.localStorage.getItem(MOCK_DB_STORAGE_KEY);
@@ -131,7 +176,7 @@ export function loadDb(): AppDb {
   try {
     const parsedDb = appDbSchema.parse(JSON.parse(raw));
     const migratedDb = removeLegacyLinDoctorSeed(parsedDb);
-    const cleanedDb = removeExpiredSavedRoutePlans(migratedDb);
+    const cleanedDb = normalizeHospitalRoutePlanEndpoints(removeExpiredSavedRoutePlans(migratedDb));
     if (migratedDb !== parsedDb || cleanedDb !== migratedDb) {
       window.localStorage.setItem(MOCK_DB_STORAGE_KEY, JSON.stringify(cleanedDb));
     }
@@ -151,7 +196,9 @@ export function persistDb(db: AppDb): void {
 
   window.localStorage.setItem(
     MOCK_DB_STORAGE_KEY,
-    JSON.stringify(removeExpiredSavedRoutePlans(removeLegacyLinDoctorSeed(db)))
+    JSON.stringify(
+      normalizeHospitalRoutePlanEndpoints(removeExpiredSavedRoutePlans(removeLegacyLinDoctorSeed(db)))
+    )
   );
 }
 

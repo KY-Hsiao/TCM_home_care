@@ -507,6 +507,16 @@ describe("AdminPages", () => {
     );
   });
 
+  it("AdminSchedulesPage 預設起終點會使用旗山醫院正確座標", () => {
+    renderWithProviders(<AdminSchedulesPage />);
+
+    selectScheduleFilters();
+
+    const routeLink = screen.getByRole("link", { name: "用 Google 地圖開啟完整路線" });
+    expect(routeLink).toHaveAttribute("href", expect.stringContaining(encodeURIComponent("22.880693,120.483276")));
+    expect(routeLink).not.toHaveAttribute("href", expect.stringContaining(encodeURIComponent("22.88794,120.48341")));
+  });
+
   it("AdminSchedulesPage 補座標失敗時會在地圖預覽顯示 Google 回傳原因", async () => {
     const customDb = createSeedDb();
     customDb.patients = customDb.patients.map((patient) =>
@@ -668,6 +678,10 @@ describe("AdminPages", () => {
     const executedSchedules = (storedDb.visit_schedules ?? []).filter(
       (schedule: { id: string }) => executedScheduleIds.has(schedule.id)
     );
+    expect(executedRoutePlan.start_latitude).toBe(22.880693);
+    expect(executedRoutePlan.start_longitude).toBe(120.483276);
+    expect(executedRoutePlan.end_latitude).toBe(22.880693);
+    expect(executedRoutePlan.end_longitude).toBe(120.483276);
     expect(executedSchedules.length).toBeGreaterThan(0);
     expect(
       executedSchedules.every(

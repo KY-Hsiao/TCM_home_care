@@ -4,8 +4,8 @@ import { visitSchedulesSeed } from "./visits";
 
 const defaultHospitalDestination = {
   address: "旗山醫院",
-  latitude: 22.88794,
-  longitude: 120.48341
+  latitude: 22.880693,
+  longitude: 120.483276
 };
 
 const patientNameMap = new Map(patientsSeed.map((patient) => [patient.id, patient.name]));
