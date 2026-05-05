@@ -33,7 +33,7 @@ function resolveMapQuery({ address, locationKeyword, latitude, longitude }: Rout
   return keywordQuery ?? coordinateQuery ?? address;
 }
 
-function resolveEmbedApiKey(defaultEmbedApiKey: string) {
+function resolveMapsApiKey(defaultEmbedApiKey: string) {
   return defaultEmbedApiKey || loadAdminApiTokenSettings().googleMapsApiKey.trim();
 }
 
@@ -44,6 +44,33 @@ function buildGoogleMapsDirectionsUrl(input: {
   return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(input.destination)}${
     input.origin ? `&origin=${encodeURIComponent(input.origin)}` : ""
   }&travelmode=driving`;
+}
+
+function buildInternalNavigationUrl(input: {
+  mapsApiKey: string;
+  destination: string;
+  destinationLatitude: number | null;
+  destinationLongitude: number | null;
+  originLatitude?: number | null;
+  originLongitude?: number | null;
+}) {
+  const params = new URLSearchParams({
+    destination: input.destination,
+    key: input.mapsApiKey
+  });
+  if (input.destinationLatitude !== null) {
+    params.set("dlat", String(input.destinationLatitude));
+  }
+  if (input.destinationLongitude !== null) {
+    params.set("dlng", String(input.destinationLongitude));
+  }
+  if (input.originLatitude !== undefined && input.originLatitude !== null) {
+    params.set("olat", String(input.originLatitude));
+  }
+  if (input.originLongitude !== undefined && input.originLongitude !== null) {
+    params.set("olng", String(input.originLongitude));
+  }
+  return `/internal-navigation.html?${params.toString()}`;
 }
 
 function buildRouteWaypointQuery(waypoints: RouteMapInput["waypoints"]) {
@@ -103,18 +130,24 @@ export function createMapsUrlBuilder(options?: { embedApiKey?: string | null }):
       originLatitude,
       originLongitude
     }) {
-      const origin = formatCoordinateQuery(originLatitude ?? null, originLongitude ?? null);
       const destination = resolveMapQuery({
         address: destinationAddress,
         locationKeyword: destinationKeyword,
         latitude: destinationLatitude,
         longitude: destinationLongitude
       });
-      const resolvedEmbedApiKey = resolveEmbedApiKey(embedApiKey);
-      if (!origin || !resolvedEmbedApiKey) {
+      const mapsApiKey = resolveMapsApiKey(embedApiKey);
+      if (!mapsApiKey || destinationLatitude === null || destinationLongitude === null) {
         return null;
       }
-      return `https://www.google.com/maps/embed/v1/directions?key=${encodeURIComponent(resolvedEmbedApiKey)}&origin=${encodeURIComponent(origin)}&destination=${encodeURIComponent(destination)}&mode=driving`;
+      return buildInternalNavigationUrl({
+        mapsApiKey,
+        destination,
+        destinationLatitude,
+        destinationLongitude,
+        originLatitude,
+        originLongitude
+      });
     },
     buildRouteDirectionsUrl(input) {
       const { origin, destination, waypoints, travelMode } = buildRouteDirectionsQuery(input);
@@ -122,13 +155,13 @@ export function createMapsUrlBuilder(options?: { embedApiKey?: string | null }):
       return `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(origin)}&destination=${encodeURIComponent(destination)}&travelmode=${encodeURIComponent(travelMode)}${waypointQuery}`;
     },
     buildRouteEmbedDirectionsUrl(input) {
-      const resolvedEmbedApiKey = resolveEmbedApiKey(embedApiKey);
-      if (!resolvedEmbedApiKey) {
+      const mapsApiKey = resolveMapsApiKey(embedApiKey);
+      if (!mapsApiKey) {
         return null;
       }
       const { origin, destination, waypoints, travelMode } = buildRouteDirectionsQuery(input);
       const waypointQuery = waypoints ? `&waypoints=${encodeURIComponent(waypoints)}` : "";
-      return `https://www.google.com/maps/embed/v1/directions?key=${encodeURIComponent(resolvedEmbedApiKey)}&origin=${encodeURIComponent(origin)}&destination=${encodeURIComponent(destination)}&mode=${encodeURIComponent(travelMode)}${waypointQuery}`;
+      return `https://www.google.com/maps/embed/v1/directions?key=${encodeURIComponent(mapsApiKey)}&origin=${encodeURIComponent(origin)}&destination=${encodeURIComponent(destination)}&mode=${encodeURIComponent(travelMode)}${waypointQuery}`;
     },
     getRoutePreviewState(input): RouteMapPreviewState {
       if (input.waypoints.length > MAX_ROUTE_PREVIEW_WAYPOINTS) {
