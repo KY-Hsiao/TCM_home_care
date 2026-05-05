@@ -2,6 +2,7 @@ import { appDbSchema, type AppDb } from "../domain/models";
 
 const APP_DB_SYNC_ENDPOINT = "/api/deployment/sync?resource=app-db";
 const APP_DB_SYNC_DEBOUNCE_MS = 800;
+export const APP_DB_SYNC_METADATA_STORAGE_KEY = "tcm-home-care-app-db-sync-metadata";
 const TIMESTAMP_FIELD_NAMES = [
   "updated_at",
   "created_at",
@@ -10,6 +11,20 @@ const TIMESTAMP_FIELD_NAMES = [
   "scheduled_start_at",
   "contacted_at"
 ];
+
+export type AppDbSyncSource = "server" | "local_cache" | "local_seed";
+
+export type AppDbSyncMetadata = {
+  version: 1;
+  source: AppDbSyncSource;
+  syncedAt: string;
+  serverSnapshotUpdatedAt: string | null;
+};
+
+export type ServerAppDbSnapshot = {
+  db: AppDb;
+  updatedAt: string | null;
+};
 
 function canUseServerSync() {
   return (
@@ -44,11 +59,14 @@ export function resolveAppDbLatestTimestamp(db: AppDb): number {
   return latestTimestamp;
 }
 
-export function shouldPreferLocalAppDb(localDb: AppDb, serverDb: AppDb) {
-  return resolveAppDbLatestTimestamp(localDb) > resolveAppDbLatestTimestamp(serverDb);
+export function persistAppDbSyncMetadata(metadata: AppDbSyncMetadata) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.localStorage.setItem(APP_DB_SYNC_METADATA_STORAGE_KEY, JSON.stringify(metadata));
 }
 
-export async function fetchServerAppDb(): Promise<AppDb | null> {
+export async function fetchServerAppDb(): Promise<ServerAppDbSnapshot | null> {
   if (!canUseServerSync()) {
     return null;
   }
@@ -62,16 +80,19 @@ export async function fetchServerAppDb(): Promise<AppDb | null> {
       throw new Error(`HTTP_${response.status}`);
     }
 
-    const payload = (await response.json()) as { db?: unknown };
+    const payload = (await response.json()) as { db?: unknown; updatedAt?: unknown };
     const parsed = appDbSchema.safeParse(payload.db);
     if (!parsed.success) {
-      console.warn("伺服器資料快照格式不符，已保留本機資料。", parsed.error);
+      console.warn("伺服器資料快照格式不符，目前僅顯示本機快取，且不會反寫到線上資料庫。", parsed.error);
       return null;
     }
 
-    return parsed.data;
+    return {
+      db: parsed.data,
+      updatedAt: typeof payload.updatedAt === "string" ? payload.updatedAt : null
+    };
   } catch (error) {
-    console.warn("讀取伺服器資料快照失敗，已保留本機資料。", error);
+    console.warn("讀取伺服器資料快照失敗，目前僅顯示本機快取，且不會反寫到線上資料庫。", error);
     return null;
   }
 }

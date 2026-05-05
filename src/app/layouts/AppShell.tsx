@@ -30,6 +30,16 @@ function resolveDoctorLocationBannerTone(status: DoctorLocationSyncState["status
   return "border-rose-200 bg-rose-50 text-rose-800";
 }
 
+function resolveDbSyncBannerTone(status: ReturnType<typeof useAppContext>["dbSync"]["status"]) {
+  if (status === "synced") {
+    return "border-emerald-200 bg-emerald-50 text-emerald-800";
+  }
+  if (status === "loading") {
+    return "border-amber-200 bg-amber-50 text-amber-800";
+  }
+  return "border-rose-200 bg-rose-50 text-rose-800";
+}
+
 function resolveDoctorLocationLinkedScheduleId(input: {
   doctorId: string;
   routePlanId: string | null;
@@ -86,11 +96,13 @@ export function AppShell() {
   const location = useLocation();
   const {
     db,
+    dbSync,
     repositories,
     services,
     session,
     logout,
     changePassword,
+    uploadLocalDbToServer,
     isAuthenticatedForRole,
     setRole
   } = useAppContext();
@@ -186,6 +198,7 @@ export function AppShell() {
     confirmPassword: ""
   });
   const [passwordMessage, setPasswordMessage] = useState<string | null>(null);
+  const [dbSyncActionMessage, setDbSyncActionMessage] = useState<string | null>(null);
   const [doctorLocationSync, setDoctorLocationSync] = useState<DoctorLocationSyncState>({
     status: "idle",
     message: "尚未開始定位共享。",
@@ -433,6 +446,11 @@ export function AppShell() {
     }
   };
 
+  const handleUploadLocalDbToServer = async () => {
+    const result = await uploadLocalDbToServer();
+    setDbSyncActionMessage(result.message);
+  };
+
   if (shellRole && !isAuthenticated) {
     return <Navigate to="/" replace />;
   }
@@ -626,6 +644,27 @@ export function AppShell() {
                     </p>
                   </div>
                 </div>
+                <div
+                  className={`mt-2.5 rounded-2xl border px-4 py-2 text-xs leading-5 ${resolveDbSyncBannerTone(
+                    dbSync.status
+                  )} lg:mt-3`}
+                >
+                  <p className="font-semibold">資料同步狀態</p>
+                  <p>{dbSync.message}</p>
+                  {dbSync.lastSyncedAt ? (
+                    <p className="text-[11px] opacity-80">最後同步：{formatDateTimeFull(dbSync.lastSyncedAt)}</p>
+                  ) : null}
+                  {dbSync.status !== "synced" ? (
+                    <button
+                      type="button"
+                      onClick={handleUploadLocalDbToServer}
+                      className="mt-2 rounded-full bg-white px-3 py-1.5 text-[11px] font-semibold text-brand-ink ring-1 ring-slate-200"
+                    >
+                      上傳本機快取到線上資料庫
+                    </button>
+                  ) : null}
+                  {dbSyncActionMessage ? <p className="mt-1 text-[11px]">{dbSyncActionMessage}</p> : null}
+                </div>
               </div>
             </div>
           ) : null}
@@ -667,6 +706,27 @@ export function AppShell() {
                     登出
                   </button>
                 ) : null}
+                </div>
+                <div
+                  className={`rounded-2xl border px-4 py-2 text-xs leading-5 ${resolveDbSyncBannerTone(
+                    dbSync.status
+                  )}`}
+                >
+                  <span className="font-semibold">資料同步：</span>
+                  <span>{dbSync.message}</span>
+                  {dbSync.lastSyncedAt ? (
+                    <span className="ml-2 whitespace-nowrap">最後同步：{formatDateTimeFull(dbSync.lastSyncedAt)}</span>
+                  ) : null}
+                  {dbSync.status !== "synced" ? (
+                    <button
+                      type="button"
+                      onClick={handleUploadLocalDbToServer}
+                      className="ml-2 rounded-full bg-white px-3 py-1.5 text-[11px] font-semibold text-brand-ink ring-1 ring-slate-200"
+                    >
+                      上傳本機快取到線上資料庫
+                    </button>
+                  ) : null}
+                  {dbSyncActionMessage ? <span className="ml-2">{dbSyncActionMessage}</span> : null}
                 </div>
               </div>
             </header>

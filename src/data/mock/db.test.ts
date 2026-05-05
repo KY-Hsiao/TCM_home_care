@@ -159,4 +159,68 @@ describe("mock db loader", () => {
     expect(persistedRoutePlan.start_latitude).toBe(22.880693);
     expect(persistedRoutePlan.end_longitude).toBe(120.483276);
   });
+
+  it("會自動清除支援醫師與相關路線資料，避免舊本機資料反寫", () => {
+    const seeded = createSeedDb();
+    const supportDoctor = {
+      ...seeded.doctors[0],
+      id: "doc-002",
+      name: "支援醫師",
+      available_service_slots: ["星期三上午"]
+    };
+    const supportSchedule = {
+      ...seeded.visit_schedules[0],
+      id: "vs-support-001",
+      assigned_doctor_id: "doc-002",
+      patient_id: seeded.patients[0].id
+    };
+    const supportRoutePlan = {
+      ...seeded.saved_route_plans[0],
+      id: "route-support-001",
+      doctor_id: "doc-002",
+      schedule_ids: ["vs-support-001"],
+      route_items: [
+        {
+          ...seeded.saved_route_plans[0].route_items[0],
+          schedule_id: "vs-support-001"
+        }
+      ]
+    };
+
+    window.localStorage.setItem(
+      MOCK_DB_STORAGE_KEY,
+      JSON.stringify({
+        ...seeded,
+        doctors: [...seeded.doctors, supportDoctor],
+        patients: seeded.patients.map((patient, index) =>
+          index === 0 ? { ...patient, preferred_doctor_id: "doc-002" } : patient
+        ),
+        visit_schedules: [...seeded.visit_schedules, supportSchedule],
+        saved_route_plans: [...seeded.saved_route_plans, supportRoutePlan],
+        doctor_location_logs: [
+          ...seeded.doctor_location_logs,
+          {
+            id: "loc-support-001",
+            doctor_id: "doc-002",
+            recorded_at: "2026-05-05T10:00:00.000Z",
+            latitude: 22.88,
+            longitude: 120.48,
+            accuracy: 20,
+            source: "gps",
+            linked_visit_schedule_id: "vs-support-001"
+          }
+        ]
+      })
+    );
+
+    const db = loadDb();
+    const persistedDb = JSON.parse(window.localStorage.getItem(MOCK_DB_STORAGE_KEY) ?? "{}");
+
+    expect(db.doctors.map((doctor) => doctor.name)).not.toContain("支援醫師");
+    expect(db.visit_schedules.some((schedule) => schedule.assigned_doctor_id === "doc-002")).toBe(false);
+    expect(db.saved_route_plans.some((routePlan) => routePlan.doctor_id === "doc-002")).toBe(false);
+    expect(db.doctor_location_logs.some((log) => log.doctor_id === "doc-002")).toBe(false);
+    expect(db.patients[0].preferred_doctor_id).toBe("doc-001");
+    expect(persistedDb.doctors.map((doctor: { name: string }) => doctor.name)).not.toContain("支援醫師");
+  });
 });

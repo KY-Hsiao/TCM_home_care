@@ -1,10 +1,19 @@
 import { createContext } from "react";
 import type { AppDb } from "../domain/models";
 import type { AppRepositories, SessionState } from "../domain/repository";
+import type { AppDbSyncSource } from "../services/app-db-sync";
 import type { AppServices } from "../services/types";
+
+export type AppDbSyncUiState = {
+  source: AppDbSyncSource;
+  status: "loading" | "synced" | "local_only" | "error";
+  message: string;
+  lastSyncedAt: string | null;
+};
 
 export type AppContextValue = {
   db: AppDb;
+  dbSync: AppDbSyncUiState;
   repositories: AppRepositories;
   services: AppServices;
   session: SessionState;
@@ -20,6 +29,7 @@ export type AppContextValue = {
     currentPassword: string;
     nextPassword: string;
   }) => { success: boolean; message: string };
+  uploadLocalDbToServer: () => Promise<{ success: boolean; message: string }>;
   isAuthenticatedForRole: (role: "doctor" | "admin") => boolean;
   setRole: (role: SessionState["role"]) => void;
   setActiveDoctorId: (doctorId: string) => void;

@@ -22,6 +22,8 @@ const REQUIRED_APP_DB_ARRAY_KEYS = [
   "notification_center_items",
   "doctor_location_logs"
 ];
+const REMOVED_LEGACY_DOCTOR_ID = "doc-002";
+const REMOVED_LEGACY_DOCTOR_NAMES = new Set(["林若謙醫師", "支援醫師"]);
 
 function buildTaipeiDateRange(dateValue) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dateValue)) {
@@ -79,6 +81,90 @@ function validateAppDbPayload(value) {
   return null;
 }
 
+function isRemovedLegacyDoctor(doctor) {
+  return (
+    doctor?.id === REMOVED_LEGACY_DOCTOR_ID ||
+    REMOVED_LEGACY_DOCTOR_NAMES.has(String(doctor?.name ?? ""))
+  );
+}
+
+function normalizeAppDbPayload(db) {
+  const doctors = Array.isArray(db.doctors) ? db.doctors : [];
+  const removedDoctorIds = new Set(
+    doctors.filter((doctor) => isRemovedLegacyDoctor(doctor)).map((doctor) => doctor.id)
+  );
+  removedDoctorIds.add(REMOVED_LEGACY_DOCTOR_ID);
+  if (removedDoctorIds.size === 0) {
+    return db;
+  }
+
+  const fallbackDoctorId = doctors.find((doctor) => !removedDoctorIds.has(doctor.id))?.id ?? "doc-001";
+  const removedScheduleIds = new Set(
+    db.visit_schedules
+      .filter((schedule) => removedDoctorIds.has(schedule.assigned_doctor_id))
+      .map((schedule) => schedule.id)
+  );
+  const removedLeaveRequestIds = new Set(
+    db.leave_requests
+      .filter((leaveRequest) => removedDoctorIds.has(leaveRequest.doctor_id))
+      .map((leaveRequest) => leaveRequest.id)
+  );
+
+  return {
+    ...db,
+    doctors: db.doctors.filter((doctor) => !removedDoctorIds.has(doctor.id)),
+    patients: db.patients.map((patient) =>
+      removedDoctorIds.has(patient.preferred_doctor_id)
+        ? {
+            ...patient,
+            preferred_doctor_id: fallbackDoctorId
+          }
+        : patient
+    ),
+    visit_schedules: db.visit_schedules.filter(
+      (schedule) => !removedDoctorIds.has(schedule.assigned_doctor_id)
+    ),
+    saved_route_plans: db.saved_route_plans.filter(
+      (routePlan) =>
+        !removedDoctorIds.has(routePlan.doctor_id) &&
+        !routePlan.schedule_ids.some((scheduleId) => removedScheduleIds.has(scheduleId))
+    ),
+    visit_records: db.visit_records.filter((record) => !removedScheduleIds.has(record.visit_schedule_id)),
+    contact_logs: db.contact_logs.filter(
+      (log) =>
+        (!log.doctor_id || !removedDoctorIds.has(log.doctor_id)) &&
+        (!log.visit_schedule_id || !removedScheduleIds.has(log.visit_schedule_id))
+    ),
+    notification_tasks: db.notification_tasks.filter(
+      (task) => !task.visit_schedule_id || !removedScheduleIds.has(task.visit_schedule_id)
+    ),
+    leave_requests: db.leave_requests.filter(
+      (leaveRequest) => !removedDoctorIds.has(leaveRequest.doctor_id)
+    ),
+    reschedule_actions: db.reschedule_actions.filter(
+      (action) =>
+        !removedScheduleIds.has(action.visit_schedule_id) &&
+        (!action.new_doctor_id || !removedDoctorIds.has(action.new_doctor_id))
+    ),
+    reminders: db.reminders.filter(
+      (reminder) =>
+        !reminder.related_visit_schedule_id ||
+        !removedScheduleIds.has(reminder.related_visit_schedule_id)
+    ),
+    notification_center_items: db.notification_center_items.filter(
+      (item) =>
+        (!item.linked_doctor_id || !removedDoctorIds.has(item.linked_doctor_id)) &&
+        (!item.linked_visit_schedule_id || !removedScheduleIds.has(item.linked_visit_schedule_id)) &&
+        (!item.linked_leave_request_id || !removedLeaveRequestIds.has(item.linked_leave_request_id))
+    ),
+    doctor_location_logs: db.doctor_location_logs.filter(
+      (log) =>
+        !removedDoctorIds.has(log.doctor_id) &&
+        (!log.linked_visit_schedule_id || !removedScheduleIds.has(log.linked_visit_schedule_id))
+    )
+  };
+}
+
 async function handleAppDbSync(request, response) {
   if (!["GET", "PUT"].includes(request.method)) {
     response.setHeader("Allow", "GET, PUT");
@@ -99,6 +185,13 @@ async function handleAppDbSync(request, response) {
         return;
       }
 
+      const normalizedDb = normalizeAppDbPayload(snapshot.db);
+      if (JSON.stringify(normalizedDb) !== JSON.stringify(snapshot.db)) {
+        const migratedSnapshot = await upsertAppDbSnapshot(normalizedDb);
+        setJson(response, 200, migratedSnapshot);
+        return;
+      }
+
       setJson(response, 200, snapshot);
       return;
     }
@@ -114,7 +207,8 @@ async function handleAppDbSync(request, response) {
       return;
     }
 
-    const snapshot = await upsertAppDbSnapshot(db);
+    const normalizedDb = normalizeAppDbPayload(db);
+    const snapshot = await upsertAppDbSnapshot(normalizedDb);
     setJson(response, 200, {
       ok: true,
       ...snapshot

@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { AppDb } from "../domain/models";
 
-import { resolveAppDbLatestTimestamp, shouldPreferLocalAppDb } from "./app-db-sync";
+import {
+  APP_DB_SYNC_METADATA_STORAGE_KEY,
+  persistAppDbSyncMetadata,
+  resolveAppDbLatestTimestamp
+} from "./app-db-sync";
 
 function createMinimalDb(updatedAt: string): AppDb {
   return {
@@ -62,11 +66,19 @@ describe("app db sync", () => {
     expect(resolveAppDbLatestTimestamp(db)).toBe(Date.parse("2026-05-05T10:30:00.000Z"));
   });
 
-  it("本機資料較新時會優先同步本機資料到伺服器", () => {
-    const localDb = createMinimalDb("2026-05-05T10:30:00.000Z");
-    const serverDb = createMinimalDb("2026-05-04T10:30:00.000Z");
+  it("會保存同步來源標記供介面判斷線上資料庫狀態", () => {
+    persistAppDbSyncMetadata({
+      version: 1,
+      source: "server",
+      syncedAt: "2026-05-05T10:30:00.000Z",
+      serverSnapshotUpdatedAt: "2026-05-05T10:29:00.000Z"
+    });
 
-    expect(shouldPreferLocalAppDb(localDb, serverDb)).toBe(true);
-    expect(shouldPreferLocalAppDb(serverDb, localDb)).toBe(false);
+    expect(JSON.parse(window.localStorage.getItem(APP_DB_SYNC_METADATA_STORAGE_KEY) ?? "{}")).toEqual({
+      version: 1,
+      source: "server",
+      syncedAt: "2026-05-05T10:30:00.000Z",
+      serverSnapshotUpdatedAt: "2026-05-05T10:29:00.000Z"
+    });
   });
 });

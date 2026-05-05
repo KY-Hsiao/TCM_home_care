@@ -17,21 +17,5 @@ export const doctorsSeed: Doctor[] = [
     available_service_slots: ["星期三上午", "星期四下午"],
     status: "active",
     ...stamp(-14)
-  },
-  {
-    id: "doc-002",
-    name: "支援醫師",
-    license_number: "中醫字第A20876號",
-    phone: "0912-110-002",
-    specialty: "居家針灸與復能追蹤",
-    service_area: "高雄市旗山區、美濃區",
-    google_chat_user_id: "spaces/doctors/users/002",
-    google_account_email: "doctor.support@example.com",
-    google_account_logged_in: true,
-    google_location_share_url: "https://maps.google.com/?cid=doctor-share-002",
-    google_location_share_enabled: true,
-    available_service_slots: ["星期三上午", "星期五下午"],
-    status: "active",
-    ...stamp(-10)
   }
 ];

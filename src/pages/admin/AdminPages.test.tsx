@@ -940,11 +940,11 @@ describe("AdminPages", () => {
             role: "admin",
             owner_user_id: "admin-001",
             source_type: "patient_exception",
-            title: "異常個案｜張○發",
+            title: "異常個案｜王○珠",
             content: "本次案件需行政後續追蹤。",
-            linked_patient_id: "pat-014",
-            linked_visit_schedule_id: "vs-026",
-            linked_doctor_id: "doc-002",
+            linked_patient_id: "pat-001",
+            linked_visit_schedule_id: "vs-001",
+            linked_doctor_id: "doc-001",
             linked_leave_request_id: null,
             status: "pending",
             is_unread: true,
@@ -962,14 +962,14 @@ describe("AdminPages", () => {
 
     const executedCard = screen.getAllByText("執行人次")[0].closest("div");
     expect(executedCard).not.toBeNull();
-    expect(within(executedCard!).getByText("6")).toBeInTheDocument();
+    expect(within(executedCard!).getByText("5")).toBeInTheDocument();
 
     const previousMonthCard = screen.getByText("上月總計").closest("div");
     expect(previousMonthCard).not.toBeNull();
     expect(previousMonthCard?.textContent).toContain("2026年4月");
 
     expect(screen.getAllByText("緊急處置人次").length).toBeGreaterThan(0);
-    expect(screen.getByRole("link", { name: /張○發/ })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /王○珠/ })).toBeInTheDocument();
   });
 
   it("AdminDashboardPage 會顯示回院病歷勾選異常後建立的通知中心案件", () => {
@@ -1040,7 +1040,7 @@ describe("AdminPages", () => {
     const locationSummaryLabel = screen.getAllByText("目前位置", { selector: "p" }).at(-1);
     expect(locationSummaryLabel?.parentElement?.textContent).toContain("附近");
     expect(screen.getByRole("button", { name: "蕭坤元醫師" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "支援醫師" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "支援醫師" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "林若謙醫師" })).not.toBeInTheDocument();
     expect(screen.getAllByText("已經過的地點").length).toBeGreaterThan(0);
     expect(screen.queryByRole("dialog", { name: "醫師狀態清單視窗" })).not.toBeInTheDocument();
@@ -1402,7 +1402,7 @@ describe("AdminPages", () => {
     customDb.doctors.push({
       ...customDb.doctors[0],
       id: "doc-extra",
-      name: "林若謙醫師",
+      name: "許明哲醫師",
       phone: "0912-110-002",
       available_service_slots: ["星期三上午"]
     });
@@ -1420,10 +1420,10 @@ describe("AdminPages", () => {
 
     renderWithProviders(<AdminTeamCommunicationPage />);
 
-    fireEvent.doubleClick(screen.getByRole("button", { name: /林若謙醫師/ }));
+    fireEvent.doubleClick(screen.getByRole("button", { name: /許明哲醫師/ }));
 
     expect(screen.getByLabelText("訊息內容")).toBeInTheDocument();
-    expect(screen.getByPlaceholderText(/林若謙醫師/)).toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/許明哲醫師/)).toBeInTheDocument();
     await waitFor(() => expect(screen.getByText(/最後同步/)).toBeInTheDocument());
   });
 
@@ -1824,11 +1824,18 @@ describe("AdminPages", () => {
 
   it("AdminFamilyLinePage 群發會依關聯個案對應到關聯醫師", async () => {
     const customDb = createSeedDb();
+    customDb.doctors.push({
+      ...customDb.doctors[0],
+      id: "doc-extra",
+      name: "許明哲醫師",
+      phone: "0912-110-002",
+      available_service_slots: ["星期三上午"]
+    });
     customDb.patients = customDb.patients.map((patient) =>
       patient.id === "pat-002"
         ? {
             ...patient,
-            preferred_doctor_id: "doc-002"
+            preferred_doctor_id: "doc-extra"
           }
         : patient
     );
@@ -1855,11 +1862,11 @@ describe("AdminPages", () => {
     renderWithProviders(<AdminFamilyLinePage />);
 
     fireEvent.change(screen.getByLabelText("篩選醫師"), {
-      target: { value: "doc-002" }
+      target: { value: "doc-extra" }
     });
     fireEvent.click(screen.getByRole("button", { name: "顯示詳細" }));
     expect(screen.getByLabelText("跨醫師家屬 LINE 發送勾選")).toBeInTheDocument();
-    expect(screen.getAllByText(/蕭坤元醫師、支援醫師|支援醫師、蕭坤元醫師/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/蕭坤元醫師、許明哲醫師|許明哲醫師、蕭坤元醫師/).length).toBeGreaterThan(0);
 
     fireEvent.click(screen.getByRole("button", { name: /範本群發/ }));
     expect(screen.getByRole("dialog", { name: "範本群發" })).toBeInTheDocument();
@@ -1872,8 +1879,8 @@ describe("AdminPages", () => {
     const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(requestBody.recipients[0]).toEqual(
       expect.objectContaining({
-        doctorId: "doc-002",
-        doctorName: "支援醫師",
+        doctorId: "doc-extra",
+        doctorName: "許明哲醫師",
         lineUserId: "Umulti1234567890abcdef1234567890"
       })
     );

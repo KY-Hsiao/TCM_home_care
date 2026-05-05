@@ -5,8 +5,14 @@ import {
   useState,
   type PropsWithChildren
 } from "react";
-import { AppContext, type AppContextValue } from "./app-context";
-import { hasLocalDbSnapshot, loadDb, persistDb, subscribeDbStorage } from "../data/mock/db";
+import { AppContext, type AppContextValue, type AppDbSyncUiState } from "./app-context";
+import {
+  hasLocalDbSnapshot,
+  loadDb,
+  normalizeAppDbForCurrentVersion,
+  persistDb,
+  subscribeDbStorage
+} from "../data/mock/db";
 import { createRepositories } from "../data/mock/repositories";
 import type { AppDb } from "../domain/models";
 import type { SessionState } from "../domain/repository";
@@ -15,8 +21,8 @@ import type { AppServices } from "../services/types";
 import {
   fetchServerAppDb,
   getAppDbSyncDebounceMs,
+  persistAppDbSyncMetadata,
   persistServerAppDb,
-  shouldPreferLocalAppDb
 } from "../services/app-db-sync";
 import {
   loadStoredPasswords,
@@ -27,9 +33,19 @@ import {
   updateStoredPassword
 } from "./auth-storage";
 
+function hasSubstantiveAppDbRecords(db: AppDb) {
+  return db.patients.length > 0 || db.visit_schedules.length > 0 || db.saved_route_plans.length > 0;
+}
+
 export function AppProviders({ children }: PropsWithChildren) {
   const hadLocalDbSnapshotRef = useRef(hasLocalDbSnapshot());
   const [db, setDb] = useState<AppDb>(() => loadDb());
+  const [dbSync, setDbSync] = useState<AppDbSyncUiState>(() => ({
+    source: hadLocalDbSnapshotRef.current ? "local_cache" : "local_seed",
+    status: "loading",
+    message: "正在讀取線上資料庫。",
+    lastSyncedAt: null
+  }));
   const [, setServicesRevision] = useState(0);
   const [storedPasswords, setStoredPasswords] = useState(() => loadStoredPasswords());
   const defaultDoctorId = db.doctors[0]?.id ?? "doc-001";
@@ -65,36 +81,69 @@ export function AppProviders({ children }: PropsWithChildren) {
   const persistServerDbTimerRef = useRef<number | null>(null);
   const latestDbRef = useRef(db);
   const serverSyncReadyRef = useRef(false);
+  const serverWritesEnabledRef = useRef(false);
   const skipNextServerPersistRef = useRef(false);
 
   useEffect(() => {
     let isCancelled = false;
 
     void fetchServerAppDb()
-      .then((serverDb) => {
+      .then((serverSnapshot) => {
         if (isCancelled) {
           return;
         }
 
-        if (
-          serverDb &&
-          hadLocalDbSnapshotRef.current &&
-          shouldPreferLocalAppDb(latestDbRef.current, serverDb)
-        ) {
-          void persistServerAppDb(latestDbRef.current);
-          return;
-        }
+        if (serverSnapshot) {
+          const normalizedServerDb = normalizeAppDbForCurrentVersion(serverSnapshot.db);
+          const syncedAt = new Date().toISOString();
+          const serverSnapshotWasMigrated =
+            JSON.stringify(normalizedServerDb) !== JSON.stringify(serverSnapshot.db);
+          if (
+            hadLocalDbSnapshotRef.current &&
+            !hasSubstantiveAppDbRecords(normalizedServerDb) &&
+            hasSubstantiveAppDbRecords(latestDbRef.current)
+          ) {
+            serverWritesEnabledRef.current = false;
+            setDbSync({
+              source: "local_cache",
+              status: "local_only",
+              message: "線上資料庫目前沒有個案或排程，已保留本機快取；需要人工確認後再上傳到線上資料庫。",
+              lastSyncedAt: null
+            });
+            return;
+          }
 
-        if (serverDb) {
+          serverWritesEnabledRef.current = true;
           skipNextServerPersistRef.current = true;
-          setDb(serverDb);
-          persistDb(serverDb);
+          setDb(normalizedServerDb);
+          persistDb(normalizedServerDb);
+          if (serverSnapshotWasMigrated) {
+            void persistServerAppDb(normalizedServerDb);
+          }
+          persistAppDbSyncMetadata({
+            version: 1,
+            source: "server",
+            syncedAt,
+            serverSnapshotUpdatedAt: serverSnapshot.updatedAt
+          });
+          setDbSync({
+            source: "server",
+            status: "synced",
+            message: "目前資料來源：線上資料庫。",
+            lastSyncedAt: serverSnapshot.updatedAt ?? syncedAt
+          });
           return;
         }
 
-        if (hadLocalDbSnapshotRef.current) {
-          void persistServerAppDb(latestDbRef.current);
-        }
+        serverWritesEnabledRef.current = false;
+        setDbSync({
+          source: hadLocalDbSnapshotRef.current ? "local_cache" : "local_seed",
+          status: "local_only",
+          message: hadLocalDbSnapshotRef.current
+            ? "線上資料庫讀取失敗，目前顯示本機快取；此狀態不會反寫到線上資料庫。"
+            : "線上資料庫讀取失敗，目前顯示初始資料；此狀態不會反寫到線上資料庫。",
+          lastSyncedAt: null
+        });
       })
       .finally(() => {
         if (!isCancelled) {
@@ -111,13 +160,11 @@ export function AppProviders({ children }: PropsWithChildren) {
     latestDbRef.current = db;
     if (persistDbTimerRef.current) {
       window.clearTimeout(persistDbTimerRef.current);
-    }
-    persistDbTimerRef.current = window.setTimeout(() => {
-      persistDb(latestDbRef.current);
       persistDbTimerRef.current = null;
-    }, 0);
+    }
+    persistDb(latestDbRef.current);
 
-    if (serverSyncReadyRef.current) {
+    if (serverSyncReadyRef.current && serverWritesEnabledRef.current) {
       if (skipNextServerPersistRef.current) {
         skipNextServerPersistRef.current = false;
       } else {
@@ -125,7 +172,31 @@ export function AppProviders({ children }: PropsWithChildren) {
           window.clearTimeout(persistServerDbTimerRef.current);
         }
         persistServerDbTimerRef.current = window.setTimeout(() => {
-          void persistServerAppDb(latestDbRef.current);
+          const normalizedDb = normalizeAppDbForCurrentVersion(latestDbRef.current);
+          void persistServerAppDb(normalizedDb).then((success) => {
+            const syncedAt = new Date().toISOString();
+            if (success) {
+              persistAppDbSyncMetadata({
+                version: 1,
+                source: "server",
+                syncedAt,
+                serverSnapshotUpdatedAt: syncedAt
+              });
+              setDbSync({
+                source: "server",
+                status: "synced",
+                message: "目前資料來源：線上資料庫。",
+                lastSyncedAt: syncedAt
+              });
+              return;
+            }
+            setDbSync({
+              source: "local_cache",
+              status: "error",
+              message: "線上資料庫寫入失敗，目前只保存在本機快取。",
+              lastSyncedAt: null
+            });
+          });
           persistServerDbTimerRef.current = null;
         }, getAppDbSyncDebounceMs());
       }
@@ -150,8 +221,8 @@ export function AppProviders({ children }: PropsWithChildren) {
         persistServerDbTimerRef.current = null;
       }
       persistDb(latestDbRef.current);
-      if (serverSyncReadyRef.current) {
-        void persistServerAppDb(latestDbRef.current);
+      if (serverSyncReadyRef.current && serverWritesEnabledRef.current) {
+        void persistServerAppDb(normalizeAppDbForCurrentVersion(latestDbRef.current));
       }
     };
   }, []);
@@ -205,6 +276,7 @@ export function AppProviders({ children }: PropsWithChildren) {
 
   const value: AppContextValue = {
     db,
+    dbSync,
     repositories,
     services,
     session,
@@ -271,6 +343,42 @@ export function AppProviders({ children }: PropsWithChildren) {
       return {
         success: true,
         message: "密碼已更新。"
+      };
+    },
+    async uploadLocalDbToServer() {
+      const normalizedDb = normalizeAppDbForCurrentVersion(latestDbRef.current);
+      const success = await persistServerAppDb(normalizedDb);
+      if (!success) {
+        setDbSync({
+          source: "local_cache",
+          status: "error",
+          message: "上傳本機快取到線上資料庫失敗，請確認網路或稍後再試。",
+          lastSyncedAt: null
+        });
+        return {
+          success: false,
+          message: "上傳本機快取到線上資料庫失敗。"
+        };
+      }
+
+      const syncedAt = new Date().toISOString();
+      serverWritesEnabledRef.current = true;
+      persistDb(normalizedDb);
+      persistAppDbSyncMetadata({
+        version: 1,
+        source: "server",
+        syncedAt,
+        serverSnapshotUpdatedAt: syncedAt
+      });
+      setDbSync({
+        source: "server",
+        status: "synced",
+        message: "目前資料來源：線上資料庫。",
+        lastSyncedAt: syncedAt
+      });
+      return {
+        success: true,
+        message: "已上傳本機快取到線上資料庫。"
       };
     },
     isAuthenticatedForRole(role) {
