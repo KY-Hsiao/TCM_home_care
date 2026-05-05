@@ -2888,21 +2888,15 @@ export function AdminRemindersPage() {
 
   return (
     <div className="space-y-6">
-      <Panel title="站內通知操作" className="p-3 lg:p-4">
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-[1.4rem] border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-          <div>
-            <p className="font-semibold text-brand-ink">手動建立站內通知</p>
-            <p className="mt-0.5 text-xs">以獨立視窗輸入通知類型、標題與內容，再送進通知中心。</p>
-          </div>
-          <button
-            type="button"
-            onClick={() => setIsNoticeDialogOpen(true)}
-            className="rounded-full bg-brand-forest px-4 py-2.5 text-sm font-semibold text-white"
-          >
-            建立站內通知
-          </button>
-        </div>
-      </Panel>
+      <div className="flex justify-end">
+        <button
+          type="button"
+          onClick={() => setIsNoticeDialogOpen(true)}
+          className="rounded-full bg-brand-forest px-5 py-2.5 text-sm font-semibold text-white"
+        >
+          建立站內通知
+        </button>
+      </div>
 
       {statusFeedback ? (
         <div
