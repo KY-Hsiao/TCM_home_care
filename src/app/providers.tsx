@@ -22,7 +22,7 @@ import {
   fetchServerAppDb,
   getAppDbSyncDebounceMs,
   persistAppDbSyncMetadata,
-  persistServerAppDb,
+  persistServerAppDb
 } from "../services/app-db-sync";
 import {
   loadStoredPasswords,
@@ -35,6 +35,10 @@ import {
 
 function hasSubstantiveAppDbRecords(db: AppDb) {
   return db.patients.length > 0 || db.visit_schedules.length > 0 || db.saved_route_plans.length > 0;
+}
+
+function serializeAppDbForChangeDetection(db: AppDb) {
+  return JSON.stringify(normalizeAppDbForCurrentVersion(db));
 }
 
 export function AppProviders({ children }: PropsWithChildren) {
@@ -83,6 +87,37 @@ export function AppProviders({ children }: PropsWithChildren) {
   const serverSyncReadyRef = useRef(false);
   const serverWritesEnabledRef = useRef(false);
   const skipNextServerPersistRef = useRef(false);
+  const protectedLocalDbBaselineRef = useRef<string | null>(null);
+
+  const persistNormalizedDbToServer = (normalizedDb: AppDb) =>
+    persistServerAppDb(normalizedDb).then((success) => {
+      const syncedAt = new Date().toISOString();
+      if (success) {
+        serverWritesEnabledRef.current = true;
+        protectedLocalDbBaselineRef.current = null;
+        persistAppDbSyncMetadata({
+          version: 1,
+          source: "server",
+          syncedAt,
+          serverSnapshotUpdatedAt: syncedAt
+        });
+        setDbSync({
+          source: "server",
+          status: "synced",
+          message: "目前資料來源：線上資料庫。",
+          lastSyncedAt: syncedAt
+        });
+        return true;
+      }
+
+      setDbSync({
+        source: "local_cache",
+        status: "error",
+        message: "線上資料庫寫入失敗，目前只保存在本機快取。",
+        lastSyncedAt: null
+      });
+      return false;
+    });
 
   useEffect(() => {
     let isCancelled = false;
@@ -104,16 +139,18 @@ export function AppProviders({ children }: PropsWithChildren) {
             hasSubstantiveAppDbRecords(latestDbRef.current)
           ) {
             serverWritesEnabledRef.current = false;
+            protectedLocalDbBaselineRef.current = serializeAppDbForChangeDetection(latestDbRef.current);
             setDbSync({
               source: "local_cache",
               status: "local_only",
-              message: "線上資料庫目前沒有個案或排程，已保留本機快取；需要人工確認後再上傳到線上資料庫。",
+              message: "線上資料庫目前沒有個案或排程，已保留本機快取；修改資料後會自動上傳到線上資料庫。",
               lastSyncedAt: null
             });
             return;
           }
 
           serverWritesEnabledRef.current = true;
+          protectedLocalDbBaselineRef.current = null;
           skipNextServerPersistRef.current = true;
           setDb(normalizedServerDb);
           persistDb(normalizedServerDb);
@@ -136,6 +173,7 @@ export function AppProviders({ children }: PropsWithChildren) {
         }
 
         serverWritesEnabledRef.current = false;
+        protectedLocalDbBaselineRef.current = null;
         setDbSync({
           source: hadLocalDbSnapshotRef.current ? "local_cache" : "local_seed",
           status: "local_only",
@@ -158,11 +196,20 @@ export function AppProviders({ children }: PropsWithChildren) {
 
   useEffect(() => {
     latestDbRef.current = db;
+    const normalizedCurrentDb = normalizeAppDbForCurrentVersion(latestDbRef.current);
     if (persistDbTimerRef.current) {
       window.clearTimeout(persistDbTimerRef.current);
       persistDbTimerRef.current = null;
     }
-    persistDb(latestDbRef.current);
+    persistDb(normalizedCurrentDb);
+
+    const protectedLocalDbBaseline = protectedLocalDbBaselineRef.current;
+    const shouldPromoteProtectedLocalDb =
+      serverSyncReadyRef.current &&
+      !serverWritesEnabledRef.current &&
+      protectedLocalDbBaseline !== null &&
+      hasSubstantiveAppDbRecords(normalizedCurrentDb) &&
+      serializeAppDbForChangeDetection(normalizedCurrentDb) !== protectedLocalDbBaseline;
 
     if (serverSyncReadyRef.current && serverWritesEnabledRef.current) {
       if (skipNextServerPersistRef.current) {
@@ -172,34 +219,24 @@ export function AppProviders({ children }: PropsWithChildren) {
           window.clearTimeout(persistServerDbTimerRef.current);
         }
         persistServerDbTimerRef.current = window.setTimeout(() => {
-          const normalizedDb = normalizeAppDbForCurrentVersion(latestDbRef.current);
-          void persistServerAppDb(normalizedDb).then((success) => {
-            const syncedAt = new Date().toISOString();
-            if (success) {
-              persistAppDbSyncMetadata({
-                version: 1,
-                source: "server",
-                syncedAt,
-                serverSnapshotUpdatedAt: syncedAt
-              });
-              setDbSync({
-                source: "server",
-                status: "synced",
-                message: "目前資料來源：線上資料庫。",
-                lastSyncedAt: syncedAt
-              });
-              return;
-            }
-            setDbSync({
-              source: "local_cache",
-              status: "error",
-              message: "線上資料庫寫入失敗，目前只保存在本機快取。",
-              lastSyncedAt: null
-            });
-          });
+          void persistNormalizedDbToServer(normalizeAppDbForCurrentVersion(latestDbRef.current));
           persistServerDbTimerRef.current = null;
         }, getAppDbSyncDebounceMs());
       }
+    } else if (shouldPromoteProtectedLocalDb) {
+      if (persistServerDbTimerRef.current) {
+        window.clearTimeout(persistServerDbTimerRef.current);
+      }
+      setDbSync({
+        source: "local_cache",
+        status: "loading",
+        message: "偵測到本機快取已有修改，正在上傳到線上資料庫。",
+        lastSyncedAt: null
+      });
+      persistServerDbTimerRef.current = window.setTimeout(() => {
+        void persistNormalizedDbToServer(normalizeAppDbForCurrentVersion(latestDbRef.current));
+        persistServerDbTimerRef.current = null;
+      }, getAppDbSyncDebounceMs());
     }
 
     return () => {
@@ -347,35 +384,15 @@ export function AppProviders({ children }: PropsWithChildren) {
     },
     async uploadLocalDbToServer() {
       const normalizedDb = normalizeAppDbForCurrentVersion(latestDbRef.current);
-      const success = await persistServerAppDb(normalizedDb);
+      const success = await persistNormalizedDbToServer(normalizedDb);
       if (!success) {
-        setDbSync({
-          source: "local_cache",
-          status: "error",
-          message: "上傳本機快取到線上資料庫失敗，請確認網路或稍後再試。",
-          lastSyncedAt: null
-        });
         return {
           success: false,
           message: "上傳本機快取到線上資料庫失敗。"
         };
       }
 
-      const syncedAt = new Date().toISOString();
-      serverWritesEnabledRef.current = true;
       persistDb(normalizedDb);
-      persistAppDbSyncMetadata({
-        version: 1,
-        source: "server",
-        syncedAt,
-        serverSnapshotUpdatedAt: syncedAt
-      });
-      setDbSync({
-        source: "server",
-        status: "synced",
-        message: "目前資料來源：線上資料庫。",
-        lastSyncedAt: syncedAt
-      });
       return {
         success: true,
         message: "已上傳本機快取到線上資料庫。"
