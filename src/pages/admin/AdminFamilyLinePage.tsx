@@ -280,6 +280,23 @@ export function AdminFamilyLinePage() {
           .join("\n\n");
   const sendableRecipients = selectedRecipients.filter((recipient) => recipient.lineUserId.trim());
   const missingLineIdCount = selectedRecipients.length - sendableRecipients.length;
+  const filteredRecipientByContactId = useMemo(
+    () =>
+      new Map(
+        filteredRecipients.map((recipient) => [
+          recipient.id.replace(/^line-contact:/, ""),
+          recipient
+        ])
+      ),
+    [filteredRecipients]
+  );
+  const visibleManagedLineContacts = useMemo(
+    () =>
+      selectedDoctorId === "all"
+        ? managedLineContacts
+        : managedLineContacts.filter((contact) => filteredRecipientByContactId.has(contact.id)),
+    [filteredRecipientByContactId, managedLineContacts, selectedDoctorId]
+  );
 
   const buildLineSendRecipients = (targetRecipients: FamilyLineRecipient[]) =>
     targetRecipients.map((recipient) => ({
@@ -812,377 +829,261 @@ export function AdminFamilyLinePage() {
         </div>
       ) : null}
 
-      <Panel title="發送對象">
-        <div className="space-y-3">
-          <div className="grid gap-3 md:grid-cols-[1fr_auto_auto] md:items-end">
-            <label className="block text-sm">
-              <span className="mb-1 block font-medium text-brand-ink">篩選醫師</span>
-              <select
-                aria-label="篩選醫師"
-                value={selectedDoctorId}
-                onChange={(event) => setSelectedDoctorId(event.target.value)}
-                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
-              >
-                <option value="all">全部醫師</option>
-                {db.doctors.map((doctor) => (
-                  <option key={doctor.id} value={doctor.id}>
-                    {doctor.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <button
-              type="button"
-              onClick={selectAllFilteredRecipients}
-              className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-brand-ink"
-            >
-              全選目前名單
-            </button>
-            <button
-              type="button"
-              onClick={clearSelectedRecipients}
-              className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-brand-ink"
-            >
-              清除選擇
-            </button>
-          </div>
-          {filteredRecipients.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-8 text-center text-sm text-slate-500">
-              目前沒有可發送的 LINE 好友。請先在 LINE 名單管理中重新整理 webhook 好友，並關聯到居家個案。
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(360px,0.95fr)] xl:items-start">
+        <div className="space-y-4">
+          <Panel title="即時群發訊息">
+            <div className="space-y-3 text-sm">
+              <label className="block">
+                <span className="mb-1 block font-medium text-brand-ink">即時群發標題</span>
+                <input
+                  aria-label="即時群發標題"
+                  value={instantMessageDraft.subject}
+                  onChange={(event) =>
+                    setInstantMessageDraft((current) => ({
+                      ...current,
+                      subject: event.target.value
+                    }))
+                  }
+                  className="w-full rounded-2xl border border-slate-200 px-4 py-3"
+                />
+              </label>
+              <label className="block">
+                <span className="mb-1 block font-medium text-brand-ink">即時群發內容</span>
+                <textarea
+                  aria-label="即時群發內容"
+                  value={instantMessageDraft.content}
+                  onChange={(event) =>
+                    setInstantMessageDraft((current) => ({
+                      ...current,
+                      content: event.target.value
+                    }))
+                  }
+                  rows={6}
+                  placeholder="輸入要立刻推播給所選 LINE 家屬的訊息"
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
+                />
+              </label>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={selectAllFilteredRecipients}
+                  className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-brand-ink"
+                >
+                  全選目前名單
+                </button>
+                <button
+                  type="button"
+                  onClick={clearSelectedRecipients}
+                  className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-brand-ink"
+                >
+                  清除選擇
+                </button>
+                <button
+                  type="button"
+                  onClick={sendInstantLineMessage}
+                  disabled={isInstantSending}
+                  className="rounded-full bg-brand-forest px-5 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-400"
+                >
+                  {isInstantSending ? "即時發送中" : "即時發送 LINE 群發"}
+                </button>
+              </div>
+              <p className="text-xs text-slate-500">
+                已選 {selectedRecipients.length} 位；可即時發送 {sendableRecipients.length} 位。
+                {missingLineIdCount > 0 ? ` ${missingLineIdCount} 位缺 LINE userId 會略過。` : ""}
+              </p>
             </div>
-          ) : (
-            <div className="grid gap-3 lg:grid-cols-2">
-              {filteredRecipients.map((recipient) => {
-                const isSelected = selectedRecipientIds.includes(recipient.id);
-                return (
-                  <div
-                    key={recipient.id}
-                    className={`rounded-2xl border p-4 ${
-                      isSelected ? "border-brand-forest bg-emerald-50/70" : "border-slate-200 bg-white"
+          </Panel>
+
+          <Panel title="LINE 自動發送設定">
+            <div className="space-y-3 text-sm">
+              {[
+                {
+                  key: "doctorLeaveAutoBroadcast" as const,
+                  title: "醫師請假時自動發",
+                  detail: "核准或建立醫師請假後，可依選定家屬發出公告。"
+                },
+                {
+                  key: "doctorArrivalReminder" as const,
+                  title: "醫師抵達前提醒",
+                  detail: "醫師離開前一站後，自動提醒下一站家屬準備。"
+                },
+                {
+                  key: "afterReturnCare" as const,
+                  title: "結束後關心",
+                  detail: "訪視完成後發送照護提醒與回覆入口。"
+                }
+              ].map((item) => (
+                <button
+                  key={item.key}
+                  type="button"
+                  onClick={() => toggleSetting(item.key)}
+                  className="flex w-full items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left"
+                >
+                  <span>
+                    <span className="block font-semibold text-brand-ink">{item.title}</span>
+                    <span className="mt-1 block text-xs text-slate-500">{item.detail}</span>
+                  </span>
+                  <span
+                    className={`shrink-0 rounded-full px-3 py-1 text-xs font-semibold ${
+                      settings[item.key]
+                        ? "bg-emerald-100 text-emerald-700"
+                        : "bg-slate-100 text-slate-500"
                     }`}
                   >
-                    <div className="flex items-start justify-between gap-3">
-                      <label className="flex min-w-0 items-start gap-3">
+                    {settings[item.key] ? "啟用" : "停用"}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </Panel>
+
+          <Panel title="範本群發">
+            <div className="space-y-3 text-sm">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                <p className="font-semibold text-brand-ink">本次發送項目</p>
+                <div className="mt-2 grid gap-2 md:grid-cols-2">
+                  {(Object.keys(templateLabels) as FamilyLineTemplateKey[]).map((templateKey) => (
+                    <label
+                      key={templateKey}
+                      className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-3 py-2"
+                    >
+                      <span className="flex min-w-0 items-center gap-2">
                         <input
                           type="checkbox"
-                          aria-label={`${recipient.displayName} 發送勾選`}
-                          checked={isSelected}
-                          onChange={() => toggleRecipient(recipient.id)}
-                          className="mt-1 h-4 w-4"
+                          aria-label={`${templateLabels[templateKey]} 本次發送勾選`}
+                          checked={selectedSendTypes.includes(templateKey)}
+                          onChange={() => toggleSendType(templateKey)}
+                          className="h-4 w-4"
                         />
-                        <span className="min-w-0">
-                          <span className="block font-semibold text-brand-ink">
-                            {recipient.displayName} / {recipient.relationshipLabel}
-                          </span>
-                          <span className="mt-1 block text-sm text-slate-600">
-                            {recipient.linkedPatients.length
-                              ? recipient.linkedPatients.map((patient) => maskPatientName(patient.name)).join("、")
-                              : "未關聯個案"}
-                            ｜{recipient.linkedDoctors.length
-                              ? recipient.linkedDoctors.map((doctor) => doctor.name).join("、")
-                              : "未指定醫師"}
-                          </span>
-                          <span className="mt-1 block text-xs text-slate-500">
-                            最近排程：{recipient.schedule ? formatDateTimeFull(recipient.schedule.scheduled_start_at) : "尚無排程"}
-                          </span>
-                        </span>
-                      </label>
-                      <Badge value={resolveRecipientLineStatus(recipient.lineUserId)} compact />
-                    </div>
-                    <label className="mt-3 block text-sm">
-                      <span className="mb-1 block font-medium text-brand-ink">LINE userId</span>
-                      <div className="break-all rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-slate-700">
-                        {recipient.lineUserId}
-                      </div>
+                        <span className="min-w-0 break-words">{templateLabels[templateKey]}</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedTemplate(templateKey)}
+                        className="shrink-0 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-brand-ink"
+                      >
+                        編輯範本
+                      </button>
                     </label>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </Panel>
-
-      <Panel title="即時群發訊息">
-        <div className="space-y-3 text-sm">
-          <label className="block">
-              <span className="mb-1 block font-medium text-brand-ink">即時群發標題</span>
-              <input
-                aria-label="即時群發標題"
-                value={instantMessageDraft.subject}
-                onChange={(event) =>
-                  setInstantMessageDraft((current) => ({
-                    ...current,
-                    subject: event.target.value
-                  }))
-                }
-                className="w-full rounded-2xl border border-slate-200 px-4 py-3"
-              />
-          </label>
-          <label className="block">
-              <span className="mb-1 block font-medium text-brand-ink">即時群發內容</span>
-              <textarea
-                aria-label="即時群發內容"
-                value={instantMessageDraft.content}
-                onChange={(event) =>
-                  setInstantMessageDraft((current) => ({
-                    ...current,
-                    content: event.target.value
-                  }))
-                }
-                rows={6}
-                placeholder="輸入要立刻推播給所選 LINE 家屬的訊息"
-                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
-              />
-          </label>
-          <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={selectAllFilteredRecipients}
-                className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-brand-ink"
-              >
-                全選目前名單
-              </button>
-              <button
-                type="button"
-                onClick={clearSelectedRecipients}
-                className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-brand-ink"
-              >
-                清除選擇
-              </button>
-              <button
-                type="button"
-                onClick={sendInstantLineMessage}
-                disabled={isInstantSending}
-                className="rounded-full bg-brand-forest px-5 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-400"
-              >
-                {isInstantSending ? "即時發送中" : "即時發送 LINE 群發"}
-              </button>
-          </div>
-          <p className="text-xs text-slate-500">
-            已選 {selectedRecipients.length} 位；可即時發送 {sendableRecipients.length} 位。
-            {missingLineIdCount > 0 ? ` ${missingLineIdCount} 位缺 LINE userId 會略過。` : ""}
-          </p>
-        </div>
-      </Panel>
-
-      <div className="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
-        <Panel title="LINE 自動發送設定">
-          <div className="space-y-3 text-sm">
-            {[
-              {
-                key: "doctorLeaveAutoBroadcast" as const,
-                title: "醫師請假時自動發",
-                detail: "核准或建立醫師請假後，可依選定家屬發出公告。"
-              },
-              {
-                key: "doctorArrivalReminder" as const,
-                title: "醫師抵達前提醒",
-                detail: "醫師離開前一站後，自動提醒下一站家屬準備。"
-              },
-              {
-                key: "afterReturnCare" as const,
-                title: "結束後關心",
-                detail: "訪視完成後發送照護提醒與回覆入口。"
-              }
-            ].map((item) => (
-              <button
-                key={item.key}
-                type="button"
-                onClick={() => toggleSetting(item.key)}
-                className="flex w-full items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left"
-              >
-                <span>
-                  <span className="block font-semibold text-brand-ink">{item.title}</span>
-                  <span className="mt-1 block text-xs text-slate-500">{item.detail}</span>
-                </span>
-                <span
-                  className={`shrink-0 rounded-full px-3 py-1 text-xs font-semibold ${
-                    settings[item.key]
-                      ? "bg-emerald-100 text-emerald-700"
-                      : "bg-slate-100 text-slate-500"
-                  }`}
-                >
-                  {settings[item.key] ? "啟用" : "停用"}
-                </span>
-              </button>
-            ))}
-          </div>
-        </Panel>
-
-        <Panel title="範本群發">
-          <div className="space-y-3 text-sm">
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
-              <p className="font-semibold text-brand-ink">本次發送項目</p>
-              <div className="mt-2 grid gap-2 md:grid-cols-2">
-                {(Object.keys(templateLabels) as FamilyLineTemplateKey[]).map((templateKey) => (
-                  <label
-                    key={templateKey}
-                    className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-3 py-2"
-                  >
-                    <span className="flex min-w-0 items-center gap-2">
-                      <input
-                        type="checkbox"
-                        aria-label={`${templateLabels[templateKey]} 本次發送勾選`}
-                        checked={selectedSendTypes.includes(templateKey)}
-                        onChange={() => toggleSendType(templateKey)}
-                        className="h-4 w-4"
-                      />
-                      <span className="min-w-0 break-words">{templateLabels[templateKey]}</span>
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedTemplate(templateKey)}
-                      className="shrink-0 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-brand-ink"
-                    >
-                      編輯範本
-                    </button>
-                  </label>
-                ))}
+                  ))}
+                </div>
               </div>
-            </div>
 
-            <div className="grid gap-3 md:grid-cols-2">
-              <label className="block">
-                <span className="mb-1 block font-medium text-brand-ink">目前編輯範本</span>
-                <select
-                  aria-label="目前編輯範本"
-                  value={selectedTemplate}
-                  onChange={(event) => setSelectedTemplate(event.target.value as FamilyLineTemplateKey)}
-                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
-                >
-                  {Object.entries(templateLabels).map(([key, label]) => (
-                    <option key={key} value={key}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="block">
-                <span className="mb-1 block font-medium text-brand-ink">範本套用醫師</span>
-                <select
-                  aria-label="範本套用醫師"
-                  value={selectedDoctorId}
-                  onChange={(event) => setSelectedDoctorId(event.target.value)}
-                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
-                >
-                  <option value="all">全部醫師</option>
-                  {db.doctors.map((doctor) => (
-                    <option key={doctor.id} value={doctor.id}>
-                      {doctor.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-
-            <label className="block">
-              <span className="mb-1 block font-medium text-brand-ink">範本標題</span>
-              <input
-                aria-label="範本標題"
-                value={selectedTemplateDraft.subject}
-                onChange={(event) => updateTemplateDraft({ subject: event.target.value })}
-                className="w-full rounded-2xl border border-slate-200 px-4 py-3"
-              />
-            </label>
-
-            <label className="block">
-              <span className="mb-1 block font-medium text-brand-ink">範本內容</span>
-              <textarea
-                aria-label="範本內容"
-                value={selectedTemplateDraft.content}
-                onChange={(event) => updateTemplateDraft({ content: event.target.value })}
-                rows={5}
-                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
-              />
-            </label>
-            <div className="rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
-              <p className="font-semibold">本次預覽</p>
-              <p className="mt-1 whitespace-pre-wrap">{templateContent.content || "尚未填寫內容。"}</p>
-            </div>
-
-            <label className="flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-              <input
-                type="checkbox"
-                aria-label="確認本次 LINE 發送"
-                checked={isSendConfirmed}
-                onChange={(event) => setIsSendConfirmed(event.target.checked)}
-                className="mt-1 h-4 w-4"
-              />
-              <span>
-                我已確認本次勾選項目、範本內容與發送人員，送出後會透過 LINE 推播給可發送的家屬。
-              </span>
-            </label>
-
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={selectAllFilteredRecipients}
-                className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-brand-ink"
-              >
-                全選目前名單
-              </button>
-              <button
-                type="button"
-                onClick={clearSelectedRecipients}
-                className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-brand-ink"
-              >
-                清除選擇
-              </button>
-              <button
-                type="button"
-                onClick={sendLineMessages}
-                disabled={isSending}
-                className="rounded-full bg-brand-forest px-5 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-400"
-              >
-                {isSending ? "發送中" : "送出 LINE 群發"}
-              </button>
-            </div>
-          </div>
-        </Panel>
-      </div>
-
-      <Panel title="LINE 名單與個案關聯">
-        <div className="grid gap-4 xl:grid-cols-[0.8fr_1.2fr]">
-          <div className="space-y-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm">
-            <p className="text-sm text-slate-600">
-              名單來源改為 LINE webhook：家屬加入官方帳號並傳送任一訊息後，系統會記錄該好友。行政只需在這裡替好友註記身分並關聯居家個案。
-            </p>
-              <button
-                type="button"
-                onClick={() => void syncLineOfficialAccountFriends()}
-                disabled={isSyncingLineFriends}
-              className="rounded-full border border-emerald-200 bg-white px-4 py-2 text-xs font-semibold text-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {isSyncingLineFriends ? "重新整理中" : "重新整理 LINE 好友名單"}
-            </button>
-            <div className="rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-xs text-emerald-800">
-              若官方帳號不是認證或 Premium，LINE 可能無法直接匯出完整好友名單；目前會改用 webhook 收到的互動好友作為可管理名單。
-            </div>
-            <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-xs text-slate-600">
-              操作方式：請家屬先加入官方 LINE 帳號並傳一則訊息，回到本頁按「重新整理 LINE 好友名單」，再勾選好友關聯到既有居家個案。
-            </div>
-          </div>
-
-          <div className="space-y-3">
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm">
-              <div className="grid gap-3 md:grid-cols-[1fr_auto_auto_auto_auto] md:items-end">
+              <div className="grid gap-3 md:grid-cols-2">
                 <label className="block">
-                  <span className="mb-1 block font-medium text-brand-ink">批次關聯到個案</span>
+                  <span className="mb-1 block font-medium text-brand-ink">目前編輯範本</span>
                   <select
-                    aria-label="批次關聯居家個案"
-                    value={bulkLinkPatientId}
-                    onChange={(event) => setBulkLinkPatientId(event.target.value)}
-                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-2.5"
+                    aria-label="目前編輯範本"
+                    value={selectedTemplate}
+                    onChange={(event) => setSelectedTemplate(event.target.value as FamilyLineTemplateKey)}
+                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
                   >
-                    <option value="">請選擇個案</option>
-                    {db.patients.map((patient) => (
-                      <option key={patient.id} value={patient.id}>
-                        {maskPatientName(patient.name)}
+                    {Object.entries(templateLabels).map(([key, label]) => (
+                      <option key={key} value={key}>
+                        {label}
                       </option>
                     ))}
                   </select>
                 </label>
+                <label className="block">
+                  <span className="mb-1 block font-medium text-brand-ink">範本套用醫師</span>
+                  <select
+                    aria-label="範本套用醫師"
+                    value={selectedDoctorId}
+                    onChange={(event) => setSelectedDoctorId(event.target.value)}
+                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
+                  >
+                    <option value="all">全部醫師</option>
+                    {db.doctors.map((doctor) => (
+                      <option key={doctor.id} value={doctor.id}>
+                        {doctor.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              <label className="block">
+                <span className="mb-1 block font-medium text-brand-ink">範本標題</span>
+                <input
+                  aria-label="範本標題"
+                  value={selectedTemplateDraft.subject}
+                  onChange={(event) => updateTemplateDraft({ subject: event.target.value })}
+                  className="w-full rounded-2xl border border-slate-200 px-4 py-3"
+                />
+              </label>
+
+              <label className="block">
+                <span className="mb-1 block font-medium text-brand-ink">範本內容</span>
+                <textarea
+                  aria-label="範本內容"
+                  value={selectedTemplateDraft.content}
+                  onChange={(event) => updateTemplateDraft({ content: event.target.value })}
+                  rows={5}
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
+                />
+              </label>
+              <div className="rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+                <p className="font-semibold">本次預覽</p>
+                <p className="mt-1 whitespace-pre-wrap">{templateContent.content || "尚未填寫內容。"}</p>
+              </div>
+
+              <label className="flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                <input
+                  type="checkbox"
+                  aria-label="確認本次 LINE 發送"
+                  checked={isSendConfirmed}
+                  onChange={(event) => setIsSendConfirmed(event.target.checked)}
+                  className="mt-1 h-4 w-4"
+                />
+                <span>
+                  我已確認本次勾選項目、範本內容與發送人員，送出後會透過 LINE 推播給可發送的家屬。
+                </span>
+              </label>
+
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={selectAllFilteredRecipients}
+                  className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-brand-ink"
+                >
+                  全選目前名單
+                </button>
+                <button
+                  type="button"
+                  onClick={clearSelectedRecipients}
+                  className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-brand-ink"
+                >
+                  清除選擇
+                </button>
+                <button
+                  type="button"
+                  onClick={sendLineMessages}
+                  disabled={isSending}
+                  className="rounded-full bg-brand-forest px-5 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-400"
+                >
+                  {isSending ? "發送中" : "送出 LINE 群發"}
+                </button>
+              </div>
+            </div>
+          </Panel>
+        </div>
+
+        <div className="space-y-4 xl:sticky xl:top-4">
+          <Panel title="個案關聯操作">
+            <div className="space-y-3 text-sm">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-600">
+                名單來源為 LINE webhook；家屬加入官方帳號並傳送訊息後，按下重新整理即可帶入右側名單。
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => void syncLineOfficialAccountFriends()}
+                  disabled={isSyncingLineFriends}
+                  className="rounded-full border border-emerald-200 bg-white px-4 py-2 text-xs font-semibold text-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {isSyncingLineFriends ? "重新整理中" : "重新整理 LINE 好友名單"}
+                </button>
                 <button
                   type="button"
                   onClick={selectAllManagedContacts}
@@ -1197,6 +1098,24 @@ export function AdminFamilyLinePage() {
                 >
                   反選好友
                 </button>
+              </div>
+              <label className="block">
+                <span className="mb-1 block font-medium text-brand-ink">批次關聯到個案</span>
+                <select
+                  aria-label="批次關聯居家個案"
+                  value={bulkLinkPatientId}
+                  onChange={(event) => setBulkLinkPatientId(event.target.value)}
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-2.5"
+                >
+                  <option value="">請選擇個案</option>
+                  {db.patients.map((patient) => (
+                    <option key={patient.id} value={patient.id}>
+                      {maskPatientName(patient.name)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
                   onClick={() => void linkSelectedContactsToPatient()}
@@ -1212,62 +1131,142 @@ export function AdminFamilyLinePage() {
                   取消所選關聯
                 </button>
               </div>
-              <p className="mt-2 text-xs text-slate-500">
-                已選 {selectedManagedContactIds.length} 位 LINE 好友；可把多位好友一次註記到同一個居家個案，也可批次取消既有關聯。
+              <p className="text-xs text-slate-500">
+                已選 {selectedManagedContactIds.length} 位 LINE 好友；右側名單可同時勾選發送對象與關聯對象。
               </p>
             </div>
+          </Panel>
 
-            {managedLineContacts.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-8 text-center text-sm text-slate-500">
-                目前尚未收到 LINE 好友互動；請家屬加入官方帳號並傳送任一訊息後，再按「重新整理 LINE 好友名單」。
+          <Panel title="LINE 名單與個案關聯">
+            <div className="space-y-3">
+              <div className="grid gap-3 md:grid-cols-[1fr_auto_auto] md:items-end">
+                <label className="block text-sm">
+                  <span className="mb-1 block font-medium text-brand-ink">篩選醫師</span>
+                  <select
+                    aria-label="篩選醫師"
+                    value={selectedDoctorId}
+                    onChange={(event) => setSelectedDoctorId(event.target.value)}
+                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
+                  >
+                    <option value="all">全部醫師</option>
+                    {db.doctors.map((doctor) => (
+                      <option key={doctor.id} value={doctor.id}>
+                        {doctor.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  onClick={selectAllFilteredRecipients}
+                  className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-brand-ink"
+                >
+                  全選目前名單
+                </button>
+                <button
+                  type="button"
+                  onClick={clearSelectedRecipients}
+                  className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-brand-ink"
+                >
+                  清除選擇
+                </button>
               </div>
-            ) : (
-              managedLineContacts.map((contact) => {
-                const linkedNames = contact.linkedPatientIds
-                  .map((patientId) => db.patients.find((patient) => patient.id === patientId))
-                  .filter((patient): patient is Patient => Boolean(patient))
-                  .map((patient) => maskPatientName(patient.name));
-                return (
-                  <div key={contact.id} className="rounded-2xl border border-slate-200 bg-white p-4 text-sm">
-                    <div className="flex items-start justify-between gap-3">
-                      <label className="flex min-w-0 items-start gap-3">
-                        <input
-                          type="checkbox"
-                          aria-label={`${contact.displayName} 批次關聯勾選`}
-                          checked={selectedManagedContactIds.includes(contact.id)}
-                          onChange={() => toggleManagedContactSelection(contact.id)}
-                          className="mt-1 h-4 w-4"
-                        />
-                        <span className="min-w-0">
-                          <span className="block font-semibold text-brand-ink">{contact.displayName}</span>
-                          <span className="mt-1 block break-all text-xs text-slate-500">{contact.lineUserId}</span>
-                        </span>
-                      </label>
-                      <Badge
-                        value={contact.source === "official_friend" ? "官方好友" : "Webhook 收到"}
-                        compact
-                      />
-                    </div>
-                    <p className="mt-2 text-slate-600">
-                      關聯個案：{linkedNames.length ? linkedNames.join("、") : "尚未關聯"}
-                    </p>
-                    <label className="mt-3 block">
-                      <span className="mb-1 block text-xs font-medium text-brand-ink">好友註記</span>
-                      <input
-                        aria-label={`${contact.displayName} 好友註記`}
-                        value={contact.note}
-                        onChange={(event) => updateManagedContactNote(contact.id, event.target.value)}
-                        placeholder="例如：主要照顧者、可接收公告"
-                        className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm"
-                      />
-                    </label>
-                  </div>
-                );
-              })
-            )}
-          </div>
+
+              {managedLineContacts.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-8 text-center text-sm text-slate-500">
+                  目前尚未收到 LINE 好友互動；請家屬加入官方帳號並傳送任一訊息後，再按「重新整理 LINE 好友名單」。
+                </div>
+              ) : visibleManagedLineContacts.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-8 text-center text-sm text-slate-500">
+                  目前篩選醫師沒有可發送的 LINE 好友。請確認右上方個案關聯是否已連到該醫師的居家個案。
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {visibleManagedLineContacts.map((contact) => {
+                    const recipient = filteredRecipientByContactId.get(contact.id);
+                    const isSendSelected = recipient ? selectedRecipientIds.includes(recipient.id) : false;
+                    const linkedNames = contact.linkedPatientIds
+                      .map((patientId) => db.patients.find((patient) => patient.id === patientId))
+                      .filter((patient): patient is Patient => Boolean(patient))
+                      .map((patient) => maskPatientName(patient.name));
+                    return (
+                      <div
+                        key={contact.id}
+                        className={`rounded-2xl border p-4 text-sm ${
+                          isSendSelected ? "border-brand-forest bg-emerald-50/70" : "border-slate-200 bg-white"
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0 space-y-2">
+                            <label className="flex min-w-0 items-start gap-3">
+                              <input
+                                type="checkbox"
+                                aria-label={`${contact.displayName} 發送勾選`}
+                                checked={isSendSelected}
+                                disabled={!recipient}
+                                onChange={() => {
+                                  if (recipient) {
+                                    toggleRecipient(recipient.id);
+                                  }
+                                }}
+                                className="mt-1 h-4 w-4 disabled:opacity-40"
+                              />
+                              <span className="min-w-0">
+                                <span className="block font-semibold text-brand-ink">{contact.displayName}</span>
+                                <span className="mt-1 block text-xs text-slate-500">
+                                  發送對象：{recipient ? resolveRecipientLineStatus(recipient.lineUserId) : "不符合目前醫師篩選"}
+                                </span>
+                              </span>
+                            </label>
+                            <label className="flex min-w-0 items-start gap-3">
+                              <input
+                                type="checkbox"
+                                aria-label={`${contact.displayName} 批次關聯勾選`}
+                                checked={selectedManagedContactIds.includes(contact.id)}
+                                onChange={() => toggleManagedContactSelection(contact.id)}
+                                className="mt-1 h-4 w-4"
+                              />
+                              <span className="min-w-0 text-xs text-slate-600">選入右上方個案關聯操作</span>
+                            </label>
+                          </div>
+                          <Badge
+                            value={contact.source === "official_friend" ? "官方好友" : "Webhook 收到"}
+                            compact
+                          />
+                        </div>
+                        <p className="mt-3 text-slate-600">
+                          關聯個案：{linkedNames.length ? linkedNames.join("、") : "尚未關聯"}
+                        </p>
+                        <p className="mt-1 text-xs text-slate-500">
+                          關聯醫師：{recipient?.linkedDoctors.length
+                            ? recipient.linkedDoctors.map((doctor) => doctor.name).join("、")
+                            : "未指定醫師"}
+                        </p>
+                        <p className="mt-1 text-xs text-slate-500">
+                          最近排程：{recipient?.schedule ? formatDateTimeFull(recipient.schedule.scheduled_start_at) : "尚無排程"}
+                        </p>
+                        <div className="mt-3 break-all rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-xs text-slate-700">
+                          {contact.lineUserId}
+                        </div>
+                        <label className="mt-3 block">
+                          <span className="mb-1 block text-xs font-medium text-brand-ink">好友註記</span>
+                          <input
+                            aria-label={`${contact.displayName} 好友註記`}
+                            value={contact.note}
+                            onChange={(event) => updateManagedContactNote(contact.id, event.target.value)}
+                            placeholder="例如：主要照顧者、可接收公告"
+                            className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm"
+                          />
+                        </label>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </Panel>
         </div>
-      </Panel>
+      </div>
 
     </div>
   );
