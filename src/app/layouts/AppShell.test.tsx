@@ -158,7 +158,11 @@ describe("AppShell", () => {
     expect(screen.queryByRole("heading", { name: "API Token 設定" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("LINE Channel Access Token")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Google Maps API Key")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /LINE 自動發送設定/ }));
     expect(screen.getByRole("heading", { name: "LINE 自動發送設定" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /範本群發/ }));
     expect(screen.getByLabelText("目前編輯範本")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "送出 LINE 群發" })).toBeInTheDocument();
   });

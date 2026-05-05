@@ -12,6 +12,10 @@ const HOSPITAL_LONGITUDE = 120.483276;
 const LEGACY_HOSPITAL_LATITUDE = 22.88794;
 const LEGACY_HOSPITAL_LONGITUDE = 120.48341;
 
+export function hasLocalDbSnapshot(): boolean {
+  return typeof window !== "undefined" && Boolean(window.localStorage.getItem(MOCK_DB_STORAGE_KEY));
+}
+
 function formatLocalDate(date: Date) {
   const year = date.getFullYear();
   const month = `${date.getMonth() + 1}`.padStart(2, "0");

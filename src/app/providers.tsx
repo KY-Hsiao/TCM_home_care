@@ -6,12 +6,18 @@ import {
   type PropsWithChildren
 } from "react";
 import { AppContext, type AppContextValue } from "./app-context";
-import { loadDb, persistDb, subscribeDbStorage } from "../data/mock/db";
+import { hasLocalDbSnapshot, loadDb, persistDb, subscribeDbStorage } from "../data/mock/db";
 import { createRepositories } from "../data/mock/repositories";
 import type { AppDb } from "../domain/models";
 import type { SessionState } from "../domain/repository";
 import { createAppServices } from "../services";
 import type { AppServices } from "../services/types";
+import {
+  fetchServerAppDb,
+  getAppDbSyncDebounceMs,
+  persistServerAppDb,
+  shouldPreferLocalAppDb
+} from "../services/app-db-sync";
 import {
   loadStoredPasswords,
   loadStoredSession,
@@ -22,6 +28,7 @@ import {
 } from "./auth-storage";
 
 export function AppProviders({ children }: PropsWithChildren) {
+  const hadLocalDbSnapshotRef = useRef(hasLocalDbSnapshot());
   const [db, setDb] = useState<AppDb>(() => loadDb());
   const [, setServicesRevision] = useState(0);
   const [storedPasswords, setStoredPasswords] = useState(() => loadStoredPasswords());
@@ -55,7 +62,50 @@ export function AppProviders({ children }: PropsWithChildren) {
     };
   });
   const persistDbTimerRef = useRef<number | null>(null);
+  const persistServerDbTimerRef = useRef<number | null>(null);
   const latestDbRef = useRef(db);
+  const serverSyncReadyRef = useRef(false);
+  const skipNextServerPersistRef = useRef(false);
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    void fetchServerAppDb()
+      .then((serverDb) => {
+        if (isCancelled) {
+          return;
+        }
+
+        if (
+          serverDb &&
+          hadLocalDbSnapshotRef.current &&
+          shouldPreferLocalAppDb(latestDbRef.current, serverDb)
+        ) {
+          void persistServerAppDb(latestDbRef.current);
+          return;
+        }
+
+        if (serverDb) {
+          skipNextServerPersistRef.current = true;
+          setDb(serverDb);
+          persistDb(serverDb);
+          return;
+        }
+
+        if (hadLocalDbSnapshotRef.current) {
+          void persistServerAppDb(latestDbRef.current);
+        }
+      })
+      .finally(() => {
+        if (!isCancelled) {
+          serverSyncReadyRef.current = true;
+        }
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     latestDbRef.current = db;
@@ -66,6 +116,21 @@ export function AppProviders({ children }: PropsWithChildren) {
       persistDb(latestDbRef.current);
       persistDbTimerRef.current = null;
     }, 0);
+
+    if (serverSyncReadyRef.current) {
+      if (skipNextServerPersistRef.current) {
+        skipNextServerPersistRef.current = false;
+      } else {
+        if (persistServerDbTimerRef.current) {
+          window.clearTimeout(persistServerDbTimerRef.current);
+        }
+        persistServerDbTimerRef.current = window.setTimeout(() => {
+          void persistServerAppDb(latestDbRef.current);
+          persistServerDbTimerRef.current = null;
+        }, getAppDbSyncDebounceMs());
+      }
+    }
+
     return () => {
       if (persistDbTimerRef.current) {
         window.clearTimeout(persistDbTimerRef.current);
@@ -80,7 +145,14 @@ export function AppProviders({ children }: PropsWithChildren) {
         window.clearTimeout(persistDbTimerRef.current);
         persistDbTimerRef.current = null;
       }
+      if (persistServerDbTimerRef.current) {
+        window.clearTimeout(persistServerDbTimerRef.current);
+        persistServerDbTimerRef.current = null;
+      }
       persistDb(latestDbRef.current);
+      if (serverSyncReadyRef.current) {
+        void persistServerAppDb(latestDbRef.current);
+      }
     };
   }, []);
 
