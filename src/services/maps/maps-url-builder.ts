@@ -95,7 +95,7 @@ export function createMapsUrlBuilder(options?: { embedApiKey?: string | null }):
       const origin = formatCoordinateQuery(originLatitude ?? null, originLongitude ?? null);
       return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}${
         origin ? `&origin=${encodeURIComponent(origin)}` : ""
-      }`;
+      }&travelmode=driving`;
     },
     buildNavigationEmbedUrl({
       destinationAddress,
