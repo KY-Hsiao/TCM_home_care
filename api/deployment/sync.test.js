@@ -40,6 +40,16 @@ async function callAppDb(handler, method, body) {
   };
 }
 
+async function callCalendarEvents(handler, body) {
+  const response = createResponse();
+  await handler({ method: "POST", body, query: { resource: "calendar-events" } }, response);
+  return {
+    statusCode: response.statusCode,
+    headers: response.headers,
+    body: JSON.parse(response.body)
+  };
+}
+
 function createMinimalDb() {
   return {
     patients: [],
@@ -66,6 +76,7 @@ describe("/api/deployment/sync?resource=app-db", () => {
     vi.resetModules();
     vi.doUnmock("@neondatabase/serverless");
     vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
   });
 
   it("GET 會回傳伺服器資料快照", async () => {
@@ -157,5 +168,57 @@ describe("/api/deployment/sync?resource=app-db", () => {
 
     expect(response.statusCode).toBe(405);
     expect(JSON.parse(response.body).error).toBe("Method Not Allowed");
+  });
+
+  it("可用 Calendar ID 與 Google API Key 讀取指定日期行程", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        items: [
+          {
+            id: "event-001",
+            summary: "院內會議",
+            start: { dateTime: "2026-05-06T09:30:00+08:00" },
+            end: { dateTime: "2026-05-06T10:00:00+08:00" },
+            htmlLink: "https://calendar.google.com/event?eid=event-001"
+          }
+        ]
+      })
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const handler = await importHandlerWithQuery(vi.fn());
+
+    const result = await callCalendarEvents(handler, {
+      date: "2026-05-06",
+      googleCalendarId: "doctor@example.com",
+      googleApiKey: "google-key"
+    });
+
+    expect(result.statusCode).toBe(200);
+    expect(result.body.events).toEqual([
+      {
+        id: "event-001",
+        summary: "院內會議",
+        start: "2026-05-06T09:30:00+08:00",
+        end: "2026-05-06T10:00:00+08:00",
+        htmlLink: "https://calendar.google.com/event?eid=event-001"
+      }
+    ]);
+    expect(fetchMock.mock.calls[0][0]).toContain(
+      "https://www.googleapis.com/calendar/v3/calendars/doctor%40example.com/events"
+    );
+    expect(fetchMock.mock.calls[0][0]).toContain("timeMin=2026-05-06T00%3A00%3A00%2B08%3A00");
+  });
+
+  it("Calendar ID 缺漏時會回傳明確原因", async () => {
+    const handler = await importHandlerWithQuery(vi.fn());
+
+    const result = await callCalendarEvents(handler, {
+      date: "2026-05-06",
+      googleApiKey: "google-key"
+    });
+
+    expect(result.statusCode).toBe(400);
+    expect(result.body.reason).toBe("CALENDAR_ID_MISSING");
   });
 });

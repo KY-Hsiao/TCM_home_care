@@ -23,6 +23,17 @@ const REQUIRED_APP_DB_ARRAY_KEYS = [
   "doctor_location_logs"
 ];
 
+function buildTaipeiDateRange(dateValue) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateValue)) {
+    return null;
+  }
+
+  return {
+    timeMin: `${dateValue}T00:00:00+08:00`,
+    timeMax: `${dateValue}T23:59:59+08:00`
+  };
+}
+
 function setJson(response, statusCode, payload) {
   response.status(statusCode).setHeader("Content-Type", "application/json");
   response.send(JSON.stringify(payload));
@@ -119,6 +130,85 @@ async function handleAppDbSync(request, response) {
   }
 }
 
+async function handleGoogleCalendarEvents(request, response) {
+  if (request.method !== "POST") {
+    response.setHeader("Allow", "POST");
+    setJson(response, 405, { error: "Method Not Allowed" });
+    return;
+  }
+
+  const body = normalizeBody(request);
+  const calendarId = String(body.googleCalendarId ?? body.calendarId ?? "").trim();
+  const googleApiKey = String(body.googleApiKey ?? body.googleMapsApiKey ?? "").trim();
+  const dateValue = String(body.date ?? "").trim();
+  const dateRange = buildTaipeiDateRange(dateValue);
+
+  if (!calendarId) {
+    setJson(response, 400, {
+      reason: "CALENDAR_ID_MISSING",
+      error: "尚未設定 Google Calendar ID，無法讀取特定日期行程。"
+    });
+    return;
+  }
+  if (!googleApiKey) {
+    setJson(response, 400, {
+      reason: "GOOGLE_API_KEY_MISSING",
+      error: "尚未設定 Google API Key，無法讀取 Google 日曆。"
+    });
+    return;
+  }
+  if (!dateRange) {
+    setJson(response, 400, {
+      reason: "DATE_INVALID",
+      error: "請提供 YYYY-MM-DD 格式的日期。"
+    });
+    return;
+  }
+
+  try {
+    const url = new URL(
+      `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`
+    );
+    url.searchParams.set("key", googleApiKey);
+    url.searchParams.set("timeMin", dateRange.timeMin);
+    url.searchParams.set("timeMax", dateRange.timeMax);
+    url.searchParams.set("singleEvents", "true");
+    url.searchParams.set("orderBy", "startTime");
+    url.searchParams.set("timeZone", "Asia/Taipei");
+
+    const calendarResponse = await fetch(url.toString());
+    const payload = await calendarResponse.json();
+    if (!calendarResponse.ok) {
+      setJson(response, 502, {
+        reason: payload.error?.status ?? `HTTP_${calendarResponse.status}`,
+        error: payload.error?.message ?? "Google Calendar API 讀取失敗。"
+      });
+      return;
+    }
+
+    const events = Array.isArray(payload.items)
+      ? payload.items.map((event) => ({
+          id: String(event.id ?? ""),
+          summary: String(event.summary ?? "未命名行程"),
+          start: event.start?.dateTime ?? event.start?.date ?? "",
+          end: event.end?.dateTime ?? event.end?.date ?? "",
+          htmlLink: event.htmlLink ?? ""
+        }))
+      : [];
+
+    setJson(response, 200, {
+      ok: true,
+      date: dateValue,
+      events
+    });
+  } catch (error) {
+    setJson(response, 502, {
+      reason: "NETWORK_ERROR",
+      error: error instanceof Error ? error.message : "呼叫 Google Calendar API 失敗。"
+    });
+  }
+}
+
 async function triggerGitHubWorkflow() {
   const token = process.env.GITHUB_DEPLOY_TOKEN;
   const owner = process.env.GITHUB_DEPLOY_OWNER;
@@ -183,6 +273,11 @@ async function triggerVercelHook() {
 export default async function handler(request, response) {
   if (resolveResource(request) === "app-db") {
     await handleAppDbSync(request, response);
+    return;
+  }
+
+  if (resolveResource(request) === "calendar-events") {
+    await handleGoogleCalendarEvents(request, response);
     return;
   }
 

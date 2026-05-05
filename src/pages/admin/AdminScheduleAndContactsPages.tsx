@@ -71,6 +71,20 @@ type LeaveLineRecipient = {
   matchedPatientNames: string[];
 };
 
+type GoogleCalendarEventPreview = {
+  id: string;
+  summary: string;
+  start: string;
+  end: string;
+  htmlLink: string;
+};
+
+type GoogleCalendarDateCheck =
+  | { status: "idle"; message: string; events: GoogleCalendarEventPreview[] }
+  | { status: "checking"; message: string; events: GoogleCalendarEventPreview[] }
+  | { status: "ready"; message: string; events: GoogleCalendarEventPreview[] }
+  | { status: "error"; message: string; events: GoogleCalendarEventPreview[] };
+
 const weekdayOptions = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"] as const;
 const routeTimeSlotOptions: RouteTimeSlot[] = ["上午", "下午"];
 const routeStartLocation = {
@@ -114,6 +128,24 @@ function formatDateInputValue(date: Date) {
   const month = `${date.getMonth() + 1}`.padStart(2, "0");
   const day = `${date.getDate()}`.padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function formatCalendarEventTime(value: string) {
+  if (!value) {
+    return "";
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return "整天";
+  }
+  const parsedDate = new Date(value);
+  if (Number.isNaN(parsedDate.getTime())) {
+    return value;
+  }
+  return parsedDate.toLocaleTimeString("zh-TW", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  });
 }
 
 function addDaysToDateInput(routeDate: string, days: number) {
@@ -1043,6 +1075,12 @@ export function AdminSchedulesPage() {
   const [plannerRows, setPlannerRows] = useState<PlannerRow[]>([]);
   const [isGeocodingPlannerRows, setIsGeocodingPlannerRows] = useState(false);
   const [geocodingMessage, setGeocodingMessage] = useState<string | null>(null);
+  const [googleCalendarDateCheck, setGoogleCalendarDateCheck] =
+    useState<GoogleCalendarDateCheck>({
+      status: "idle",
+      message: "尚未選擇日期。",
+      events: []
+    });
   const [draggingPlannerPatientId, setDraggingPlannerPatientId] = useState<string | null>(null);
   const [dragTargetPlannerPatientId, setDragTargetPlannerPatientId] = useState<string | null>(null);
   const [dismissedAutoScheduleCandidateIds, setDismissedAutoScheduleCandidateIds] = useState<string[]>([]);
@@ -1241,6 +1279,88 @@ export function AdminSchedulesPage() {
     selectedDoctorId,
     selectedSavedRoutePlanId
   ]);
+
+  useEffect(() => {
+    if (!routeDate || !selectedDoctorId) {
+      setGoogleCalendarDateCheck({
+        status: "idle",
+        message: "選擇醫師與路線日期後，系統會檢查 Google 日曆是否已有行程。",
+        events: []
+      });
+      return;
+    }
+
+    const apiTokens = loadAdminApiTokenSettings();
+    const googleCalendarId = apiTokens.googleCalendarId.trim();
+    const googleApiKey = apiTokens.googleMapsApiKey.trim();
+    if (!googleCalendarId) {
+      setGoogleCalendarDateCheck({
+        status: "idle",
+        message: "尚未在機密管理區設定 Google Calendar ID，無法檢查特定日期行程。",
+        events: []
+      });
+      return;
+    }
+    if (!googleApiKey) {
+      setGoogleCalendarDateCheck({
+        status: "error",
+        message: "尚未在機密管理區設定 Google API Key，無法讀取 Google 日曆。",
+        events: []
+      });
+      return;
+    }
+
+    let isCancelled = false;
+    setGoogleCalendarDateCheck({
+      status: "checking",
+      message: "正在讀取 Google 日曆，確認這一天是否已有行程。",
+      events: []
+    });
+
+    void fetch("/api/deployment/sync?resource=calendar-events", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        date: routeDate,
+        googleCalendarId,
+        googleApiKey
+      })
+    })
+      .then(async (response) => {
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload.error ?? "Google 日曆讀取失敗。");
+        }
+        return payload as { events?: GoogleCalendarEventPreview[] };
+      })
+      .then((payload) => {
+        if (isCancelled) {
+          return;
+        }
+        const events = payload.events ?? [];
+        setGoogleCalendarDateCheck({
+          status: "ready",
+          message: events.length
+            ? `Google 日曆在 ${formatDateOnly(routeDate)} 有 ${events.length} 筆行程，排程前請確認是否衝突。`
+            : `Google 日曆在 ${formatDateOnly(routeDate)} 未找到行程。`,
+          events
+        });
+      })
+      .catch((error) => {
+        if (isCancelled) {
+          return;
+        }
+        setGoogleCalendarDateCheck({
+          status: "error",
+          message: error instanceof Error ? error.message : "Google 日曆讀取失敗。",
+          events: []
+        });
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [routeDate, selectedDoctorId]);
 
   useEffect(() => {
     const existingNotificationItemIds = new Set(
@@ -2205,6 +2325,33 @@ export function AdminSchedulesPage() {
               </select>
             </label>
             <div className="flex items-end" />
+          </div>
+
+          <div
+            aria-live="polite"
+            className={`rounded-2xl border px-4 py-3 text-sm ${
+              googleCalendarDateCheck.status === "error"
+                ? "border-rose-200 bg-rose-50 text-rose-700"
+                : googleCalendarDateCheck.events.length > 0
+                  ? "border-amber-200 bg-amber-50 text-amber-900"
+                  : "border-slate-200 bg-slate-50 text-slate-600"
+            }`}
+          >
+            <p className="font-semibold text-brand-ink">Google 日曆日期檢查</p>
+            <p className="mt-1">{googleCalendarDateCheck.message}</p>
+            {googleCalendarDateCheck.events.length > 0 ? (
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                {googleCalendarDateCheck.events.slice(0, 4).map((event) => (
+                  <div key={event.id || `${event.summary}-${event.start}`} className="rounded-2xl bg-white px-3 py-2">
+                    <p className="font-semibold text-brand-ink">{event.summary}</p>
+                    <p className="mt-1 text-xs text-slate-600">
+                      {formatCalendarEventTime(event.start)}
+                      {event.end ? ` - ${formatCalendarEventTime(event.end)}` : ""}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            ) : null}
           </div>
 
           <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">

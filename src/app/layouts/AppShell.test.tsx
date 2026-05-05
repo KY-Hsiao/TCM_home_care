@@ -194,6 +194,7 @@ describe("AppShell", () => {
     expect(screen.queryByLabelText("LINE Channel Access Token")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("LINE Channel Secret")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Google Maps API Key")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Google Calendar ID")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "測試 Google Maps 連線" })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "顯示機密管理" }));
@@ -206,9 +207,18 @@ describe("AppShell", () => {
       "href",
       "https://console.cloud.google.com/apis/credentials"
     );
+    expect(screen.getByRole("link", { name: "開啟 Google 日曆設定" })).toHaveAttribute(
+      "href",
+      "https://calendar.google.com/calendar/u/0/r/settings"
+    );
+    expect(screen.getByRole("link", { name: "查看 Calendar ID 位置" })).toHaveAttribute(
+      "href",
+      "https://support.google.com/a/answer/1626902"
+    );
     expect(screen.getByLabelText("LINE Channel Access Token")).toBeInTheDocument();
     expect(screen.getByLabelText("LINE Channel Secret")).toBeInTheDocument();
     expect(screen.getByLabelText("Google Maps API Key")).toBeInTheDocument();
+    expect(screen.getByLabelText("Google Calendar ID")).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText("LINE Channel Access Token"), {
       target: { value: "browser-line-token" }
@@ -216,10 +226,14 @@ describe("AppShell", () => {
     fireEvent.change(screen.getByLabelText("Google Maps API Key"), {
       target: { value: "browser-google-key" }
     });
+    fireEvent.change(screen.getByLabelText("Google Calendar ID"), {
+      target: { value: "doctor@example.com" }
+    });
     await waitFor(() =>
       expect(JSON.parse(window.localStorage.getItem(ADMIN_API_TOKEN_STORAGE_KEY) ?? "{}")).toMatchObject({
         lineChannelAccessToken: "browser-line-token",
-        googleMapsApiKey: "browser-google-key"
+        googleMapsApiKey: "browser-google-key",
+        googleCalendarId: "doctor@example.com"
       })
     );
     fireEvent.click(screen.getByRole("button", { name: "測試 Google Maps 連線" }));

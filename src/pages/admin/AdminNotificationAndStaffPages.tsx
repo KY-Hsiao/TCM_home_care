@@ -481,7 +481,7 @@ export function AdminStaffPage() {
         >
           {isSecretManagementOpen ? (
             <>
-              <div className="grid gap-3 text-sm lg:grid-cols-3">
+              <div className="grid gap-3 text-sm lg:grid-cols-2 xl:grid-cols-4">
                 <label className="block">
                   <span className="mb-1 block font-medium text-brand-ink">LINE Channel Access Token</span>
                   <a
@@ -531,9 +531,37 @@ export function AdminStaffPage() {
                     className="w-full rounded-2xl border border-slate-200 px-4 py-3"
                   />
                 </label>
+                <label className="block">
+                  <span className="mb-1 block font-medium text-brand-ink">Google Calendar ID / 分享碼</span>
+                  <span className="mb-2 flex flex-wrap gap-x-3 gap-y-1">
+                    <a
+                      href="https://calendar.google.com/calendar/u/0/r/settings"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex text-xs font-semibold text-emerald-700 underline decoration-emerald-200 underline-offset-4"
+                    >
+                      開啟 Google 日曆設定
+                    </a>
+                    <a
+                      href="https://support.google.com/a/answer/1626902"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex text-xs font-semibold text-emerald-700 underline decoration-emerald-200 underline-offset-4"
+                    >
+                      查看 Calendar ID 位置
+                    </a>
+                  </span>
+                  <input
+                    aria-label="Google Calendar ID"
+                    value={apiTokens.googleCalendarId}
+                    onChange={(event) => updateApiToken("googleCalendarId", event.target.value)}
+                    placeholder="例如 xxx@group.calendar.google.com 或 Gmail"
+                    className="w-full rounded-2xl border border-slate-200 px-4 py-3"
+                  />
+                </label>
               </div>
               <p className="mt-3 text-xs text-slate-500">
-                Token 會保存在這台瀏覽器，用於 LINE 群發/好友同步，以及排程頁 Google 補座標。正式部署仍建議同步設定環境變數。
+                Token 與 Calendar ID 會保存在這台瀏覽器，用於 LINE 群發/好友同步、排程頁 Google 補座標，以及後續判斷 Google 日曆特定日期是否有行程。正式部署仍建議同步設定環境變數。
               </p>
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <button

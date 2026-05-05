@@ -180,6 +180,50 @@ describe("AdminPages", () => {
     expect(timeSlotSelect).toHaveValue("上午");
   });
 
+  it("AdminSchedulesPage 選日期後會用機密管理的 Google Calendar ID 檢查當日行程", async () => {
+    window.localStorage.setItem(
+      ADMIN_API_TOKEN_STORAGE_KEY,
+      JSON.stringify({
+        googleCalendarId: "doctor@example.com",
+        googleMapsApiKey: "google-key"
+      })
+    );
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        events: [
+          {
+            id: "event-001",
+            summary: "院內會議",
+            start: "2026-05-06T09:30:00+08:00",
+            end: "2026-05-06T10:00:00+08:00",
+            htmlLink: ""
+          }
+        ]
+      })
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderWithProviders(<AdminSchedulesPage />);
+    selectScheduleFilters("2026-05-06");
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/deployment/sync?resource=calendar-events",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({
+            date: "2026-05-06",
+            googleCalendarId: "doctor@example.com",
+            googleApiKey: "google-key"
+          })
+        })
+      );
+      expect(screen.getByText(/Google 日曆在 2026\/05\/06 有 1 筆行程/)).toBeInTheDocument();
+      expect(screen.getByText("院內會議")).toBeInTheDocument();
+    });
+  });
+
   it("AdminSchedulesPage 會依醫師可服務時段原始順序帶入同日預設時段", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-30T09:00:00+08:00"));
