@@ -37,27 +37,13 @@ function resolveEmbedApiKey(defaultEmbedApiKey: string) {
   return defaultEmbedApiKey || loadAdminApiTokenSettings().googleMapsApiKey.trim();
 }
 
-function buildInternalNavigationUrl(input: {
+function buildGoogleMapsDirectionsUrl(input: {
   destination: string;
-  destinationLatitude: number | null;
-  destinationLongitude: number | null;
-  originLatitude?: number | null;
-  originLongitude?: number | null;
+  origin: string | null;
 }) {
-  const params = new URLSearchParams({ destination: input.destination });
-  if (input.destinationLatitude !== null) {
-    params.set("dlat", String(input.destinationLatitude));
-  }
-  if (input.destinationLongitude !== null) {
-    params.set("dlng", String(input.destinationLongitude));
-  }
-  if (input.originLatitude !== undefined && input.originLatitude !== null) {
-    params.set("olat", String(input.originLatitude));
-  }
-  if (input.originLongitude !== undefined && input.originLongitude !== null) {
-    params.set("olng", String(input.originLongitude));
-  }
-  return `/internal-navigation.html?${params.toString()}`;
+  return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(input.destination)}${
+    input.origin ? `&origin=${encodeURIComponent(input.origin)}` : ""
+  }&travelmode=driving`;
 }
 
 function buildRouteWaypointQuery(waypoints: RouteMapInput["waypoints"]) {
@@ -106,13 +92,8 @@ export function createMapsUrlBuilder(options?: { embedApiKey?: string | null }):
       if (navigationTarget === "android") {
         return `google.navigation:q=${encodeURIComponent(destination)}&mode=d`;
       }
-      return buildInternalNavigationUrl({
-        destination,
-        destinationLatitude,
-        destinationLongitude,
-        originLatitude,
-        originLongitude
-      });
+      const origin = formatCoordinateQuery(originLatitude ?? null, originLongitude ?? null);
+      return buildGoogleMapsDirectionsUrl({ destination, origin });
     },
     buildNavigationEmbedUrl({
       destinationAddress,
@@ -131,13 +112,7 @@ export function createMapsUrlBuilder(options?: { embedApiKey?: string | null }):
       });
       const resolvedEmbedApiKey = resolveEmbedApiKey(embedApiKey);
       if (!origin || !resolvedEmbedApiKey) {
-        return buildInternalNavigationUrl({
-          destination,
-          destinationLatitude,
-          destinationLongitude,
-          originLatitude,
-          originLongitude
-        });
+        return null;
       }
       return `https://www.google.com/maps/embed/v1/directions?key=${encodeURIComponent(resolvedEmbedApiKey)}&origin=${encodeURIComponent(origin)}&destination=${encodeURIComponent(destination)}&mode=driving`;
     },
