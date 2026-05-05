@@ -40,6 +40,10 @@ function resolveMapQuery({
   return keywordQuery ?? coordinateQuery ?? address;
 }
 
+function resolveEmbedApiKey(defaultEmbedApiKey: string) {
+  return defaultEmbedApiKey || loadAdminApiTokenSettings().googleMapsApiKey.trim();
+}
+
 function buildRouteWaypointQuery(waypoints: RouteMapInput["waypoints"]) {
   return waypoints.map((waypoint) => resolveMapQuery(waypoint)).join("|");
 }
@@ -109,16 +113,17 @@ export function createMapsUrlBuilder(options?: { embedApiKey?: string | null }):
       if (!origin) {
         return null;
       }
+      const resolvedEmbedApiKey = resolveEmbedApiKey(embedApiKey);
+      if (!resolvedEmbedApiKey) {
+        return null;
+      }
       const destination = resolveMapQuery({
         address: destinationAddress,
         locationKeyword: destinationKeyword,
         latitude: destinationLatitude,
         longitude: destinationLongitude
       });
-      if (!embedApiKey) {
-        return `https://maps.google.com/maps?f=d&saddr=${encodeURIComponent(origin)}&daddr=${encodeURIComponent(destination)}&dirflg=d&output=embed`;
-      }
-      return `https://www.google.com/maps/embed/v1/directions?key=${encodeURIComponent(embedApiKey)}&origin=${encodeURIComponent(origin)}&destination=${encodeURIComponent(destination)}&mode=driving`;
+      return `https://www.google.com/maps/embed/v1/directions?key=${encodeURIComponent(resolvedEmbedApiKey)}&origin=${encodeURIComponent(origin)}&destination=${encodeURIComponent(destination)}&mode=driving`;
     },
     buildRouteDirectionsUrl(input) {
       const { origin, destination, waypoints, travelMode } = buildRouteDirectionsQuery(input);
@@ -126,12 +131,13 @@ export function createMapsUrlBuilder(options?: { embedApiKey?: string | null }):
       return `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(origin)}&destination=${encodeURIComponent(destination)}&travelmode=${encodeURIComponent(travelMode)}${waypointQuery}`;
     },
     buildRouteEmbedDirectionsUrl(input) {
-      if (!embedApiKey) {
+      const resolvedEmbedApiKey = resolveEmbedApiKey(embedApiKey);
+      if (!resolvedEmbedApiKey) {
         return null;
       }
       const { origin, destination, waypoints, travelMode } = buildRouteDirectionsQuery(input);
       const waypointQuery = waypoints ? `&waypoints=${encodeURIComponent(waypoints)}` : "";
-      return `https://www.google.com/maps/embed/v1/directions?key=${encodeURIComponent(embedApiKey)}&origin=${encodeURIComponent(origin)}&destination=${encodeURIComponent(destination)}&mode=${encodeURIComponent(travelMode)}${waypointQuery}`;
+      return `https://www.google.com/maps/embed/v1/directions?key=${encodeURIComponent(resolvedEmbedApiKey)}&origin=${encodeURIComponent(origin)}&destination=${encodeURIComponent(destination)}&mode=${encodeURIComponent(travelMode)}${waypointQuery}`;
     },
     getRoutePreviewState(input): RouteMapPreviewState {
       if (input.waypoints.length > MAX_ROUTE_PREVIEW_WAYPOINTS) {
