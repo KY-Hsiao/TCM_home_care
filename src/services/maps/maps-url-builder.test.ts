@@ -20,6 +20,7 @@ describe("maps url builder", () => {
 
     expect(url).toContain(encodeURIComponent("旗山醫院後棟管理室"));
     expect(url).not.toContain(encodeURIComponent("22.88794,120.48341"));
+    expect(url).toContain("travelmode=driving");
   });
 
   it("Android 導航目標會產生 Google Maps app 導航網址", () => {
@@ -200,7 +201,11 @@ describe("maps url builder", () => {
     expect(url).toContain(encodeURIComponent("22.88794,120.48341"));
   });
 
-  it("未設定 embed api key 時，單站導航仍會產生頁內 directions iframe 備援網址", () => {
+  it("行政端輸入的 Google Maps API key 也可作為內嵌導航 key", () => {
+    window.localStorage.setItem(
+      ADMIN_API_TOKEN_STORAGE_KEY,
+      JSON.stringify({ googleMapsApiKey: "browser-google-key" })
+    );
     const maps = createMapsUrlBuilder({ embedApiKey: "" });
 
     const url = maps.buildNavigationEmbedUrl({
@@ -211,10 +216,23 @@ describe("maps url builder", () => {
       originLongitude: 120.48341
     });
 
-    expect(url).toContain("https://maps.google.com/maps?");
-    expect(url).toContain("output=embed");
-    expect(url).toContain(`saddr=${encodeURIComponent("22.88794,120.48341")}`);
-    expect(url).toContain(`daddr=${encodeURIComponent("22.886,120.482")}`);
+    expect(url).toContain("https://www.google.com/maps/embed/v1/directions");
+    expect(url).toContain("key=browser-google-key");
+    expect(url).toContain("mode=driving");
+  });
+
+  it("未設定 embed api key 時，單站導航不再退回一般內嵌地圖", () => {
+    const maps = createMapsUrlBuilder({ embedApiKey: "" });
+
+    const url = maps.buildNavigationEmbedUrl({
+      destinationAddress: "高雄市旗山區延平一路 128 號",
+      destinationLatitude: 22.886,
+      destinationLongitude: 120.482,
+      originLatitude: 22.88794,
+      originLongitude: 120.48341
+    });
+
+    expect(url).toBeNull();
   });
 
   it("waypoint 超過上限時會回傳 fallback 狀態", () => {
