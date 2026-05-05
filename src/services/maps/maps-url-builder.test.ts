@@ -22,6 +22,23 @@ describe("maps url builder", () => {
     expect(url).not.toContain(encodeURIComponent("22.88794,120.48341"));
   });
 
+  it("Android 導航目標會產生 Google Maps app 導航網址", () => {
+    const maps = createMapsUrlBuilder();
+
+    const url = maps.buildNavigationUrl({
+      destinationAddress: "高雄市旗山區延平一路 1 號",
+      destinationKeyword: "旗山醫院後棟管理室",
+      destinationLatitude: 22.88794,
+      destinationLongitude: 120.48341,
+      originLatitude: 22.88,
+      originLongitude: 120.48,
+      navigationTarget: "android"
+    });
+
+    expect(url).toBe(`google.navigation:q=${encodeURIComponent("旗山醫院後棟管理室")}&mode=d`);
+    expect(url).not.toContain("origin=");
+  });
+
   it("定位關鍵字為同住址時會回退成住址作為搜尋詞", () => {
     const maps = createMapsUrlBuilder();
 

@@ -18,6 +18,12 @@ type VisitRecordRuleInput = Omit<
   | "palpation_other"
   | "medical_history_note"
   | "generated_record_text"
+  | "treatment_chinese_medicine_checked"
+  | "treatment_chinese_medicine_note"
+  | "treatment_acupuncture_checked"
+  | "treatment_acupuncture_note"
+  | "treatment_topical_medication_checked"
+  | "treatment_topical_medication_note"
 > & {
   treatment_duration_minutes?: number | null;
   treatment_duration_manually_adjusted?: boolean;
@@ -31,6 +37,12 @@ type VisitRecordRuleInput = Omit<
   palpation_other?: string;
   medical_history_note?: string;
   generated_record_text?: string;
+  treatment_chinese_medicine_checked?: boolean;
+  treatment_chinese_medicine_note?: string;
+  treatment_acupuncture_checked?: boolean;
+  treatment_acupuncture_note?: string;
+  treatment_topical_medication_checked?: boolean;
+  treatment_topical_medication_note?: string;
 };
 
 export function applyVisitRecordRules(
@@ -69,6 +81,14 @@ export function applyVisitRecordRules(
     palpation_other: input.palpation_other ?? "",
     medical_history_note: input.medical_history_note ?? "",
     generated_record_text: input.generated_record_text ?? "",
+    treatment_chinese_medicine_checked:
+      input.treatment_chinese_medicine_checked ?? false,
+    treatment_chinese_medicine_note: input.treatment_chinese_medicine_note ?? "",
+    treatment_acupuncture_checked: input.treatment_acupuncture_checked ?? false,
+    treatment_acupuncture_note: input.treatment_acupuncture_note ?? "",
+    treatment_topical_medication_checked:
+      input.treatment_topical_medication_checked ?? false,
+    treatment_topical_medication_note: input.treatment_topical_medication_note ?? "",
     treatment_start_time: treatmentStart,
     treatment_end_time: treatmentEnd,
     treatment_duration_minutes: treatmentDuration,

@@ -241,6 +241,106 @@ describe("visit automation service", () => {
     expect(window.localStorage.getItem("tcm-family-line-managed-contacts")).toContain("pat-007");
   });
 
+  it("抵達回程終點時才會自動群發結束後關心", async () => {
+    const harness = createHarness();
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ sentCount: 2 })
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.localStorage.setItem(
+      "tcm-admin-api-token-settings",
+      JSON.stringify({
+        lineChannelAccessToken: "browser-line-token",
+        lineChannelSecret: "",
+        googleMapsApiKey: ""
+      })
+    );
+    window.localStorage.setItem(
+      "tcm-family-line-settings",
+      JSON.stringify({
+        doctorArrivalReminder: false,
+        afterReturnCare: true
+      })
+    );
+    window.localStorage.setItem(
+      "tcm-family-line-managed-contacts",
+      JSON.stringify([
+        {
+          id: "line-contact-first-stop",
+          displayName: "第 1 站家屬 LINE",
+          lineUserId: "Ufirststopaaaaaaaaaaaaaaaaaaaaaaaa",
+          linkedPatientIds: ["pat-006"],
+          note: "主要照顧者",
+          source: "webhook",
+          updatedAt: "2026-05-01T00:00:00.000Z"
+        },
+        {
+          id: "line-contact-second-stop",
+          displayName: "第 2 站家屬 LINE",
+          lineUserId: "Usecondstopaaaaaaaaaaaaaaaaaaaaaa",
+          linkedPatientIds: ["pat-007"],
+          note: "主要照顧者",
+          source: "webhook",
+          updatedAt: "2026-05-01T00:00:00.000Z"
+        }
+      ])
+    );
+
+    ["vs-015", "vs-016"].forEach((scheduleId) => {
+      harness.repositories.visitRepository.startVisitTravel(scheduleId);
+      harness.services.visitAutomation.confirmArrival(scheduleId, "doctor");
+      harness.services.visitAutomation.recordDoctorFeedback(scheduleId, "normal");
+      harness.services.visitAutomation.confirmDeparture(scheduleId, "doctor");
+    });
+    await Promise.resolve();
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    harness.services.visitAutomation.confirmReturnToEndpoint("vs-016", "doctor");
+
+    await vi.waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+    const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(requestBody.subject).toBe("訪視後關心");
+    expect(requestBody.content).toContain("醫師已抵達回程終點");
+    expect(requestBody.recipients).toEqual([
+      expect.objectContaining({
+        caregiverId: "line-contact-first-stop",
+        patientId: "pat-006",
+        doctorId: "doc-001",
+        lineUserId: "Ufirststopaaaaaaaaaaaaaaaaaaaaaaaa"
+      }),
+      expect.objectContaining({
+        caregiverId: "line-contact-second-stop",
+        patientId: "pat-007",
+        doctorId: "doc-001",
+        lineUserId: "Usecondstopaaaaaaaaaaaaaaaaaaaaaa"
+      })
+    ]);
+    expect(requestBody.lineChannelAccessToken).toBe("browser-line-token");
+    expect(harness.repositories.contactRepository.getContactLogsByScheduleId("vs-015")).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          channel: "line",
+          outcome: "抵達回程終點後自動發送結束後關心"
+        })
+      ])
+    );
+    expect(harness.repositories.contactRepository.getContactLogsByScheduleId("vs-016")).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          channel: "line",
+          outcome: "抵達回程終點後自動發送結束後關心"
+        })
+      ])
+    );
+
+    harness.services.visitAutomation.confirmReturnToEndpoint("vs-016", "doctor");
+    await Promise.resolve();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("家屬相關流程移除後，仍不應建立任何家屬通知", () => {
     const harness = createHarness();
     const detail = harness.repositories.visitRepository.getScheduleDetail("vs-015")!;

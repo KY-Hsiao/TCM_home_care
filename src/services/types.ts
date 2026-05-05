@@ -261,6 +261,7 @@ export interface MapsUrlBuilder {
     destinationLongitude: number | null;
     originLatitude?: number | null;
     originLongitude?: number | null;
+    navigationTarget?: "web" | "android";
   }): string;
   buildNavigationEmbedUrl(input: {
     destinationAddress: string;
@@ -326,6 +327,7 @@ export interface VisitAutomationService {
   confirmArrival(scheduleId: string, confirmedBy: ConfirmationSource): void;
   recordDoctorFeedback(scheduleId: string, feedbackCode: VisitFeedbackCode): void;
   confirmDeparture(scheduleId: string, confirmedBy: ConfirmationSource): void;
+  confirmReturnToEndpoint(scheduleId: string, confirmedBy: ConfirmationSource): void;
   resetTracking(scheduleId: string): void;
   resetAll(): void;
   getDisplayStatus(

@@ -7,11 +7,13 @@ import type { Reminder, VisitRecord, VisitSchedule } from "../../domain/models";
 import type { VisitDetail } from "../../domain/repository";
 import {
   buildPreviousMedicalHistorySelections,
+  buildPreviousTreatmentProvidedSelections,
   buildPreviousFourDiagnosisSelections,
   buildFourDiagnosisSummary,
   buildFourDiagnosisSummaryFromRecord,
   buildReturnRecordCsv,
   buildReturnRecordDraft,
+  buildTreatmentProvidedSummary,
   calculateTreatmentDurationMinutes,
   extractReminderNoteFromRecord,
   fourDiagnosisOptions,
@@ -49,6 +51,12 @@ type ReturnRecordFormValues = {
   palpation_other: string;
   medical_history_tags: string[];
   medical_history_other: string;
+  treatment_chinese_medicine_checked: boolean;
+  treatment_chinese_medicine_note: string;
+  treatment_acupuncture_checked: boolean;
+  treatment_acupuncture_note: string;
+  treatment_topical_medication_checked: boolean;
+  treatment_topical_medication_note: string;
   generated_record_text: string;
 };
 
@@ -558,6 +566,12 @@ export function DoctorReturnRecordPage({
         palpation_other: "",
         medical_history_tags: [],
         medical_history_other: "",
+        treatment_chinese_medicine_checked: false,
+        treatment_chinese_medicine_note: "",
+        treatment_acupuncture_checked: false,
+        treatment_acupuncture_note: "",
+        treatment_topical_medication_checked: false,
+        treatment_topical_medication_note: "",
         generated_record_text: ""
       }
     });
@@ -673,6 +687,8 @@ export function DoctorReturnRecordPage({
       previousRecord,
       selectedPatientMedicalHistory
     );
+    const previousTreatmentProvidedSelections =
+      buildPreviousTreatmentProvidedSelections(previousRecord);
     const previousChiefComplaintFields = resolvePreviousChiefComplaintFields(
       previousRecord?.chief_complaint
     );
@@ -689,6 +705,7 @@ export function DoctorReturnRecordPage({
       treatment_end_time: returnRecordTimeDefaults.treatmentEndTime,
       ...previousSelections,
       ...previousMedicalHistorySelections,
+      ...previousTreatmentProvidedSelections,
       generated_record_text: ""
     };
 
@@ -710,7 +727,8 @@ export function DoctorReturnRecordPage({
       medicalHistory: joinMedicalHistory(
         nextValues.medical_history_tags,
         nextValues.medical_history_other
-      )
+      ),
+      treatmentProvidedSummary: buildTreatmentProvidedSummary(nextValues)
     });
     previousAutoDraftRef.current = initialDraft;
     reset({
@@ -776,6 +794,20 @@ export function DoctorReturnRecordPage({
         draftValues.medical_history_tags ?? [],
         draftValues.medical_history_other ?? ""
       ),
+      treatmentProvidedSummary: buildTreatmentProvidedSummary({
+        treatment_chinese_medicine_checked:
+          draftValues.treatment_chinese_medicine_checked ?? false,
+        treatment_chinese_medicine_note:
+          draftValues.treatment_chinese_medicine_note ?? "",
+        treatment_acupuncture_checked:
+          draftValues.treatment_acupuncture_checked ?? false,
+        treatment_acupuncture_note:
+          draftValues.treatment_acupuncture_note ?? "",
+        treatment_topical_medication_checked:
+          draftValues.treatment_topical_medication_checked ?? false,
+        treatment_topical_medication_note:
+          draftValues.treatment_topical_medication_note ?? ""
+      }),
       reminderNote: draftValues.add_to_reminders ? draftValues.reminder_note ?? "" : ""
     });
   }, [getValues, resolvedChiefComplaint, watchedValues]);
@@ -972,6 +1004,10 @@ export function DoctorReturnRecordPage({
       values.medical_history_tags,
       values.medical_history_other
     );
+    const treatmentProvidedSummary = buildTreatmentProvidedSummary(values);
+    const baseTreatmentProvided = values.mark_as_exception
+      ? "已由醫師回院病歷頁建立病歷，並勾選異常個案。"
+      : "已由醫師回院病歷頁建立病歷。";
     const reminderNote = values.reminder_note.trim();
 
     if (values.chief_complaint_option === "其他" && !chiefComplaint) {
@@ -1033,9 +1069,15 @@ export function DoctorReturnRecordPage({
       palpation_tags: values.palpation_tags,
       palpation_other: values.palpation_other,
       physician_assessment: values.generated_record_text,
-      treatment_provided: values.mark_as_exception
-        ? "已由醫師回院病歷頁建立病歷，並勾選異常個案。"
-        : "已由醫師回院病歷頁建立病歷。",
+      treatment_provided: treatmentProvidedSummary
+        ? `${baseTreatmentProvided} 處置：${treatmentProvidedSummary}`
+        : baseTreatmentProvided,
+      treatment_chinese_medicine_checked: values.treatment_chinese_medicine_checked,
+      treatment_chinese_medicine_note: values.treatment_chinese_medicine_note.trim(),
+      treatment_acupuncture_checked: values.treatment_acupuncture_checked,
+      treatment_acupuncture_note: values.treatment_acupuncture_note.trim(),
+      treatment_topical_medication_checked: values.treatment_topical_medication_checked,
+      treatment_topical_medication_note: values.treatment_topical_medication_note.trim(),
       doctor_note: values.generated_record_text,
       caregiver_feedback: "",
       follow_up_note: medicalHistory,
@@ -1287,6 +1329,63 @@ export function DoctorReturnRecordPage({
                 />
               </label>
             ) : null}
+          </fieldset>
+
+          <fieldset className="rounded-[1.5rem] border border-slate-200 p-4 lg:rounded-3xl">
+            <legend className="px-2 text-sm font-semibold text-brand-ink">處置</legend>
+            <div className="mt-3 grid gap-3">
+              <div className="grid gap-3 lg:grid-cols-[minmax(120px,0.35fr)_minmax(0,1fr)] lg:items-center">
+                <label className="flex items-center gap-2 text-sm font-medium text-brand-ink">
+                  <input
+                    type="checkbox"
+                    {...register("treatment_chinese_medicine_checked")}
+                    className="h-4 w-4 rounded border-slate-300"
+                  />
+                  <span>中藥</span>
+                </label>
+                <input
+                  type="text"
+                  aria-label="中藥處置內容"
+                  {...register("treatment_chinese_medicine_note")}
+                  className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm"
+                  placeholder="輸入中藥處置內容"
+                />
+              </div>
+              <div className="grid gap-3 lg:grid-cols-[minmax(120px,0.35fr)_minmax(0,1fr)] lg:items-center">
+                <label className="flex items-center gap-2 text-sm font-medium text-brand-ink">
+                  <input
+                    type="checkbox"
+                    {...register("treatment_acupuncture_checked")}
+                    className="h-4 w-4 rounded border-slate-300"
+                  />
+                  <span>針灸</span>
+                </label>
+                <input
+                  type="text"
+                  aria-label="針灸處置內容"
+                  {...register("treatment_acupuncture_note")}
+                  className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm"
+                  placeholder="輸入針灸處置內容"
+                />
+              </div>
+              <div className="grid gap-3 lg:grid-cols-[minmax(120px,0.35fr)_minmax(0,1fr)] lg:items-center">
+                <label className="flex items-center gap-2 text-sm font-medium text-brand-ink">
+                  <input
+                    type="checkbox"
+                    {...register("treatment_topical_medication_checked")}
+                    className="h-4 w-4 rounded border-slate-300"
+                  />
+                  <span>外用藥</span>
+                </label>
+                <input
+                  type="text"
+                  aria-label="外用藥處置內容"
+                  {...register("treatment_topical_medication_note")}
+                  className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm"
+                  placeholder="輸入外用藥處置內容"
+                />
+              </div>
+            </div>
           </fieldset>
 
           <div className="space-y-3">

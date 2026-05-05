@@ -16,6 +16,15 @@ function renderWithProviders(page: ReactNode, initialEntry = "/doctor/return-rec
   );
 }
 
+const emptyTreatmentFields = {
+  treatment_chinese_medicine_checked: false,
+  treatment_chinese_medicine_note: "",
+  treatment_acupuncture_checked: false,
+  treatment_acupuncture_note: "",
+  treatment_topical_medication_checked: false,
+  treatment_topical_medication_note: ""
+};
+
 describe("DoctorReturnRecordPage", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -43,6 +52,12 @@ describe("DoctorReturnRecordPage", () => {
     renderWithProviders(<DoctorReturnRecordPage />);
 
     expect(screen.getByLabelText("主訴")).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "中藥" })).toBeInTheDocument();
+    expect(screen.getByLabelText("中藥處置內容")).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "針灸" })).toBeInTheDocument();
+    expect(screen.getByLabelText("針灸處置內容")).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "外用藥" })).toBeInTheDocument();
+    expect(screen.getByLabelText("外用藥處置內容")).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText("主訴"), {
       target: { value: "其他" }
@@ -68,6 +83,52 @@ describe("DoctorReturnRecordPage", () => {
     fireEvent.click(within(inspectionFieldset).getByLabelText("其他"));
 
     expect(screen.getByLabelText("望 其他")).toBeInTheDocument();
+  });
+
+  it("建立回院病歷時會儲存勾選處置與各項文字內容", async () => {
+    renderWithProviders(<DoctorReturnRecordPage />, "/doctor/return-records?patientId=pat-001");
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "中藥" }));
+    fireEvent.change(screen.getByLabelText("中藥處置內容"), {
+      target: { value: "補陽還五湯 7 日份" }
+    });
+    fireEvent.click(screen.getByRole("checkbox", { name: "針灸" }));
+    fireEvent.change(screen.getByLabelText("針灸處置內容"), {
+      target: { value: "肩髃、曲池、合谷" }
+    });
+    fireEvent.click(screen.getByRole("checkbox", { name: "外用藥" }));
+    fireEvent.change(screen.getByLabelText("外用藥處置內容"), {
+      target: { value: "外用貼布每日一次" }
+    });
+
+    await waitFor(() => {
+      expect(screen.getByDisplayValue(/處置：中藥：補陽還五湯 7 日份；針灸：肩髃、曲池、合谷；外用藥：外用貼布每日一次/)).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "建立回院病歷" }));
+
+    await waitFor(() => {
+      const storedDb = JSON.parse(window.localStorage.getItem("tcm-home-care-mvp-db") ?? "{}");
+      const savedReturnRecord = [...(storedDb.visit_records ?? [])]
+        .reverse()
+        .find(
+          (record: { treatment_provided?: string; visit_schedule_id?: string }) =>
+            record.treatment_provided?.includes("補陽還五湯 7 日份") &&
+            typeof record.visit_schedule_id === "string"
+        );
+
+      expect(savedReturnRecord).toEqual(
+        expect.objectContaining({
+          treatment_chinese_medicine_checked: true,
+          treatment_chinese_medicine_note: "補陽還五湯 7 日份",
+          treatment_acupuncture_checked: true,
+          treatment_acupuncture_note: "肩髃、曲池、合谷",
+          treatment_topical_medication_checked: true,
+          treatment_topical_medication_note: "外用貼布每日一次",
+          treatment_provided: expect.stringContaining("處置：中藥：補陽還五湯 7 日份")
+        })
+      );
+    });
   });
 
   it("會帶入上一筆四診其他內容", () => {
@@ -99,6 +160,7 @@ describe("DoctorReturnRecordPage", () => {
       palpation_other: "",
       physician_assessment: "測試用病歷",
       treatment_provided: "測試",
+      ...emptyTreatmentFields,
       doctor_note: "測試",
       caregiver_feedback: "",
       follow_up_note: "延續上次病史",
@@ -185,6 +247,7 @@ describe("DoctorReturnRecordPage", () => {
       palpation_other: "",
       physician_assessment: "",
       treatment_provided: "",
+      ...emptyTreatmentFields,
       doctor_note: "",
       caregiver_feedback: "",
       follow_up_note: "",
@@ -258,6 +321,7 @@ describe("DoctorReturnRecordPage", () => {
       palpation_other: "",
       physician_assessment: "",
       treatment_provided: "",
+      ...emptyTreatmentFields,
       doctor_note: "",
       caregiver_feedback: "",
       follow_up_note: "",
@@ -330,6 +394,7 @@ describe("DoctorReturnRecordPage", () => {
       palpation_other: "",
       physician_assessment: "",
       treatment_provided: "",
+      ...emptyTreatmentFields,
       doctor_note: "",
       caregiver_feedback: "",
       follow_up_note: "",
@@ -426,6 +491,7 @@ describe("DoctorReturnRecordPage", () => {
       palpation_other: "",
       physician_assessment: "",
       treatment_provided: "",
+      ...emptyTreatmentFields,
       doctor_note: "",
       caregiver_feedback: "",
       follow_up_note: "",
@@ -608,6 +674,7 @@ describe("DoctorReturnRecordPage", () => {
         palpation_other: "",
         physician_assessment: "",
         treatment_provided: "",
+        ...emptyTreatmentFields,
         doctor_note: "",
         caregiver_feedback: "",
         follow_up_note: "",
@@ -648,6 +715,7 @@ describe("DoctorReturnRecordPage", () => {
         palpation_other: "",
         physician_assessment: "",
         treatment_provided: "",
+        ...emptyTreatmentFields,
         doctor_note: "",
         caregiver_feedback: "",
         follow_up_note: "",
@@ -688,6 +756,7 @@ describe("DoctorReturnRecordPage", () => {
         palpation_other: "",
         physician_assessment: "",
         treatment_provided: "",
+        ...emptyTreatmentFields,
         doctor_note: "",
         caregiver_feedback: "",
         follow_up_note: "",
@@ -927,6 +996,7 @@ describe("DoctorReturnRecordPage", () => {
         palpation_other: "",
         physician_assessment: "",
         treatment_provided: "",
+        ...emptyTreatmentFields,
         doctor_note: "",
         caregiver_feedback: "",
         follow_up_note: "原有病史",
@@ -967,6 +1037,7 @@ describe("DoctorReturnRecordPage", () => {
         palpation_other: "",
         physician_assessment: "",
         treatment_provided: "",
+        ...emptyTreatmentFields,
         doctor_note: "",
         caregiver_feedback: "",
         follow_up_note: "原始病史",

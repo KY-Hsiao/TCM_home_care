@@ -55,6 +55,22 @@ function isDoctorArrivalReminderEnabled() {
   }
 }
 
+function isAfterReturnCareEnabled() {
+  if (typeof window === "undefined") {
+    return true;
+  }
+  try {
+    const raw = window.localStorage.getItem(SETTINGS_STORAGE_KEY);
+    if (!raw) {
+      return true;
+    }
+    const parsed = JSON.parse(raw) as { afterReturnCare?: boolean };
+    return parsed.afterReturnCare !== false;
+  } catch {
+    return true;
+  }
+}
+
 function loadManagedLineContacts() {
   return loadArrayStorage<ManagedFamilyLineContact>(MANAGED_CONTACTS_STORAGE_KEY).filter(
     (contact) =>
@@ -165,6 +181,10 @@ export class MockVisitAutomationService implements VisitAutomationService {
   private listeners = new Set<() => void>();
 
   private arrivalReminderInFlight = new Set<string>();
+
+  private afterReturnCareInFlight = new Set<string>();
+
+  private afterReturnCareSentRouteKeys = new Set<string>();
 
   constructor(
     private readonly deps: ServicesContextDeps,
@@ -387,6 +407,194 @@ export class MockVisitAutomationService implements VisitAutomationService {
     } catch {
       this.arrivalReminderInFlight.delete(nextDetail.schedule.id);
       appendEvent(runtime, "無法連線到 LINE 發送端點，下一站抵達前提醒未送出。");
+      this.notify();
+    }
+  }
+
+  private buildAfterReturnCareRouteKey(schedule: VisitSchedule) {
+    const routeDate = schedule.scheduled_start_at.slice(0, 10);
+    const routeSlot = resolveScheduleServiceTimeSlot(schedule);
+    return schedule.route_group_id
+      ? `${schedule.route_group_id}-${routeSlot}`
+      : `${schedule.assigned_doctor_id}-${routeDate}-${routeSlot}`;
+  }
+
+  private resolveCompletedRouteDetails(referenceSchedule: VisitSchedule) {
+    const routeDate = referenceSchedule.scheduled_start_at.slice(0, 10);
+    const routeSlot = resolveScheduleServiceTimeSlot(referenceSchedule);
+    return this.deps
+      .getRepositories()
+      .visitRepository.getSchedules({
+        doctorId: referenceSchedule.assigned_doctor_id,
+        dateFrom: `${routeDate}T00:00:00`,
+        dateTo: `${routeDate}T23:59:59`
+      })
+      .filter((schedule) => {
+        if (schedule.visit_type === "回院病歷") {
+          return false;
+        }
+        if (["cancelled", "paused"].includes(schedule.status)) {
+          return false;
+        }
+        if (resolveScheduleServiceTimeSlot(schedule) !== routeSlot) {
+          return false;
+        }
+        if (
+          referenceSchedule.route_group_id &&
+          schedule.route_group_id !== referenceSchedule.route_group_id
+        ) {
+          return false;
+        }
+        const record = this.deps
+          .getRepositories()
+          .visitRepository.getVisitRecordByScheduleId(schedule.id);
+        return (
+          Boolean(record?.departure_from_patient_home_time) ||
+          ["completed", "followup_pending"].includes(schedule.status)
+        );
+      })
+      .sort((left, right) => {
+        const orderDiff =
+          (left.route_order ?? Number.MAX_SAFE_INTEGER) -
+          (right.route_order ?? Number.MAX_SAFE_INTEGER);
+        if (orderDiff !== 0) {
+          return orderDiff;
+        }
+        return (
+          new Date(left.scheduled_start_at).getTime() -
+          new Date(right.scheduled_start_at).getTime()
+        );
+      })
+      .map((schedule) => this.deps.getRepositories().visitRepository.getScheduleDetail(schedule.id))
+      .filter((detail): detail is VisitDetail => Boolean(detail));
+  }
+
+  private async sendAfterReturnCareForRoute(
+    referenceDetail: VisitDetail,
+    runtime: TrackingRuntime,
+    triggeredAt: string
+  ) {
+    if (!isAfterReturnCareEnabled()) {
+      appendEvent(runtime, "LINE 結束後關心已停用，略過回程終點家屬通知。");
+      this.notify();
+      return;
+    }
+    if (typeof fetch !== "function") {
+      appendEvent(runtime, "目前環境無法呼叫 LINE 發送端點，略過結束後關心。");
+      this.notify();
+      return;
+    }
+
+    const routeKey = this.buildAfterReturnCareRouteKey(referenceDetail.schedule);
+    if (
+      this.afterReturnCareInFlight.has(routeKey) ||
+      this.afterReturnCareSentRouteKeys.has(routeKey)
+    ) {
+      return;
+    }
+    this.afterReturnCareInFlight.add(routeKey);
+
+    const completedDetails = this.resolveCompletedRouteDetails(referenceDetail.schedule);
+    const recipientByLineUserId = new Map<
+      string,
+      {
+        caregiverId: string;
+        caregiverName: string;
+        patientId: string;
+        patientName: string;
+        doctorId: string;
+        doctorName: string;
+        lineUserId: string;
+        scheduleId: string;
+      }
+    >();
+
+    for (const detail of completedDetails) {
+      const contacts = await this.loadLineContactsForPatient(detail.patient.id);
+      contacts.forEach((contact) => {
+        if (recipientByLineUserId.has(contact.lineUserId)) {
+          return;
+        }
+        recipientByLineUserId.set(contact.lineUserId, {
+          caregiverId: contact.id,
+          caregiverName: contact.displayName,
+          patientId: detail.patient.id,
+          patientName: detail.patient.name,
+          doctorId: referenceDetail.doctor.id,
+          doctorName: referenceDetail.doctor.name,
+          lineUserId: contact.lineUserId,
+          scheduleId: detail.schedule.id
+        });
+      });
+    }
+
+    const recipientsWithSchedule = Array.from(recipientByLineUserId.values());
+    if (recipientsWithSchedule.length === 0) {
+      this.afterReturnCareInFlight.delete(routeKey);
+      appendEvent(runtime, "本趟路線沒有已關聯 LINE 家屬，未發送結束後關心。");
+      this.notify();
+      return;
+    }
+
+    const subject = "訪視後關心";
+    const content =
+      "您好，今日居家訪視已完成，醫師已抵達回程終點。請持續觀察個案狀態、補充水分並依醫師建議照護。若有不適或疑問，請回覆此 LINE 訊息。";
+    const recipients = recipientsWithSchedule.map(({ scheduleId: _scheduleId, ...recipient }) => recipient);
+    const apiTokens = loadAdminApiTokenSettings();
+
+    try {
+      const response = await fetch("/api/admin/family-line/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          subject,
+          content,
+          recipients,
+          lineChannelAccessToken: apiTokens.lineChannelAccessToken
+        })
+      });
+      const payload = (await response.json().catch(() => ({}))) as {
+        sentCount?: number;
+        error?: string;
+      };
+      if (!response.ok) {
+        this.afterReturnCareInFlight.delete(routeKey);
+        appendEvent(
+          runtime,
+          `結束後關心 LINE 發送失敗：${payload.error ?? "LINE 發送端點回傳錯誤"}`
+        );
+        this.notify();
+        return;
+      }
+
+      const now = new Date().toISOString();
+      recipientsWithSchedule.forEach((recipient) => {
+        this.deps.getRepositories().contactRepository.createContactLog({
+          id: `line-after-return-${routeKey}-${recipient.caregiverId}-${Date.now()}`,
+          patient_id: recipient.patientId,
+          visit_schedule_id: recipient.scheduleId,
+          caregiver_id: null,
+          doctor_id: referenceDetail.doctor.id,
+          admin_user_id: null,
+          channel: "line",
+          subject,
+          content,
+          outcome: "抵達回程終點後自動發送結束後關心",
+          contacted_at: triggeredAt,
+          created_at: now,
+          updated_at: now
+        });
+      });
+      this.afterReturnCareInFlight.delete(routeKey);
+      this.afterReturnCareSentRouteKeys.add(routeKey);
+      appendEvent(
+        runtime,
+        `已在抵達回程終點後，發送結束後關心給 ${payload.sentCount ?? recipientsWithSchedule.length} 位家屬。`
+      );
+      this.notify();
+    } catch {
+      this.afterReturnCareInFlight.delete(routeKey);
+      appendEvent(runtime, "無法連線到 LINE 發送端點，結束後關心未送出。");
       this.notify();
     }
   }
@@ -731,6 +939,18 @@ export class MockVisitAutomationService implements VisitAutomationService {
     this.geolocationProvider.stopWatch(scheduleId);
     appendEvent(runtime, `已由 ${confirmedBy} 手動確認離開：${recordedAt}`);
     void this.sendArrivalReminderForNextStop(detail, runtime, recordedAt);
+    this.notify();
+  }
+
+  confirmReturnToEndpoint(scheduleId: string, confirmedBy: "doctor" | "admin" | "system") {
+    const detail = this.deps.getRepositories().visitRepository.getScheduleDetail(scheduleId);
+    if (!detail) {
+      return;
+    }
+    const runtime = this.getRuntime(detail);
+    const recordedAt = new Date().toISOString();
+    appendEvent(runtime, `已由 ${confirmedBy} 確認抵達回程終點：${recordedAt}`);
+    void this.sendAfterReturnCareForRoute(detail, runtime, recordedAt);
     this.notify();
   }
 

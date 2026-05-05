@@ -80,7 +80,8 @@ export function createMapsUrlBuilder(options?: { embedApiKey?: string | null }):
       destinationLatitude,
       destinationLongitude,
       originLatitude,
-      originLongitude
+      originLongitude,
+      navigationTarget = "web"
     }) {
       const destination = resolveMapQuery({
         address: destinationAddress,
@@ -88,6 +89,9 @@ export function createMapsUrlBuilder(options?: { embedApiKey?: string | null }):
         latitude: destinationLatitude,
         longitude: destinationLongitude
       });
+      if (navigationTarget === "android") {
+        return `google.navigation:q=${encodeURIComponent(destination)}&mode=d`;
+      }
       const origin = formatCoordinateQuery(originLatitude ?? null, originLongitude ?? null);
       return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}${
         origin ? `&origin=${encodeURIComponent(origin)}` : ""

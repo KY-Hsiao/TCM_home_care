@@ -423,6 +423,7 @@ function executeRoutePlanInDb(db: AppDb, routePlanId: string) {
 
   const nextSchedules = [...db.visit_schedules];
   const checkedCount = routePlan.route_items.filter((item) => item.checked).length;
+  const routeScheduleIds = new Set<string>();
   let pausedIndex = 0;
 
   const nextRouteItems: SavedRoutePlan["route_items"] = routePlan.route_items
@@ -447,7 +448,12 @@ function executeRoutePlanInDb(db: AppDb, routePlanId: string) {
         (schedule) => schedule.id === item.schedule_id
       );
       const scheduleId = item.schedule_id ?? `vs-${routePlan.id}-${patient.id}`;
-      const nextStatus: VisitStatus = item.checked ? "scheduled" : "paused";
+      const nextStatus: VisitStatus = item.checked ? "waiting_departure" : "paused";
+      const nextGeofenceStatus: VisitSchedule["geofence_status"] =
+        patient.home_latitude === null || patient.home_longitude === null
+          ? "coordinate_missing"
+          : "idle";
+      routeScheduleIds.add(scheduleId);
       const baseSchedule: VisitSchedule =
         existingScheduleIndex >= 0
           ? nextSchedules[existingScheduleIndex]
@@ -467,10 +473,7 @@ function executeRoutePlanInDb(db: AppDb, routePlanId: string) {
               home_latitude_snapshot: patient.home_latitude,
               home_longitude_snapshot: patient.home_longitude,
               arrival_radius_meters: 100,
-              geofence_status:
-                patient.home_latitude === null || patient.home_longitude === null
-                  ? "coordinate_missing"
-                  : "idle",
+              geofence_status: nextGeofenceStatus,
               google_maps_link: patient.google_maps_link,
               area: patient.address,
               service_time_slot: `${routePlan.route_weekday}${routePlan.service_time_slot}`,
@@ -504,10 +507,16 @@ function executeRoutePlanInDb(db: AppDb, routePlanId: string) {
         location_keyword_snapshot: patient.location_keyword,
         home_latitude_snapshot: patient.home_latitude,
         home_longitude_snapshot: patient.home_longitude,
+        geofence_status: nextGeofenceStatus,
         google_maps_link: patient.google_maps_link,
         service_time_slot: `${routePlan.route_weekday}${routePlan.service_time_slot}`,
         route_order: routeOrder,
         route_group_id: routePlan.id,
+        tracking_started_at: null,
+        tracking_stopped_at: null,
+        arrival_confirmed_by: null,
+        departure_confirmed_by: null,
+        last_feedback_code: null,
         reminder_tags: [...patient.reminder_tags, ...patient.service_needs],
         status: nextStatus,
         note: "由排程管理頁實行路線",
@@ -563,6 +572,9 @@ function executeRoutePlanInDb(db: AppDb, routePlanId: string) {
   return {
     db: {
       ...db,
+      visit_records: db.visit_records.filter(
+        (record) => !routeScheduleIds.has(record.visit_schedule_id)
+      ),
       visit_schedules: nextSchedules,
       saved_route_plans: nextSavedRoutePlans
     },

@@ -117,10 +117,12 @@ describe("AdminPages", () => {
     renderWithProviders(<AdminSchedulesPage />);
 
     expect(screen.getByText("起點：旗山醫院｜終點：旗山醫院")).toBeInTheDocument();
-    expect(screen.getByText("全部排程清單")).toBeInTheDocument();
-    expect(screen.getByText("排程 vs-002")).toBeInTheDocument();
-    expect(screen.getAllByText("蕭坤元醫師").length).toBeGreaterThan(0);
-    expect(screen.queryByText("林若謙醫師")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /全部排程清單/ }));
+    const allSchedulesDialog = screen.getByRole("dialog", { name: "全部排程清單視窗" });
+    expect(within(allSchedulesDialog).getByText("排程 vs-002")).toBeInTheDocument();
+    expect(within(allSchedulesDialog).getAllByText("蕭坤元醫師").length).toBeGreaterThan(0);
+    expect(within(allSchedulesDialog).queryByText("林若謙醫師")).not.toBeInTheDocument();
+    fireEvent.click(within(allSchedulesDialog).getByRole("button", { name: "關閉" }));
 
     selectScheduleFilters();
     const slotPatientDialog = openSlotPatientDialog();
@@ -653,6 +655,33 @@ describe("AdminPages", () => {
       expect(screen.getByRole("status")).toHaveTextContent("醫師端會以這條路線作為本次執行清單")
     );
 
+    const storedDb = JSON.parse(window.localStorage.getItem(MOCK_DB_STORAGE_KEY) ?? "{}");
+    const executedRoutePlan = (storedDb.saved_route_plans ?? []).find(
+      (routePlan: { doctor_id: string; route_date: string; execution_status: string }) =>
+        routePlan.doctor_id === "doc-001" &&
+        routePlan.route_date === "2026-05-06" &&
+        routePlan.execution_status === "executing"
+    );
+    const executedScheduleIds = new Set(
+      (executedRoutePlan?.schedule_ids ?? []) as string[]
+    );
+    const executedSchedules = (storedDb.visit_schedules ?? []).filter(
+      (schedule: { id: string }) => executedScheduleIds.has(schedule.id)
+    );
+    expect(executedSchedules.length).toBeGreaterThan(0);
+    expect(
+      executedSchedules.every(
+        (schedule: {
+          status: string;
+          tracking_started_at: string | null;
+          tracking_stopped_at: string | null;
+        }) =>
+          schedule.status === "waiting_departure" &&
+          schedule.tracking_started_at === null &&
+          schedule.tracking_stopped_at === null
+      )
+    ).toBe(true);
+
     adminView.unmount();
     window.localStorage.setItem(
       SESSION_STORAGE_KEY,
@@ -956,6 +985,9 @@ describe("AdminPages", () => {
     expect(screen.getByRole("button", { name: "支援醫師" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "林若謙醫師" })).not.toBeInTheDocument();
     expect(screen.getAllByText("已經過的地點").length).toBeGreaterThan(0);
+    expect(screen.queryByRole("dialog", { name: "醫師狀態清單視窗" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "開啟醫師狀態清單" }));
+    expect(screen.getByRole("dialog", { name: "醫師狀態清單視窗" })).toBeInTheDocument();
   });
 
   it("AdminDoctorTrackingPage 打開醫師路線時會排除暫停與結案個案", () => {
@@ -980,7 +1012,10 @@ describe("AdminPages", () => {
 
     renderWithProviders(<AdminDoctorTrackingPage />);
 
-    const routeLink = screen.getByRole("link", { name: "打開 蕭坤元醫師 路線" });
+    fireEvent.click(screen.getByRole("button", { name: "開啟醫師狀態清單" }));
+    const routeLink = within(screen.getByRole("dialog", { name: "醫師狀態清單視窗" })).getByRole("link", {
+      name: "打開 蕭坤元醫師 路線"
+    });
     const decodedRouteUrl = decodeURIComponent(routeLink.getAttribute("href") ?? "");
 
     expect(decodedRouteUrl).toContain(activeSchedule.address_snapshot);
@@ -1097,6 +1132,7 @@ describe("AdminPages", () => {
     const missingView = renderWithProviders(<AdminDoctorTrackingPage />);
 
     expect(screen.getAllByText("未上線").length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("button", { name: "開啟醫師狀態清單" }));
     expect(screen.getAllByText(/已用最近排程起點作為參考位置/).length).toBeGreaterThan(0);
     expect(screen.getByText("高雄市旗山區中華路 76 號附近")).toBeInTheDocument();
     missingView.unmount();
@@ -1162,6 +1198,7 @@ describe("AdminPages", () => {
 
     const locationStatusPanel = screen.getByText("定位狀態").parentElement;
     expect(locationStatusPanel?.textContent).toContain("定位正常");
+    fireEvent.click(screen.getByRole("button", { name: "開啟醫師狀態清單" }));
     expect(screen.getByText(/最後定位/)).toBeInTheDocument();
     expect(screen.getByText("高雄市旗山區大德路 52 號附近")).toBeInTheDocument();
   });
@@ -1299,8 +1336,10 @@ describe("AdminPages", () => {
     );
     renderWithProviders(<AdminFamilyLinePage />);
 
-    expect(screen.getByRole("heading", { name: "LINE 自動發送設定" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /LINE 自動發送設定/ }));
+    expect(screen.getByRole("dialog", { name: "LINE 自動發送設定" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /醫師請假時自動發/ }));
+    fireEvent.click(screen.getByRole("button", { name: "顯示詳細" }));
     fireEvent.click(screen.getByLabelText("王先生 LINE 發送勾選"));
 
     expect(screen.getByText("本次選擇")).toBeInTheDocument();
@@ -1321,13 +1360,28 @@ describe("AdminPages", () => {
           note: "",
           source: "webhook",
           updatedAt: "2026-05-01T00:00:00.000Z"
+        },
+        {
+          id: "line-contact-b",
+          displayName: "其他家屬 LINE",
+          lineUserId: "Ubbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          linkedPatientIds: ["pat-002"],
+          note: "",
+          source: "webhook",
+          updatedAt: "2026-05-01T00:00:00.000Z"
         }
       ])
     );
     renderWithProviders(<AdminFamilyLinePage />, ["/admin/family-line?patientId=pat-001"]);
 
+    expect(screen.getByText("目前只顯示 王○珠 已關聯的 LINE 好友名單。")).toBeInTheDocument();
+    expect(screen.queryByText("其他家屬 LINE")).not.toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "批次關聯居家個案" })).toHaveValue("pat-001");
+    fireEvent.click(screen.getByRole("button", { name: "顯示詳細" }));
     expect(screen.getByLabelText("王先生 LINE 發送勾選")).toBeChecked();
     expect(screen.getByRole("combobox", { name: "篩選醫師" })).toHaveValue("doc-001");
+    fireEvent.click(screen.getByRole("button", { name: "顯示全部 LINE 好友以新增關聯" }));
+    expect(screen.getByText("其他家屬 LINE")).toBeInTheDocument();
   });
 
   it("AdminFamilyLinePage 可管理 webhook 收到的 LINE 好友並作為發送對象", () => {
@@ -1348,6 +1402,7 @@ describe("AdminPages", () => {
     renderWithProviders(<AdminFamilyLinePage />);
 
     expect(screen.getAllByText("王先生 LINE").length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("button", { name: "顯示詳細" }));
     expect(screen.getByLabelText("王先生 LINE 發送勾選")).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("王先生 LINE 好友註記"), {
       target: { value: "主要照顧者" }
@@ -1387,6 +1442,7 @@ describe("AdminPages", () => {
 
     const { unmount } = renderWithProviders(<AdminFamilyLinePage />);
 
+    fireEvent.click(screen.getAllByRole("button", { name: "顯示詳細" })[0]);
     fireEvent.click(screen.getByLabelText("王先生 LINE 批次關聯勾選"));
     fireEvent.change(screen.getByLabelText("批次關聯居家個案"), {
       target: { value: "pat-001" }
@@ -1412,6 +1468,7 @@ describe("AdminPages", () => {
 
     unmount();
     renderWithProviders(<AdminFamilyLinePage />);
+    fireEvent.click(screen.getAllByRole("button", { name: "顯示詳細" })[0]);
     expect(screen.getByLabelText("王先生 LINE 發送勾選")).toBeInTheDocument();
     expect(screen.getAllByText(/關聯個案：王○珠/).length).toBeGreaterThan(0);
 
@@ -1461,8 +1518,11 @@ describe("AdminPages", () => {
     vi.stubGlobal("fetch", fetchMock);
     renderWithProviders(<AdminFamilyLinePage />);
 
+    fireEvent.click(screen.getByRole("button", { name: /範本群發/ }));
+    expect(screen.getByRole("dialog", { name: "範本群發" })).toBeInTheDocument();
     fireEvent.click(screen.getByLabelText("醫師抵達前提醒 本次發送勾選"));
     fireEvent.click(screen.getByLabelText("結束後關心 本次發送勾選"));
+    fireEvent.click(screen.getByRole("button", { name: "顯示詳細" }));
     fireEvent.click(screen.getByLabelText("王先生 LINE 發送勾選"));
 
     fireEvent.change(screen.getByLabelText("目前編輯範本"), {
@@ -1524,13 +1584,15 @@ describe("AdminPages", () => {
     vi.stubGlobal("fetch", fetchMock);
     renderWithProviders(<AdminFamilyLinePage />);
 
-    expect(screen.getByRole("heading", { name: "即時群發訊息" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /即時群發訊息/ }));
+    expect(screen.getByRole("dialog", { name: "即時群發訊息" })).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("即時群發標題"), {
       target: { value: "臨時訪視通知" }
     });
     fireEvent.change(screen.getByLabelText("即時群發內容"), {
       target: { value: "今日訪視時間提前，請家屬協助留意。" }
     });
+    fireEvent.click(screen.getByRole("button", { name: "顯示詳細" }));
     fireEvent.click(screen.getByLabelText("王先生 LINE 發送勾選"));
     fireEvent.click(screen.getByRole("button", { name: "即時發送 LINE 群發" }));
 
@@ -1553,6 +1615,81 @@ describe("AdminPages", () => {
     );
     await waitFor(() => {
       expect(screen.getByRole("status")).toHaveTextContent("LINE 即時群發已送出 1 位家屬");
+    });
+  });
+
+  it("AdminFamilyLinePage 可單獨發 LINE 訊息給指定家屬", async () => {
+    window.localStorage.setItem(
+      ADMIN_API_TOKEN_STORAGE_KEY,
+      JSON.stringify({
+        lineChannelAccessToken: "browser-line-token",
+        lineChannelSecret: "",
+        googleMapsApiKey: ""
+      })
+    );
+    window.localStorage.setItem(
+      "tcm-family-line-managed-contacts",
+      JSON.stringify([
+        {
+          id: "line-contact-a",
+          displayName: "王先生 LINE",
+          lineUserId: "U1234567890abcdef1234567890abcdef",
+          linkedPatientIds: ["pat-001"],
+          note: "",
+          source: "webhook",
+          updatedAt: "2026-05-01T00:00:00.000Z"
+        },
+        {
+          id: "line-contact-b",
+          displayName: "李小姐 LINE",
+          lineUserId: "Uabcdef1234567890abcdef1234567890",
+          linkedPatientIds: ["pat-002"],
+          note: "",
+          source: "webhook",
+          updatedAt: "2026-05-01T00:00:00.000Z"
+        }
+      ])
+    );
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ sentCount: 1, attemptedCount: 1 })
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderWithProviders(<AdminFamilyLinePage />);
+
+    fireEvent.click(screen.getByRole("button", { name: /單獨發訊息/ }));
+    expect(screen.getByRole("dialog", { name: "單獨發訊息" })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByLabelText("單獨發訊息收件人")).toHaveValue("line-contact:line-contact-a");
+    });
+    fireEvent.change(screen.getByLabelText("單獨訊息標題"), {
+      target: { value: "單一個案提醒" }
+    });
+    fireEvent.change(screen.getByLabelText("單獨訊息內容"), {
+      target: { value: "請協助留意今日用藥。" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "送出單獨 LINE 訊息" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(requestBody).toEqual(
+      expect.objectContaining({
+        lineChannelAccessToken: "browser-line-token",
+        subject: "單一個案提醒",
+        content: "請協助留意今日用藥。"
+      })
+    );
+    expect(requestBody.recipients).toHaveLength(1);
+    expect(requestBody.recipients[0]).toEqual(
+      expect.objectContaining({
+        caregiverId: "line-contact:line-contact-a",
+        caregiverName: "王先生 LINE",
+        doctorId: "doc-001",
+        lineUserId: "U1234567890abcdef1234567890abcdef"
+      })
+    );
+    await waitFor(() => {
+      expect(screen.getByRole("status")).toHaveTextContent("LINE 單獨訊息已送出給 王先生 LINE");
     });
   });
 
@@ -1591,9 +1728,12 @@ describe("AdminPages", () => {
     fireEvent.change(screen.getByLabelText("篩選醫師"), {
       target: { value: "doc-002" }
     });
+    fireEvent.click(screen.getByRole("button", { name: "顯示詳細" }));
     expect(screen.getByLabelText("跨醫師家屬 LINE 發送勾選")).toBeInTheDocument();
     expect(screen.getAllByText(/蕭坤元醫師、支援醫師|支援醫師、蕭坤元醫師/).length).toBeGreaterThan(0);
 
+    fireEvent.click(screen.getByRole("button", { name: /範本群發/ }));
+    expect(screen.getByRole("dialog", { name: "範本群發" })).toBeInTheDocument();
     fireEvent.click(screen.getByLabelText("醫師抵達前提醒 本次發送勾選"));
     fireEvent.click(screen.getByLabelText("跨醫師家屬 LINE 發送勾選"));
     fireEvent.click(screen.getByLabelText("確認本次 LINE 發送"));

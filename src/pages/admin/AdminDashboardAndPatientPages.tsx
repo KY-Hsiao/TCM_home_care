@@ -1041,6 +1041,7 @@ export function AdminDoctorTrackingPage() {
   const [selectedDistributionRouteId, setSelectedDistributionRouteId] = useState<string>("");
   const [remoteLocationLogs, setRemoteLocationLogs] = useState<DoctorLocationLog[]>([]);
   const [remoteRecentLocationLogs, setRemoteRecentLocationLogs] = useState<DoctorLocationLog[]>([]);
+  const [showDoctorStatusList, setShowDoctorStatusList] = useState(false);
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const dragStateRef = useRef<{
     pointerId: number;
@@ -1670,96 +1671,201 @@ export function AdminDoctorTrackingPage() {
 
   return (
     <div className="space-y-4">
-      <Panel title="同時段醫師追蹤總覽" className="p-2.5 lg:p-3.5">
-        <div className="space-y-2.5">
-          <div className="grid gap-2.5 lg:grid-cols-[170px_130px_minmax(260px,1fr)_1fr]">
-            <label className="block text-sm">
-              <span className="mb-1 block font-medium text-brand-ink">路線日期</span>
-              <input
-                type="date"
-                value={routeDate}
-                onChange={(event) => setRouteDate(event.target.value)}
-                className="w-full rounded-2xl border border-slate-200 px-4 py-2.5"
-              />
-            </label>
-            <label className="block text-sm">
-              <span className="mb-1 block font-medium text-brand-ink">規劃時段</span>
-              <select
-                aria-label="規劃時段"
-                value={routeTimeSlot}
-                onChange={(event) => setRouteTimeSlot(event.target.value as RouteTimeSlot)}
-                className="w-full rounded-2xl border border-slate-200 px-4 py-2.5"
-              >
-                {routeTimeSlotOptions.map((option) => (
-                  <option key={option} value={option}>
-                    {option}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="block text-sm">
-              <span className="mb-1 block font-medium text-brand-ink">個案分布排程</span>
-              <select
-                aria-label="個案分布排程"
-                value={selectedDistributionRouteId}
-                onChange={(event) => {
-                  const nextRouteId = event.target.value;
-                  setSelectedDistributionRouteId(nextRouteId);
-                  const nextRoute = routeDistributionOptions.find((option) => option.id === nextRouteId);
-                  if (nextRoute) {
-                    setRouteDate(nextRoute.routeDate);
-                    setRouteTimeSlot(nextRoute.timeSlot);
-                  }
-                }}
-                className="w-full rounded-2xl border border-slate-200 px-4 py-2.5"
-              >
-                <option value="">不疊個案分布點</option>
-                {routeDistributionOptions.map((option) => (
-                  <option key={option.id} value={option.id}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <div className="rounded-2xl bg-slate-50 px-4 py-2 text-sm text-slate-600">
+      <Panel title="同時段醫師追蹤總覽">
+        <div className="grid gap-3 lg:grid-cols-[170px_130px_minmax(260px,1fr)_minmax(260px,0.9fr)]">
+          <label className="block text-sm">
+            <span className="mb-1 block font-medium text-brand-ink">路線日期</span>
+            <input
+              type="date"
+              value={routeDate}
+              onChange={(event) => setRouteDate(event.target.value)}
+              className="w-full rounded-2xl border border-slate-200 px-4 py-2.5"
+            />
+          </label>
+          <label className="block text-sm">
+            <span className="mb-1 block font-medium text-brand-ink">規劃時段</span>
+            <select
+              aria-label="規劃時段"
+              value={routeTimeSlot}
+              onChange={(event) => setRouteTimeSlot(event.target.value as RouteTimeSlot)}
+              className="w-full rounded-2xl border border-slate-200 px-4 py-2.5"
+            >
+              {routeTimeSlotOptions.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block text-sm">
+            <span className="mb-1 block font-medium text-brand-ink">個案分布排程</span>
+            <select
+              aria-label="個案分布排程"
+              value={selectedDistributionRouteId}
+              onChange={(event) => {
+                const nextRouteId = event.target.value;
+                setSelectedDistributionRouteId(nextRouteId);
+                const nextRoute = routeDistributionOptions.find((option) => option.id === nextRouteId);
+                if (nextRoute) {
+                  setRouteDate(nextRoute.routeDate);
+                  setRouteTimeSlot(nextRoute.timeSlot);
+                }
+              }}
+              className="w-full rounded-2xl border border-slate-200 px-4 py-2.5"
+            >
+              <option value="">不疊個案分布點</option>
+              {routeDistributionOptions.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+            <p>
               {trackedDoctors.length > 0
                 ? `目前已載入 ${trackedDoctors.length} 位醫師位置；個案分布：${selectedDistributionRoute ? selectedDistributionRoute.label : "未選擇"}。`
                 : "目前沒有醫師可顯示。"}
+            </p>
+            <button
+              type="button"
+              onClick={() => setShowDoctorStatusList((current) => !current)}
+              className="mt-2 rounded-full bg-brand-forest px-4 py-2 text-xs font-semibold text-white"
+            >
+              {showDoctorStatusList ? "收合醫師狀態清單" : "開啟醫師狀態清單"}
+            </button>
+          </div>
+        </div>
+
+        {showDoctorStatusList ? (
+          <section
+            role="dialog"
+            aria-label="醫師狀態清單視窗"
+            className="mt-4 overflow-hidden rounded-[1.25rem] border border-brand-moss/30 bg-white"
+          >
+            <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3">
+              <h3 className="text-base font-semibold text-brand-ink">醫師狀態清單</h3>
+              <button
+                type="button"
+                onClick={() => setShowDoctorStatusList(false)}
+                className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-brand-ink"
+              >
+                收合視窗
+              </button>
+            </div>
+            <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-3">
+              {trackedDoctors.map((doctor) => (
+                <div
+                  key={doctor.doctorId}
+                  className={`rounded-[1.45rem] border p-3.5 ${
+                    selectedDoctor?.doctorId === doctor.doctorId
+                      ? "border-brand-forest bg-emerald-50/40"
+                      : "border-slate-200 bg-white"
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-2.5">
+                    <div>
+                      <p className="font-semibold text-brand-ink">{doctor.doctorName}</p>
+                      <p className="mt-1 text-xs text-slate-500">
+                        {doctor.latestLocation
+                          ? `最後定位 ${formatDateTimeFull(doctor.latestLocation.recorded_at)}`
+                          : "未上線，已用最近排程起點作為參考位置"}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span
+                        className="inline-flex h-3.5 w-3.5 rounded-full"
+                        style={{ backgroundColor: doctor.color }}
+                      />
+                      <span
+                        className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${getLocationStatusTone(
+                          doctor.locationStatus
+                        )}`}
+                      >
+                        {getLocationStatusLabel(doctor.locationStatus)}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="mt-2.5 grid gap-2 text-sm sm:grid-cols-3">
+                    <div className="rounded-2xl bg-slate-50 px-3 py-2">
+                      <p className="text-xs text-slate-500">目前案件</p>
+                      <p className="mt-1.5 font-semibold text-brand-ink">
+                        {doctor.activePatientName ?? "待命中"}
+                      </p>
+                    </div>
+                    <div className="rounded-2xl bg-slate-50 px-3 py-2">
+                      <p className="text-xs text-slate-500">已過站點</p>
+                      <p className="mt-1.5 font-semibold text-brand-ink">{doctor.passedStops.length}</p>
+                    </div>
+                    <div className="rounded-2xl bg-slate-50 px-3 py-2">
+                      <p className="text-xs text-slate-500">未到站點</p>
+                      <p className="mt-1.5 font-semibold text-brand-ink">{doctor.upcomingStops.length}</p>
+                    </div>
+                  </div>
+                  <p className="mt-2 text-sm text-slate-600">
+                    {doctor.currentDistanceKilometers !== null
+                      ? `距離目前案件約 ${doctor.currentDistanceKilometers.toFixed(1)} 公里`
+                      : doctor.displayLocation?.isFallback
+                        ? "未上線，位置顯示在最近排程起點周圍"
+                        : "等待定位或案件座標"}
+                  </p>
+                  <div className="mt-2.5 flex flex-wrap gap-2">
+                    {doctor.routeMapUrl ? (
+                      <a
+                        href={doctor.routeMapUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="rounded-full bg-brand-forest px-3.5 py-2 text-xs font-semibold text-white"
+                      >
+                        打開 {doctor.doctorName} 路線
+                      </a>
+                    ) : null}
+                    <button
+                      type="button"
+                      onClick={() => handleTrackingDoctorFocus(doctor.doctorId)}
+                      className="rounded-full border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-brand-ink"
+                    >
+                      查看細節
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        ) : null}
+      </Panel>
+
+      <div className="grid gap-4 2xl:grid-cols-[minmax(0,1.45fr)_minmax(360px,0.8fr)] 2xl:items-start">
+        <section className="rounded-[1.45rem] border border-slate-200 bg-white p-4 shadow-card">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold text-brand-ink">
+                {selectedDoctor ? `${selectedDoctor.doctorName} 追蹤地圖` : "全部醫師追蹤地圖"}
+              </p>
+              <p className="mt-1 text-xs text-slate-500">
+                地圖會同時顯示所有醫師最新位置；個案分布點依上方選擇的排程疊加。
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-1.5 text-xs">
+              {trackedDoctors.map((doctor) => (
+                <button
+                  key={doctor.doctorId}
+                  type="button"
+                  onClick={() => handleTrackingDoctorFocus(doctor.doctorId)}
+                  className={`rounded-full px-3 py-1.5 font-semibold ${
+                    selectedDoctor?.doctorId === doctor.doctorId ? "text-white" : "bg-slate-100 text-slate-700"
+                  }`}
+                  style={
+                    selectedDoctor?.doctorId === doctor.doctorId
+                      ? { backgroundColor: doctor.color }
+                      : undefined
+                  }
+                >
+                  {doctor.doctorName}
+                </button>
+              ))}
             </div>
           </div>
-
-          <div className="rounded-[1.45rem] border border-slate-200 bg-white p-3">
-            <div className="flex flex-wrap items-center justify-between gap-2.5">
-              <div>
-                <p className="text-sm font-semibold text-brand-ink">
-                  {selectedDoctor ? `${selectedDoctor.doctorName} 追蹤地圖` : "全部醫師追蹤地圖"}
-                </p>
-                <p className="mt-1 text-xs text-slate-500">
-                  地圖會同時顯示所有醫師最新位置；個案分布點依上方選擇的排程疊加。
-                </p>
-              </div>
-              <div className="flex flex-wrap gap-1.5 text-xs">
-                {trackedDoctors.map((doctor) => (
-                  <button
-                    key={doctor.doctorId}
-                    type="button"
-                    onClick={() => handleTrackingDoctorFocus(doctor.doctorId)}
-                    className={`rounded-full px-3 py-1.5 font-semibold ${
-                      selectedDoctor?.doctorId === doctor.doctorId
-                        ? "text-white"
-                        : "bg-slate-100 text-slate-700"
-                    }`}
-                    style={
-                      selectedDoctor?.doctorId === doctor.doctorId
-                        ? { backgroundColor: doctor.color }
-                        : undefined
-                    }
-                  >
-                    {doctor.doctorName}
-                  </button>
-                ))}
-              </div>
-            </div>
 
             {trackingMapView && trackingMapScreenPoints ? (
               <div
@@ -1809,7 +1915,7 @@ export function AdminDoctorTrackingPage() {
                     event.currentTarget.releasePointerCapture(event.pointerId);
                   }
                 }}
-                className="relative mt-2.5 h-[340px] overflow-hidden rounded-[1.35rem] border border-slate-200 bg-slate-100 touch-none cursor-grab active:cursor-grabbing lg:h-[380px]"
+                className="relative mt-3 h-[420px] overflow-hidden rounded-[1.35rem] border border-slate-200 bg-slate-100 touch-none cursor-grab active:cursor-grabbing lg:h-[560px] 2xl:h-[620px]"
               >
                 <div className="absolute inset-0 z-0 bg-[#eef3ee]">
                   {visibleMapTiles.map((tile) => (
@@ -1996,189 +2102,127 @@ export function AdminDoctorTrackingPage() {
                 目前這個日期與時段沒有可繪製的醫師位置資料。
               </div>
             )}
-          </div>
+        </section>
 
-          <div className="grid gap-2.5 xl:grid-cols-[1.02fr_0.98fr]">
-            <div className="grid gap-2.5 md:grid-cols-2">
-              {trackedDoctors.map((doctor) => (
-                <div
-                  key={doctor.doctorId}
-                  className={`rounded-[1.45rem] border p-3.5 ${
-                    selectedDoctor?.doctorId === doctor.doctorId
-                      ? "border-brand-forest bg-emerald-50/40"
-                      : "border-slate-200 bg-white"
-                  }`}
-                >
-                  <div className="flex items-start justify-between gap-2.5">
-                    <div>
-                      <p className="font-semibold text-brand-ink">{doctor.doctorName}</p>
-                      <p className="mt-1 text-xs text-slate-500">
-                        {doctor.latestLocation
-                          ? `最後定位 ${formatDateTimeFull(doctor.latestLocation.recorded_at)}`
-                          : "未上線，已用最近排程起點作為參考位置"}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span
-                        className="inline-flex h-3.5 w-3.5 rounded-full"
-                        style={{ backgroundColor: doctor.color }}
-                      />
-                      <span
-                        className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${getLocationStatusTone(
-                          doctor.locationStatus
-                        )}`}
-                      >
-                        {getLocationStatusLabel(doctor.locationStatus)}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="mt-2.5 grid gap-2 sm:grid-cols-3 text-sm">
-                    <div className="rounded-2xl bg-slate-50 px-3 py-2">
-                      <p className="text-xs text-slate-500">目前案件</p>
-                      <p className="mt-1.5 font-semibold text-brand-ink">
-                        {doctor.activePatientName ?? "待命中"}
-                      </p>
-                    </div>
-                    <div className="rounded-2xl bg-slate-50 px-3 py-2">
-                      <p className="text-xs text-slate-500">已過站點</p>
-                      <p className="mt-1.5 font-semibold text-brand-ink">{doctor.passedStops.length}</p>
-                    </div>
-                    <div className="rounded-2xl bg-slate-50 px-3 py-2">
-                      <p className="text-xs text-slate-500">未到站點</p>
-                      <p className="mt-1.5 font-semibold text-brand-ink">{doctor.upcomingStops.length}</p>
-                    </div>
-                  </div>
-                  <p className="mt-2 text-sm text-slate-600">
-                    {doctor.currentDistanceKilometers !== null
-                      ? `距離目前案件約 ${doctor.currentDistanceKilometers.toFixed(1)} 公里`
-                      : doctor.displayLocation?.isFallback
-                        ? "未上線，位置顯示在最近排程起點周圍"
-                        : "等待定位或案件座標"}
+        {selectedDoctor ? (
+          <aside className="space-y-4 2xl:sticky 2xl:top-4">
+            <section className="rounded-[1.45rem] border border-slate-200 bg-white p-4 shadow-card">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-sm font-medium text-brand-coral">選取醫師</p>
+                  <h2 className="mt-1 text-xl font-semibold text-brand-ink">{selectedDoctor.doctorName}</h2>
+                  <p className="mt-1 text-sm text-slate-500">
+                    目前對應案件：
+                    {selectedDoctor.activeSchedule
+                      ? ` 第 ${selectedDoctor.activeSchedule.route_order} 站 ${selectedDoctor.activePatientName ?? selectedDoctor.activeSchedule.patient_id}`
+                      : " 尚無"}
                   </p>
-                  <div className="mt-2.5 flex flex-wrap gap-2">
-                    {doctor.routeMapUrl ? (
-                      <a
-                        href={doctor.routeMapUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="rounded-full bg-brand-forest px-3.5 py-2 text-xs font-semibold text-white"
-                      >
-                        打開 {doctor.doctorName} 路線
-                      </a>
-                    ) : null}
-                    <button
-                      type="button"
-                      onClick={() => handleTrackingDoctorFocus(doctor.doctorId)}
-                      className="rounded-full border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-brand-ink"
-                    >
-                      查看細節
-                    </button>
-                  </div>
                 </div>
-              ))}
-            </div>
+                <span
+                  className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${getLocationStatusTone(
+                    selectedDoctor.locationStatus
+                  )}`}
+                >
+                  {getLocationStatusLabel(selectedDoctor.locationStatus)}
+                </span>
+              </div>
 
-            {selectedDoctor ? (
-              <div className="space-y-2.5">
-                <div className="rounded-[1.45rem] border border-slate-200 bg-white p-3.5">
-                  <div>
-                    <div>
-                      <p className="font-semibold text-brand-ink">{selectedDoctor.doctorName} 細節</p>
-                      <p className="mt-1 text-sm text-slate-500">
-                        目前對應案件：
-                        {selectedDoctor.activeSchedule
-                          ? ` 第 ${selectedDoctor.activeSchedule.route_order} 站 ${selectedDoctor.activePatientName ?? selectedDoctor.activeSchedule.patient_id}`
-                          : " 尚無"}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="mt-2.5 grid gap-2 md:grid-cols-3">
-                    <div className="rounded-2xl bg-slate-50 px-3 py-2 text-sm text-slate-600">
-                      <p className="text-xs text-slate-500">目前位置</p>
-                      <p className="mt-1.5 font-semibold text-brand-ink">
-                        {selectedDoctor.displayLocation?.addressLabel ?? "未上線"}
-                      </p>
-                    </div>
-                    <div className="rounded-2xl bg-slate-50 px-3 py-2 text-sm text-slate-600">
-                      <p className="text-xs text-slate-500">最新時間</p>
-                      <p className="mt-1.5 font-semibold text-brand-ink">
-                        {selectedDoctor.latestLocation
-                          ? formatDateTimeFull(selectedDoctor.latestLocation.recorded_at)
-                          : "未上線"}
-                      </p>
-                    </div>
-                    <div className="rounded-2xl bg-slate-50 px-3 py-2 text-sm text-slate-600">
-                      <p className="text-xs text-slate-500">定位狀態</p>
-                      <p className="mt-1.5 font-semibold text-brand-ink">
-                        {getLocationStatusLabel(selectedDoctor.locationStatus)}
-                      </p>
-                    </div>
-                  </div>
+              <div className="mt-4 grid gap-2">
+                <div className="rounded-2xl bg-slate-50 px-3 py-2 text-sm text-slate-600">
+                  <p className="text-xs text-slate-500">目前位置</p>
+                  <p className="mt-1.5 font-semibold text-brand-ink">
+                    {selectedDoctor.displayLocation?.addressLabel ?? "未上線"}
+                  </p>
                 </div>
-
-                <div className="grid gap-2.5 md:grid-cols-2">
-                  <div className="rounded-[1.45rem] border border-slate-200 bg-white p-3.5 text-sm">
-                    <div className="flex items-center justify-between gap-3">
-                      <p className="font-semibold text-brand-ink">已經過的地點</p>
-                      <span className="text-xs text-slate-500">{selectedDoctor.passedStops.length} 筆</span>
-                    </div>
-                    <div className="mt-2 space-y-2">
-                      {selectedDoctor.passedStops.length ? (
-                        selectedDoctor.passedStops.map((schedule) => {
-                          const patient = db.patients.find((item) => item.id === schedule.patient_id);
-                          return (
-                            <div key={schedule.id} className="rounded-2xl bg-slate-50 px-3 py-2">
-                              <p className="font-medium text-brand-ink">
-                                第 {schedule.route_order} 站 {patient ? maskPatientName(patient.name) : schedule.patient_id}
-                              </p>
-                              <p className="mt-1 text-xs text-slate-500">
-                                {formatTimeOnly(schedule.scheduled_start_at)} / {schedule.area}
-                              </p>
-                            </div>
-                          );
-                        })
-                      ) : (
-                        <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-5 text-center text-sm text-slate-500">
-                          目前還沒有已過站點。
-                        </p>
-                      )}
-                    </div>
+                <div className="grid gap-2 sm:grid-cols-3">
+                  <div className="rounded-2xl bg-slate-50 px-3 py-2 text-sm text-slate-600">
+                    <p className="text-xs text-slate-500">最新時間</p>
+                    <p className="mt-1.5 font-semibold text-brand-ink">
+                      {selectedDoctor.latestLocation
+                        ? formatDateTimeFull(selectedDoctor.latestLocation.recorded_at)
+                        : "未上線"}
+                    </p>
                   </div>
-
-                  <div className="rounded-[1.45rem] border border-slate-200 bg-white p-3.5 text-sm">
-                    <div className="flex items-center justify-between gap-3">
-                      <p className="font-semibold text-brand-ink">尚未到的地點</p>
-                      <span className="text-xs text-slate-500">{selectedDoctor.upcomingStops.length} 筆</span>
-                    </div>
-                    <div className="mt-2 space-y-2">
-                      {selectedDoctor.upcomingStops.length ? (
-                        selectedDoctor.upcomingStops.map((schedule) => {
-                          const patient = db.patients.find((item) => item.id === schedule.patient_id);
-                          return (
-                            <div key={schedule.id} className="rounded-2xl bg-slate-50 px-3 py-2">
-                              <p className="font-medium text-brand-ink">
-                                第 {schedule.route_order} 站 {patient ? maskPatientName(patient.name) : schedule.patient_id}
-                              </p>
-                              <p className="mt-1 text-xs text-slate-500">
-                                {formatTimeOnly(schedule.scheduled_start_at)} / {schedule.area}
-                              </p>
-                            </div>
-                          );
-                        })
-                      ) : (
-                        <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-5 text-center text-sm text-slate-500">
-                          目前這位醫師沒有待前往站點。
-                        </p>
-                      )}
-                    </div>
+                  <div className="rounded-2xl bg-slate-50 px-3 py-2 text-sm text-slate-600">
+                    <p className="text-xs text-slate-500">定位狀態</p>
+                    <p className="mt-1.5 font-semibold text-brand-ink">
+                      {getLocationStatusLabel(selectedDoctor.locationStatus)}
+                    </p>
+                  </div>
+                  <div className="rounded-2xl bg-slate-50 px-3 py-2 text-sm text-slate-600">
+                    <p className="text-xs text-slate-500">目前距離</p>
+                    <p className="mt-1.5 font-semibold text-brand-ink">
+                      {selectedDoctor.currentDistanceKilometers !== null
+                        ? `${selectedDoctor.currentDistanceKilometers.toFixed(1)} 公里`
+                        : selectedDoctor.displayLocation?.isFallback
+                          ? "起點參考"
+                          : "等待定位"}
+                    </p>
                   </div>
                 </div>
               </div>
-            ) : null}
-          </div>
-        </div>
-      </Panel>
+            </section>
 
+            <section className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-1">
+              <div className="rounded-[1.45rem] border border-slate-200 bg-white p-4 text-sm shadow-card">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="font-semibold text-brand-ink">已經過的地點</p>
+                  <span className="text-xs text-slate-500">{selectedDoctor.passedStops.length} 筆</span>
+                </div>
+                <div className="mt-3 max-h-[260px] space-y-2 overflow-y-auto pr-1">
+                  {selectedDoctor.passedStops.length ? (
+                    selectedDoctor.passedStops.map((schedule) => {
+                      const patient = db.patients.find((item) => item.id === schedule.patient_id);
+                      return (
+                        <div key={schedule.id} className="rounded-2xl bg-slate-50 px-3 py-2">
+                          <p className="font-medium text-brand-ink">
+                            第 {schedule.route_order} 站 {patient ? maskPatientName(patient.name) : schedule.patient_id}
+                          </p>
+                          <p className="mt-1 text-xs text-slate-500">
+                            {formatTimeOnly(schedule.scheduled_start_at)} / {schedule.area}
+                          </p>
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-5 text-center text-sm text-slate-500">
+                      目前還沒有已過站點。
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              <div className="rounded-[1.45rem] border border-slate-200 bg-white p-4 text-sm shadow-card">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="font-semibold text-brand-ink">尚未到的地點</p>
+                  <span className="text-xs text-slate-500">{selectedDoctor.upcomingStops.length} 筆</span>
+                </div>
+                <div className="mt-3 max-h-[260px] space-y-2 overflow-y-auto pr-1">
+                  {selectedDoctor.upcomingStops.length ? (
+                    selectedDoctor.upcomingStops.map((schedule) => {
+                      const patient = db.patients.find((item) => item.id === schedule.patient_id);
+                      return (
+                        <div key={schedule.id} className="rounded-2xl bg-slate-50 px-3 py-2">
+                          <p className="font-medium text-brand-ink">
+                            第 {schedule.route_order} 站 {patient ? maskPatientName(patient.name) : schedule.patient_id}
+                          </p>
+                          <p className="mt-1 text-xs text-slate-500">
+                            {formatTimeOnly(schedule.scheduled_start_at)} / {schedule.area}
+                          </p>
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-5 text-center text-sm text-slate-500">
+                      目前這位醫師沒有待前往站點。
+                    </p>
+                  )}
+                </div>
+              </div>
+            </section>
+          </aside>
+        ) : null}
+      </div>
     </div>
   );
 }

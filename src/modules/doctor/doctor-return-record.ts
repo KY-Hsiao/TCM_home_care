@@ -107,6 +107,7 @@ export type ReturnRecordDraftInput = FourDiagnosisSelections & {
   chiefComplaint: string;
   medicalHistory: string;
   reminderNote?: string;
+  treatmentProvidedSummary?: string;
   treatmentStartTime: string;
   treatmentEndTime: string;
 };
@@ -132,6 +133,15 @@ export type ReturnRecordCsvRow = {
   generatedRecordText: string;
   linkedHomeVisitScheduleId: string;
   returnRecordScheduleId: string;
+};
+
+export type TreatmentProvidedSelections = {
+  treatment_chinese_medicine_checked: boolean;
+  treatment_chinese_medicine_note: string;
+  treatment_acupuncture_checked: boolean;
+  treatment_acupuncture_note: string;
+  treatment_topical_medication_checked: boolean;
+  treatment_topical_medication_note: string;
 };
 
 function normalizeTagsWithOther(
@@ -194,10 +204,54 @@ export function buildReturnRecordDraft(input: ReturnRecordDraftInput) {
     buildFourDiagnosisSummary(input),
     `主訴：${input.chiefComplaint || "未填寫"}`,
     `病史：${input.medicalHistory || "未填寫"}`,
+    input.treatmentProvidedSummary?.trim()
+      ? `處置：${input.treatmentProvidedSummary.trim()}`
+      : "",
     input.reminderNote?.trim() ? `提醒：${input.reminderNote.trim()}` : ""
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+export function buildTreatmentProvidedSummary(input: TreatmentProvidedSelections) {
+  const items = [
+    {
+      checked: input.treatment_chinese_medicine_checked,
+      label: "中藥",
+      note: input.treatment_chinese_medicine_note
+    },
+    {
+      checked: input.treatment_acupuncture_checked,
+      label: "針灸",
+      note: input.treatment_acupuncture_note
+    },
+    {
+      checked: input.treatment_topical_medication_checked,
+      label: "外用藥",
+      note: input.treatment_topical_medication_note
+    }
+  ];
+
+  return items
+    .filter((item) => item.checked)
+    .map((item) => {
+      const note = item.note.trim();
+      return note ? `${item.label}：${note}` : item.label;
+    })
+    .join("；");
+}
+
+export function buildPreviousTreatmentProvidedSelections(
+  record: VisitRecord | undefined
+): TreatmentProvidedSelections {
+  return {
+    treatment_chinese_medicine_checked: record?.treatment_chinese_medicine_checked ?? false,
+    treatment_chinese_medicine_note: record?.treatment_chinese_medicine_note ?? "",
+    treatment_acupuncture_checked: record?.treatment_acupuncture_checked ?? false,
+    treatment_acupuncture_note: record?.treatment_acupuncture_note ?? "",
+    treatment_topical_medication_checked: record?.treatment_topical_medication_checked ?? false,
+    treatment_topical_medication_note: record?.treatment_topical_medication_note ?? ""
+  };
 }
 
 function escapeCsvCell(value: string | number | boolean | null | undefined) {

@@ -19,8 +19,23 @@ import { formatDateTimeFull, formatTimeOnly } from "../../shared/utils/format";
 import { maskPatientName } from "../../shared/utils/patient-name";
 import type { TrackingRuntime } from "../../services/types";
 
+function isAndroidNavigationInterface() {
+  if (typeof navigator === "undefined") {
+    return false;
+  }
+  return /\bAndroid\b/i.test(navigator.userAgent);
+}
+
+function resolveDoctorNavigationTarget(): "web" | "android" {
+  return isAndroidNavigationInterface() ? "android" : "web";
+}
+
 function openExternalNavigation(url: string) {
   if (typeof window === "undefined") {
+    return;
+  }
+  if (url.startsWith("google.navigation:")) {
+    window.location.assign(url);
     return;
   }
   window.open(url, "_blank", "noopener,noreferrer");
@@ -464,7 +479,8 @@ function DoctorRouteSelector({ embedded = false }: { embedded?: boolean }) {
         destinationLatitude: patientDetail.schedule.home_latitude_snapshot,
         destinationLongitude: patientDetail.schedule.home_longitude_snapshot,
         originLatitude: patientDetailRuntime?.latestSample?.latitude ?? null,
-        originLongitude: patientDetailRuntime?.latestSample?.longitude ?? null
+        originLongitude: patientDetailRuntime?.latestSample?.longitude ?? null,
+        navigationTarget: resolveDoctorNavigationTarget()
       })
     : null;
   const patientDetailReturnHospitalNavigationUrl =
@@ -478,7 +494,8 @@ function DoctorRouteSelector({ embedded = false }: { embedded?: boolean }) {
             patientDetail.schedule.home_latitude_snapshot,
           originLongitude:
             patientDetailRuntime?.latestSample?.longitude ??
-            patientDetail.schedule.home_longitude_snapshot
+            patientDetail.schedule.home_longitude_snapshot,
+          navigationTarget: resolveDoctorNavigationTarget()
         })
       : null;
   const patientDetailNextStopNavigationUrl =
@@ -493,7 +510,8 @@ function DoctorRouteSelector({ embedded = false }: { embedded?: boolean }) {
             patientDetail.schedule.home_latitude_snapshot,
           originLongitude:
             patientDetailRuntime?.latestSample?.longitude ??
-            patientDetail.schedule.home_longitude_snapshot
+            patientDetail.schedule.home_longitude_snapshot,
+          navigationTarget: resolveDoctorNavigationTarget()
         })
       : null;
 
@@ -932,6 +950,22 @@ export function DoctorLocationPage() {
     Boolean(activeRoutePlan) &&
     routeContexts.length > 0 &&
     routeContexts.every((entry) => isVisitFinished(entry.schedule.status));
+  const lastCompletedRouteContext =
+    routeContexts
+      .filter((entry) => isVisitFinished(entry.schedule.status))
+      .slice()
+      .sort((left, right) => {
+        const orderDiff =
+          (right.schedule.route_order ?? Number.MIN_SAFE_INTEGER) -
+          (left.schedule.route_order ?? Number.MIN_SAFE_INTEGER);
+        if (orderDiff !== 0) {
+          return orderDiff;
+        }
+        return (
+          new Date(right.schedule.scheduled_start_at).getTime() -
+          new Date(left.schedule.scheduled_start_at).getTime()
+        );
+      })[0] ?? null;
   const latestLinkedLocation = currentRouteContext
     ? repositories.visitRepository
         .getDoctorLocationLogs(effectiveDoctorId)
@@ -953,7 +987,8 @@ export function DoctorLocationPage() {
       destinationLatitude: input.schedule.home_latitude_snapshot,
       destinationLongitude: input.schedule.home_longitude_snapshot,
       originLatitude: input.originLatitude ?? null,
-      originLongitude: input.originLongitude ?? null
+      originLongitude: input.originLongitude ?? null,
+      navigationTarget: resolveDoctorNavigationTarget()
     };
     return {
       externalUrl: services.maps.buildNavigationUrl(navigationInput),
@@ -972,7 +1007,8 @@ export function DoctorLocationPage() {
       destinationLatitude: activeRoutePlan.end_latitude,
       destinationLongitude: activeRoutePlan.end_longitude,
       originLatitude: input.originLatitude ?? null,
-      originLongitude: input.originLongitude ?? null
+      originLongitude: input.originLongitude ?? null,
+      navigationTarget: resolveDoctorNavigationTarget()
     };
     return {
       externalUrl: services.maps.buildNavigationUrl(navigationInput),
@@ -980,6 +1016,10 @@ export function DoctorLocationPage() {
     };
   };
   const openEmbeddedNavigation = (windowState: EmbeddedNavigationWindow) => {
+    if (isAndroidNavigationInterface()) {
+      openExternalNavigation(windowState.externalUrl);
+      return;
+    }
     setEmbeddedNavigationWindow(windowState);
   };
   const currentMapUrl = currentRouteContext
@@ -1071,7 +1111,9 @@ export function DoctorLocationPage() {
       if (returnHospitalNavigationUrls) {
         openEmbeddedNavigation({
           title: "返回醫院",
-          ...returnHospitalNavigationUrls
+          ...returnHospitalNavigationUrls,
+          arrivalAction: () =>
+            services.visitAutomation.confirmReturnToEndpoint(treatmentContext.schedule.id, "doctor")
         });
       }
       return;
@@ -1166,7 +1208,14 @@ export function DoctorLocationPage() {
                     openEmbeddedNavigation({
                       title: "返回醫院",
                       externalUrl: hospitalMapUrl,
-                      embedUrl: hospitalMapEmbedUrl
+                      embedUrl: hospitalMapEmbedUrl,
+                      arrivalAction: lastCompletedRouteContext
+                        ? () =>
+                            services.visitAutomation.confirmReturnToEndpoint(
+                              lastCompletedRouteContext.schedule.id,
+                              "doctor"
+                            )
+                        : undefined
                     })
                   }
                   className="inline-flex min-h-[44px] flex-1 items-center justify-center rounded-full border border-white/20 bg-white/10 px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/20"
@@ -1252,7 +1301,14 @@ export function DoctorLocationPage() {
                     openEmbeddedNavigation({
                       title: "返回醫院",
                       externalUrl: hospitalMapUrl,
-                      embedUrl: hospitalMapEmbedUrl
+                      embedUrl: hospitalMapEmbedUrl,
+                      arrivalAction: lastCompletedRouteContext
+                        ? () =>
+                            services.visitAutomation.confirmReturnToEndpoint(
+                              lastCompletedRouteContext.schedule.id,
+                              "doctor"
+                            )
+                        : undefined
                     });
                   }
                 }}

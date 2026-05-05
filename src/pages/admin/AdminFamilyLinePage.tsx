@@ -26,6 +26,7 @@ type FamilyLineRecipient = {
   relationshipLabel: string;
   patient: Patient | null;
   linkedPatients: Patient[];
+  schedules: VisitSchedule[];
   schedule: VisitSchedule | null;
   doctor: Doctor | null;
   linkedDoctors: Doctor[];
@@ -154,6 +155,9 @@ export function AdminFamilyLinePage() {
   const { db, repositories } = useAppContext();
   const [searchParams] = useSearchParams();
   const focusedPatientId = searchParams.get("patientId");
+  const focusedPatient = focusedPatientId
+    ? db.patients.find((patient) => patient.id === focusedPatientId)
+    : undefined;
   const [settings, setSettings] = useState<FamilyLineAutomationSettings>(() =>
     loadJsonStorage(SETTINGS_STORAGE_KEY, defaultSettings)
   );
@@ -176,6 +180,11 @@ export function AdminFamilyLinePage() {
     subject: "即時 LINE 群發",
     content: ""
   });
+  const [singleMessageDraft, setSingleMessageDraft] = useState<FamilyLineTemplateDraft>({
+    subject: "LINE 單獨訊息",
+    content: ""
+  });
+  const [selectedSingleRecipientId, setSelectedSingleRecipientId] = useState("");
   const [isSendConfirmed, setIsSendConfirmed] = useState(false);
   const [sendFeedback, setSendFeedback] = useState<{
     tone: "success" | "error";
@@ -183,7 +192,11 @@ export function AdminFamilyLinePage() {
   } | null>(null);
   const [isSending, setIsSending] = useState(false);
   const [isInstantSending, setIsInstantSending] = useState(false);
+  const [isSingleSending, setIsSingleSending] = useState(false);
   const [isSyncingLineFriends, setIsSyncingLineFriends] = useState(false);
+  const [activeLineTool, setActiveLineTool] = useState<"instant" | "single" | "automation" | "template" | null>(null);
+  const [expandedManagedContactIds, setExpandedManagedContactIds] = useState<string[]>([]);
+  const [showAllContactsForFocusedPatient, setShowAllContactsForFocusedPatient] = useState(false);
   const [apiTokens] = useState(() => loadAdminApiTokenSettings());
 
   useEffect(() => {
@@ -209,9 +222,9 @@ export function AdminFamilyLinePage() {
         .map((patientId) => repositories.patientRepository.getPatientById(patientId))
         .filter((patient): patient is Patient => Boolean(patient));
       const primaryPatient = linkedPatients[0] ?? null;
-      const schedules = primaryPatient
-        ? repositories.visitRepository.getSchedules({ patientId: primaryPatient.id })
-        : [];
+      const schedules = linkedPatients.flatMap((patient) =>
+        repositories.visitRepository.getSchedules({ patientId: patient.id })
+      );
       const schedule = resolveLatestSchedule(schedules);
       const linkedDoctorIds = linkedPatients
         .flatMap((patient) => {
@@ -236,6 +249,7 @@ export function AdminFamilyLinePage() {
         relationshipLabel: contact.note || "LINE 名單",
         patient: primaryPatient,
         linkedPatients,
+        schedules,
         schedule,
         doctor,
         linkedDoctors,
@@ -246,13 +260,19 @@ export function AdminFamilyLinePage() {
   }, [db.doctors, managedLineContacts, repositories]);
 
   const filteredRecipients = useMemo(() => {
-    if (selectedDoctorId === "all") {
-      return recipients;
+    const doctorFilteredRecipients =
+      selectedDoctorId === "all"
+        ? recipients
+        : recipients.filter((recipient) =>
+            recipient.linkedDoctors.some((doctor) => doctor.id === selectedDoctorId)
+          );
+    if (!focusedPatientId) {
+      return doctorFilteredRecipients;
     }
-    return recipients.filter((recipient) =>
-      recipient.linkedDoctors.some((doctor) => doctor.id === selectedDoctorId)
+    return doctorFilteredRecipients.filter((recipient) =>
+      recipient.linkedPatients.some((patient) => patient.id === focusedPatientId)
     );
-  }, [recipients, selectedDoctorId]);
+  }, [focusedPatientId, recipients, selectedDoctorId]);
 
   const selectedRecipients = filteredRecipients.filter((recipient) =>
     selectedRecipientIds.includes(recipient.id)
@@ -280,6 +300,8 @@ export function AdminFamilyLinePage() {
           .join("\n\n");
   const sendableRecipients = selectedRecipients.filter((recipient) => recipient.lineUserId.trim());
   const missingLineIdCount = selectedRecipients.length - sendableRecipients.length;
+  const selectedSingleRecipient =
+    filteredRecipients.find((recipient) => recipient.id === selectedSingleRecipientId) ?? null;
   const filteredRecipientByContactId = useMemo(
     () =>
       new Map(
@@ -292,22 +314,58 @@ export function AdminFamilyLinePage() {
   );
   const visibleManagedLineContacts = useMemo(
     () =>
-      selectedDoctorId === "all"
-        ? managedLineContacts
-        : managedLineContacts.filter((contact) => filteredRecipientByContactId.has(contact.id)),
-    [filteredRecipientByContactId, managedLineContacts, selectedDoctorId]
+      (focusedPatientId
+        ? showAllContactsForFocusedPatient
+          ? managedLineContacts
+          : managedLineContacts.filter((contact) => contact.linkedPatientIds.includes(focusedPatientId))
+        : selectedDoctorId === "all"
+          ? managedLineContacts
+          : managedLineContacts.filter((contact) => filteredRecipientByContactId.has(contact.id))
+      ).filter(
+        (contact) =>
+          !focusedPatientId ||
+          showAllContactsForFocusedPatient ||
+          filteredRecipientByContactId.has(contact.id)
+      ),
+    [
+      filteredRecipientByContactId,
+      focusedPatientId,
+      managedLineContacts,
+      selectedDoctorId,
+      showAllContactsForFocusedPatient
+    ]
   );
 
+  const resolveRecipientPatient = (
+    recipient: FamilyLineRecipient,
+    schedule: VisitSchedule | null
+  ) => {
+    const focusedPatientRecord = focusedPatientId
+      ? repositories.patientRepository.getPatientById(focusedPatientId)
+      : undefined;
+    if (focusedPatientRecord) {
+      return focusedPatientRecord;
+    }
+    const schedulePatient = schedule
+      ? repositories.patientRepository.getPatientById(schedule.patient_id)
+      : undefined;
+    return schedulePatient ?? recipient.patient;
+  };
+
   const buildLineSendRecipients = (targetRecipients: FamilyLineRecipient[]) =>
-    targetRecipients.map((recipient) => ({
-      caregiverId: recipient.id,
-      caregiverName: recipient.displayName,
-      patientId: recipient.patient?.id ?? "",
-      patientName: recipient.patient?.name ?? "",
-      doctorId: resolveRecipientDoctor(recipient)?.id ?? "",
-      doctorName: resolveRecipientDoctor(recipient)?.name ?? "",
-      lineUserId: recipient.lineUserId
-    }));
+    targetRecipients.map((recipient) => {
+      const schedule = resolveRecipientSchedule(recipient);
+      const patient = resolveRecipientPatient(recipient, schedule);
+      return {
+        caregiverId: recipient.id,
+        caregiverName: recipient.displayName,
+        patientId: patient?.id ?? "",
+        patientName: patient?.name ?? "",
+        doctorId: resolveRecipientDoctor(recipient)?.id ?? "",
+        doctorName: resolveRecipientDoctor(recipient)?.name ?? "",
+        lineUserId: recipient.lineUserId
+      };
+    });
 
   const createLineContactLogs = (
     targetRecipients: FamilyLineRecipient[],
@@ -317,10 +375,12 @@ export function AdminFamilyLinePage() {
   ) => {
     const now = new Date().toISOString();
     targetRecipients.forEach((recipient) => {
+      const schedule = resolveRecipientSchedule(recipient);
+      const patient = resolveRecipientPatient(recipient, schedule);
       repositories.contactRepository.createContactLog({
         id: `line-${Date.now()}-${recipient.id}`,
-        patient_id: recipient.patient?.id ?? null,
-        visit_schedule_id: recipient.schedule?.id ?? null,
+        patient_id: patient?.id ?? null,
+        visit_schedule_id: schedule?.id ?? null,
         caregiver_id: null,
         doctor_id: resolveRecipientDoctor(recipient)?.id ?? null,
         admin_user_id: null,
@@ -352,6 +412,11 @@ export function AdminFamilyLinePage() {
         filteredRecipients.some((recipient) => recipient.id === recipientId)
       )
     );
+    setSelectedSingleRecipientId((current) =>
+      current && filteredRecipients.some((recipient) => recipient.id === current)
+        ? current
+        : filteredRecipients[0]?.id ?? ""
+    );
   }, [filteredRecipients]);
 
   useEffect(() => {
@@ -359,6 +424,7 @@ export function AdminFamilyLinePage() {
       return;
     }
 
+    setShowAllContactsForFocusedPatient(false);
     const focusedRecipients = recipients.filter(
       (recipient) => recipient.linkedPatients.some((patient) => patient.id === focusedPatientId)
     );
@@ -366,6 +432,7 @@ export function AdminFamilyLinePage() {
     if (focusedDoctor) {
       setSelectedDoctorId(focusedDoctor.id);
     }
+    setBulkLinkPatientId(focusedPatientId);
     setSelectedRecipientIds(focusedRecipients.map((recipient) => recipient.id));
   }, [focusedPatientId, recipients]);
 
@@ -374,6 +441,25 @@ export function AdminFamilyLinePage() {
       ? recipient.doctor
       : recipient.linkedDoctors.find((doctor) => doctor.id === selectedDoctorId) ??
         recipient.doctor;
+
+  const resolveRecipientSchedule = (recipient: FamilyLineRecipient) => {
+    if (focusedPatientId) {
+      const focusedSchedule = resolveLatestSchedule(
+        recipient.schedules.filter((schedule) => schedule.patient_id === focusedPatientId)
+      );
+      if (focusedSchedule) {
+        return focusedSchedule;
+      }
+    }
+    if (selectedDoctorId === "all") {
+      return recipient.schedule;
+    }
+    return (
+      resolveLatestSchedule(
+        recipient.schedules.filter((schedule) => schedule.assigned_doctor_id === selectedDoctorId)
+      ) ?? recipient.schedule
+    );
+  };
 
   const toggleSetting = (key: keyof FamilyLineAutomationSettings) => {
     setSettings((current) => ({
@@ -416,6 +502,14 @@ export function AdminFamilyLinePage() {
 
   const clearSelectedRecipients = () => {
     setSelectedRecipientIds([]);
+  };
+
+  const toggleManagedContactDetail = (contactId: string) => {
+    setExpandedManagedContactIds((current) =>
+      current.includes(contactId)
+        ? current.filter((id) => id !== contactId)
+        : [...current, contactId]
+    );
   };
 
   const persistManagedLineContact = async (contact: ManagedFamilyLineContact) => {
@@ -463,12 +557,12 @@ export function AdminFamilyLinePage() {
   };
 
   const selectAllManagedContacts = () => {
-    setSelectedManagedContactIds(managedLineContacts.map((contact) => contact.id));
+    setSelectedManagedContactIds(visibleManagedLineContacts.map((contact) => contact.id));
   };
 
   const invertManagedContactSelection = () => {
     setSelectedManagedContactIds((current) =>
-      managedLineContacts
+      visibleManagedLineContacts
         .map((contact) => contact.id)
         .filter((contactId) => !current.includes(contactId))
     );
@@ -793,6 +887,66 @@ export function AdminFamilyLinePage() {
     }
   };
 
+  const sendSingleLineMessage = async () => {
+    setSendFeedback(null);
+    const subject = singleMessageDraft.subject.trim() || "LINE 單獨訊息";
+    const content = singleMessageDraft.content.trim();
+    if (!selectedSingleRecipient) {
+      setSendFeedback({ tone: "error", message: "請先選擇要單獨發訊息的 LINE 家屬。" });
+      return;
+    }
+    if (!content) {
+      setSendFeedback({ tone: "error", message: "請先填寫單獨訊息內容。" });
+      return;
+    }
+    if (!selectedSingleRecipient.lineUserId.trim()) {
+      setSendFeedback({ tone: "error", message: "這位家屬尚未有 LINE userId，無法單獨發訊息。" });
+      return;
+    }
+
+    setIsSingleSending(true);
+    try {
+      const response = await fetch("/api/admin/family-line/send", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          lineChannelAccessToken: apiTokens.lineChannelAccessToken.trim(),
+          subject,
+          content,
+          recipients: buildLineSendRecipients([selectedSingleRecipient])
+        })
+      });
+      const payload = (await response.json().catch(() => ({}))) as {
+        error?: string;
+        sentCount?: number;
+        attemptedCount?: number;
+        results?: Array<{ ok: boolean; status: number; error: string | null }>;
+      };
+      if (!response.ok) {
+        setSendFeedback({
+          tone: "error",
+          message: buildLineSendFailureMessage(payload)
+        });
+        return;
+      }
+
+      createLineContactLogs([selectedSingleRecipient], subject, content, "LINE 單獨訊息已送出");
+      setSendFeedback({
+        tone: "success",
+        message: `LINE 單獨訊息已送出給 ${selectedSingleRecipient.displayName}。`
+      });
+    } catch {
+      setSendFeedback({
+        tone: "error",
+        message: "無法連線到 LINE 發送端點，請確認部署與網路狀態。"
+      });
+    } finally {
+      setIsSingleSending(false);
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div className="grid gap-3 md:grid-cols-4">
@@ -829,251 +983,459 @@ export function AdminFamilyLinePage() {
         </div>
       ) : null}
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(360px,0.95fr)] xl:items-start">
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.05fr)_minmax(380px,0.95fr)] xl:items-start">
         <div className="space-y-4">
-          <Panel title="即時群發訊息">
-            <div className="space-y-3 text-sm">
-              <label className="block">
-                <span className="mb-1 block font-medium text-brand-ink">即時群發標題</span>
-                <input
-                  aria-label="即時群發標題"
-                  value={instantMessageDraft.subject}
-                  onChange={(event) =>
-                    setInstantMessageDraft((current) => ({
-                      ...current,
-                      subject: event.target.value
-                    }))
-                  }
-                  className="w-full rounded-2xl border border-slate-200 px-4 py-3"
-                />
-              </label>
-              <label className="block">
-                <span className="mb-1 block font-medium text-brand-ink">即時群發內容</span>
-                <textarea
-                  aria-label="即時群發內容"
-                  value={instantMessageDraft.content}
-                  onChange={(event) =>
-                    setInstantMessageDraft((current) => ({
-                      ...current,
-                      content: event.target.value
-                    }))
-                  }
-                  rows={6}
-                  placeholder="輸入要立刻推播給所選 LINE 家屬的訊息"
-                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
-                />
-              </label>
-              <div className="flex flex-wrap items-center gap-2">
+          <Panel title="LINE 快速功能">
+            <div className="grid gap-2">
+              <button
+                type="button"
+                onClick={() => setActiveLineTool("instant")}
+                className={`flex min-h-[68px] items-center gap-3 rounded-2xl border px-3 py-2.5 text-left transition ${
+                  activeLineTool === "instant"
+                    ? "border-brand-forest bg-emerald-50 shadow-sm"
+                    : "border-slate-200 bg-white hover:border-brand-forest hover:bg-emerald-50"
+                }`}
+              >
+                <span
+                  className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-xs font-bold ${
+                    activeLineTool === "instant"
+                      ? "bg-brand-forest text-white"
+                      : "bg-slate-100 text-brand-ink"
+                  }`}
+                >
+                  群發
+                </span>
+                <span className="min-w-0">
+                  <span className="block break-words text-sm font-semibold text-brand-ink">即時群發訊息</span>
+                  <span className="mt-0.5 block break-words text-xs text-slate-500">一次性推播</span>
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveLineTool("single")}
+                className={`flex min-h-[68px] items-center gap-3 rounded-2xl border px-3 py-2.5 text-left transition ${
+                  activeLineTool === "single"
+                    ? "border-brand-forest bg-emerald-50 shadow-sm"
+                    : "border-slate-200 bg-white hover:border-brand-forest hover:bg-emerald-50"
+                }`}
+              >
+                <span
+                  className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-xs font-bold ${
+                    activeLineTool === "single"
+                      ? "bg-brand-forest text-white"
+                      : "bg-slate-100 text-brand-ink"
+                  }`}
+                >
+                  單發
+                </span>
+                <span className="min-w-0">
+                  <span className="block break-words text-sm font-semibold text-brand-ink">單獨發訊息</span>
+                  <span className="mt-0.5 block break-words text-xs text-slate-500">指定一位家屬</span>
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveLineTool("automation")}
+                className={`flex min-h-[68px] items-center gap-3 rounded-2xl border px-3 py-2.5 text-left transition ${
+                  activeLineTool === "automation"
+                    ? "border-brand-forest bg-emerald-50 shadow-sm"
+                    : "border-slate-200 bg-white hover:border-brand-forest hover:bg-emerald-50"
+                }`}
+              >
+                <span
+                  className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-xs font-bold ${
+                    activeLineTool === "automation"
+                      ? "bg-brand-forest text-white"
+                      : "bg-slate-100 text-brand-ink"
+                  }`}
+                >
+                  自動
+                </span>
+                <span className="min-w-0">
+                  <span className="block break-words text-sm font-semibold text-brand-ink">LINE 自動發送設定</span>
+                  <span className="mt-0.5 block break-words text-xs text-slate-500">請假與提醒</span>
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveLineTool("template")}
+                className={`flex min-h-[68px] items-center gap-3 rounded-2xl border px-3 py-2.5 text-left transition ${
+                  activeLineTool === "template"
+                    ? "border-brand-forest bg-emerald-50 shadow-sm"
+                    : "border-slate-200 bg-white hover:border-brand-forest hover:bg-emerald-50"
+                }`}
+              >
+                <span
+                  className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-xs font-bold ${
+                    activeLineTool === "template"
+                      ? "bg-brand-forest text-white"
+                      : "bg-slate-100 text-brand-ink"
+                  }`}
+                >
+                  範本
+                </span>
+                <span className="min-w-0">
+                  <span className="block break-words text-sm font-semibold text-brand-ink">範本群發</span>
+                  <span className="mt-0.5 block break-words text-xs text-slate-500">套用訊息範本</span>
+                </span>
+              </button>
+            </div>
+          </Panel>
+
+          {activeLineTool ? (
+            <section
+              role="dialog"
+              aria-label={
+                activeLineTool === "instant"
+                  ? "即時群發訊息"
+                  : activeLineTool === "single"
+                    ? "單獨發訊息"
+                    : activeLineTool === "automation"
+                      ? "LINE 自動發送設定"
+                      : "範本群發"
+              }
+              className="overflow-hidden rounded-[1.25rem] border border-brand-moss/30 bg-white shadow-card"
+            >
+              <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3">
+                <h2 className="text-base font-semibold text-brand-ink">
+                  {activeLineTool === "instant"
+                    ? "即時群發訊息"
+                    : activeLineTool === "single"
+                      ? "單獨發訊息"
+                      : activeLineTool === "automation"
+                        ? "LINE 自動發送設定"
+                        : "範本群發"}
+                </h2>
                 <button
                   type="button"
-                  onClick={selectAllFilteredRecipients}
-                  className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-brand-ink"
+                  onClick={() => setActiveLineTool(null)}
+                  className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-brand-ink"
                 >
-                  全選目前名單
-                </button>
-                <button
-                  type="button"
-                  onClick={clearSelectedRecipients}
-                  className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-brand-ink"
-                >
-                  清除選擇
-                </button>
-                <button
-                  type="button"
-                  onClick={sendInstantLineMessage}
-                  disabled={isInstantSending}
-                  className="rounded-full bg-brand-forest px-5 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-400"
-                >
-                  {isInstantSending ? "即時發送中" : "即時發送 LINE 群發"}
+                  收合視窗
                 </button>
               </div>
-              <p className="text-xs text-slate-500">
-                已選 {selectedRecipients.length} 位；可即時發送 {sendableRecipients.length} 位。
-                {missingLineIdCount > 0 ? ` ${missingLineIdCount} 位缺 LINE userId 會略過。` : ""}
-              </p>
-            </div>
-          </Panel>
-
-          <Panel title="LINE 自動發送設定">
-            <div className="space-y-3 text-sm">
-              {[
-                {
-                  key: "doctorLeaveAutoBroadcast" as const,
-                  title: "醫師請假時自動發",
-                  detail: "核准或建立醫師請假後，可依選定家屬發出公告。"
-                },
-                {
-                  key: "doctorArrivalReminder" as const,
-                  title: "醫師抵達前提醒",
-                  detail: "醫師離開前一站後，自動提醒下一站家屬準備。"
-                },
-                {
-                  key: "afterReturnCare" as const,
-                  title: "結束後關心",
-                  detail: "訪視完成後發送照護提醒與回覆入口。"
-                }
-              ].map((item) => (
-                <button
-                  key={item.key}
-                  type="button"
-                  onClick={() => toggleSetting(item.key)}
-                  className="flex w-full items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left"
-                >
-                  <span>
-                    <span className="block font-semibold text-brand-ink">{item.title}</span>
-                    <span className="mt-1 block text-xs text-slate-500">{item.detail}</span>
-                  </span>
-                  <span
-                    className={`shrink-0 rounded-full px-3 py-1 text-xs font-semibold ${
-                      settings[item.key]
-                        ? "bg-emerald-100 text-emerald-700"
-                        : "bg-slate-100 text-slate-500"
-                    }`}
-                  >
-                    {settings[item.key] ? "啟用" : "停用"}
-                  </span>
-                </button>
-              ))}
-            </div>
-          </Panel>
-
-          <Panel title="範本群發">
-            <div className="space-y-3 text-sm">
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
-                <p className="font-semibold text-brand-ink">本次發送項目</p>
-                <div className="mt-2 grid gap-2 md:grid-cols-2">
-                  {(Object.keys(templateLabels) as FamilyLineTemplateKey[]).map((templateKey) => (
-                    <label
-                      key={templateKey}
-                      className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-3 py-2"
-                    >
-                      <span className="flex min-w-0 items-center gap-2">
-                        <input
-                          type="checkbox"
-                          aria-label={`${templateLabels[templateKey]} 本次發送勾選`}
-                          checked={selectedSendTypes.includes(templateKey)}
-                          onChange={() => toggleSendType(templateKey)}
-                          className="h-4 w-4"
-                        />
-                        <span className="min-w-0 break-words">{templateLabels[templateKey]}</span>
-                      </span>
+              <div className="p-4">
+                {activeLineTool === "instant" ? (
+                  <div className="space-y-3 text-sm">
+                    <label className="block">
+                      <span className="mb-1 block font-medium text-brand-ink">即時群發標題</span>
+                      <input
+                        aria-label="即時群發標題"
+                        value={instantMessageDraft.subject}
+                        onChange={(event) =>
+                          setInstantMessageDraft((current) => ({
+                            ...current,
+                            subject: event.target.value
+                          }))
+                        }
+                        className="w-full rounded-2xl border border-slate-200 px-4 py-3"
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="mb-1 block font-medium text-brand-ink">即時群發內容</span>
+                      <textarea
+                        aria-label="即時群發內容"
+                        value={instantMessageDraft.content}
+                        onChange={(event) =>
+                          setInstantMessageDraft((current) => ({
+                            ...current,
+                            content: event.target.value
+                          }))
+                        }
+                        rows={6}
+                        placeholder="輸入要立刻推播給所選 LINE 家屬的訊息"
+                        className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
+                      />
+                    </label>
+                    <div className="flex flex-wrap items-center gap-2">
                       <button
                         type="button"
-                        onClick={() => setSelectedTemplate(templateKey)}
-                        className="shrink-0 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-brand-ink"
+                        onClick={selectAllFilteredRecipients}
+                        className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-brand-ink"
                       >
-                        編輯範本
+                        全選目前名單
                       </button>
+                      <button
+                        type="button"
+                        onClick={clearSelectedRecipients}
+                        className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-brand-ink"
+                      >
+                        清除選擇
+                      </button>
+                      <button
+                        type="button"
+                        onClick={sendInstantLineMessage}
+                        disabled={isInstantSending}
+                        className="rounded-full bg-brand-forest px-5 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-400"
+                      >
+                        {isInstantSending ? "即時發送中" : "即時發送 LINE 群發"}
+                      </button>
+                    </div>
+                    <p className="text-xs text-slate-500">
+                      已選 {selectedRecipients.length} 位；可即時發送 {sendableRecipients.length} 位。
+                      {missingLineIdCount > 0 ? ` ${missingLineIdCount} 位缺 LINE userId 會略過。` : ""}
+                    </p>
+                  </div>
+                ) : activeLineTool === "single" ? (
+                  <div className="space-y-3 text-sm">
+                    <label className="block">
+                      <span className="mb-1 block font-medium text-brand-ink">單獨發訊息收件人</span>
+                      <select
+                        aria-label="單獨發訊息收件人"
+                        value={selectedSingleRecipientId}
+                        onChange={(event) => setSelectedSingleRecipientId(event.target.value)}
+                        className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
+                      >
+                        {filteredRecipients.length === 0 ? (
+                          <option value="">目前沒有可選 LINE 好友</option>
+                        ) : null}
+                        {filteredRecipients.map((recipient) => {
+                          const linkedPatientNames = recipient.linkedPatients
+                            .map((patient) => maskPatientName(patient.name))
+                            .join("、");
+                          return (
+                            <option key={recipient.id} value={recipient.id}>
+                              {recipient.displayName}
+                              {linkedPatientNames ? `｜${linkedPatientNames}` : ""}
+                            </option>
+                          );
+                        })}
+                      </select>
                     </label>
-                  ))}
-                </div>
-              </div>
-
-              <div className="grid gap-3 md:grid-cols-2">
-                <label className="block">
-                  <span className="mb-1 block font-medium text-brand-ink">目前編輯範本</span>
-                  <select
-                    aria-label="目前編輯範本"
-                    value={selectedTemplate}
-                    onChange={(event) => setSelectedTemplate(event.target.value as FamilyLineTemplateKey)}
-                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
-                  >
-                    {Object.entries(templateLabels).map(([key, label]) => (
-                      <option key={key} value={key}>
-                        {label}
-                      </option>
+                    <label className="block">
+                      <span className="mb-1 block font-medium text-brand-ink">單獨訊息標題</span>
+                      <input
+                        aria-label="單獨訊息標題"
+                        value={singleMessageDraft.subject}
+                        onChange={(event) =>
+                          setSingleMessageDraft((current) => ({
+                            ...current,
+                            subject: event.target.value
+                          }))
+                        }
+                        className="w-full rounded-2xl border border-slate-200 px-4 py-3"
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="mb-1 block font-medium text-brand-ink">單獨訊息內容</span>
+                      <textarea
+                        aria-label="單獨訊息內容"
+                        value={singleMessageDraft.content}
+                        onChange={(event) =>
+                          setSingleMessageDraft((current) => ({
+                            ...current,
+                            content: event.target.value
+                          }))
+                        }
+                        rows={6}
+                        placeholder="輸入要傳給單一 LINE 家屬的訊息"
+                        className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
+                      />
+                    </label>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={sendSingleLineMessage}
+                        disabled={isSingleSending}
+                        className="rounded-full bg-brand-forest px-5 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-400"
+                      >
+                        {isSingleSending ? "單獨發送中" : "送出單獨 LINE 訊息"}
+                      </button>
+                    </div>
+                    <p className="text-xs text-slate-500">
+                      {selectedSingleRecipient
+                        ? `本次只會發送給 ${selectedSingleRecipient.displayName}。`
+                        : "請先建立或篩選出可發送的 LINE 好友。"}
+                    </p>
+                  </div>
+                ) : activeLineTool === "automation" ? (
+                  <div className="space-y-3 text-sm">
+                    {[
+                      {
+                        key: "doctorLeaveAutoBroadcast" as const,
+                        title: "醫師請假時自動發",
+                        detail: "核准或建立醫師請假後，可依選定家屬發出公告。"
+                      },
+                      {
+                        key: "doctorArrivalReminder" as const,
+                        title: "醫師抵達前提醒",
+                        detail: "醫師離開前一站後，自動提醒下一站家屬準備。"
+                      },
+                      {
+                        key: "afterReturnCare" as const,
+                        title: "結束後關心",
+                        detail: "訪視完成後發送照護提醒與回覆入口。"
+                      }
+                    ].map((item) => (
+                      <button
+                        key={item.key}
+                        type="button"
+                        onClick={() => toggleSetting(item.key)}
+                        className="flex w-full items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left"
+                      >
+                        <span>
+                          <span className="block font-semibold text-brand-ink">{item.title}</span>
+                          <span className="mt-1 block text-xs text-slate-500">{item.detail}</span>
+                        </span>
+                        <span
+                          className={`shrink-0 rounded-full px-3 py-1 text-xs font-semibold ${
+                            settings[item.key]
+                              ? "bg-emerald-100 text-emerald-700"
+                              : "bg-slate-100 text-slate-500"
+                          }`}
+                        >
+                          {settings[item.key] ? "啟用" : "停用"}
+                        </span>
+                      </button>
                     ))}
-                  </select>
-                </label>
-                <label className="block">
-                  <span className="mb-1 block font-medium text-brand-ink">範本套用醫師</span>
-                  <select
-                    aria-label="範本套用醫師"
-                    value={selectedDoctorId}
-                    onChange={(event) => setSelectedDoctorId(event.target.value)}
-                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
-                  >
-                    <option value="all">全部醫師</option>
-                    {db.doctors.map((doctor) => (
-                      <option key={doctor.id} value={doctor.id}>
-                        {doctor.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                  </div>
+                ) : (
+                  <div className="space-y-3 text-sm">
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                      <p className="font-semibold text-brand-ink">本次發送項目</p>
+                      <div className="mt-2 grid gap-2 md:grid-cols-2">
+                        {(Object.keys(templateLabels) as FamilyLineTemplateKey[]).map((templateKey) => (
+                          <label
+                            key={templateKey}
+                            className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-3 py-2"
+                          >
+                            <span className="flex min-w-0 items-center gap-2">
+                              <input
+                                type="checkbox"
+                                aria-label={`${templateLabels[templateKey]} 本次發送勾選`}
+                                checked={selectedSendTypes.includes(templateKey)}
+                                onChange={() => toggleSendType(templateKey)}
+                                className="h-4 w-4"
+                              />
+                              <span className="min-w-0 break-words">{templateLabels[templateKey]}</span>
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setSelectedTemplate(templateKey)}
+                              className="shrink-0 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-brand-ink"
+                            >
+                              編輯範本
+                            </button>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <label className="block">
+                        <span className="mb-1 block font-medium text-brand-ink">目前編輯範本</span>
+                        <select
+                          aria-label="目前編輯範本"
+                          value={selectedTemplate}
+                          onChange={(event) => setSelectedTemplate(event.target.value as FamilyLineTemplateKey)}
+                          className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
+                        >
+                          {Object.entries(templateLabels).map(([key, label]) => (
+                            <option key={key} value={key}>
+                              {label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="block">
+                        <span className="mb-1 block font-medium text-brand-ink">範本套用醫師</span>
+                        <select
+                          aria-label="範本套用醫師"
+                          value={selectedDoctorId}
+                          onChange={(event) => setSelectedDoctorId(event.target.value)}
+                          className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
+                        >
+                          <option value="all">全部醫師</option>
+                          {db.doctors.map((doctor) => (
+                            <option key={doctor.id} value={doctor.id}>
+                              {doctor.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+
+                    <label className="block">
+                      <span className="mb-1 block font-medium text-brand-ink">範本標題</span>
+                      <input
+                        aria-label="範本標題"
+                        value={selectedTemplateDraft.subject}
+                        onChange={(event) => updateTemplateDraft({ subject: event.target.value })}
+                        className="w-full rounded-2xl border border-slate-200 px-4 py-3"
+                      />
+                    </label>
+
+                    <label className="block">
+                      <span className="mb-1 block font-medium text-brand-ink">範本內容</span>
+                      <textarea
+                        aria-label="範本內容"
+                        value={selectedTemplateDraft.content}
+                        onChange={(event) => updateTemplateDraft({ content: event.target.value })}
+                        rows={5}
+                        className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
+                      />
+                    </label>
+                    <div className="rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+                      <p className="font-semibold">本次預覽</p>
+                      <p className="mt-1 whitespace-pre-wrap">{templateContent.content || "尚未填寫內容。"}</p>
+                    </div>
+
+                    <label className="flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                      <input
+                        type="checkbox"
+                        aria-label="確認本次 LINE 發送"
+                        checked={isSendConfirmed}
+                        onChange={(event) => setIsSendConfirmed(event.target.checked)}
+                        className="mt-1 h-4 w-4"
+                      />
+                      <span>
+                        我已確認本次勾選項目、範本內容與發送人員，送出後會透過 LINE 推播給可發送的家屬。
+                      </span>
+                    </label>
+
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={selectAllFilteredRecipients}
+                        className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-brand-ink"
+                      >
+                        全選目前名單
+                      </button>
+                      <button
+                        type="button"
+                        onClick={clearSelectedRecipients}
+                        className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-brand-ink"
+                      >
+                        清除選擇
+                      </button>
+                      <button
+                        type="button"
+                        onClick={sendLineMessages}
+                        disabled={isSending}
+                        className="rounded-full bg-brand-forest px-5 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-400"
+                      >
+                        {isSending ? "發送中" : "送出 LINE 群發"}
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
-
-              <label className="block">
-                <span className="mb-1 block font-medium text-brand-ink">範本標題</span>
-                <input
-                  aria-label="範本標題"
-                  value={selectedTemplateDraft.subject}
-                  onChange={(event) => updateTemplateDraft({ subject: event.target.value })}
-                  className="w-full rounded-2xl border border-slate-200 px-4 py-3"
-                />
-              </label>
-
-              <label className="block">
-                <span className="mb-1 block font-medium text-brand-ink">範本內容</span>
-                <textarea
-                  aria-label="範本內容"
-                  value={selectedTemplateDraft.content}
-                  onChange={(event) => updateTemplateDraft({ content: event.target.value })}
-                  rows={5}
-                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
-                />
-              </label>
-              <div className="rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
-                <p className="font-semibold">本次預覽</p>
-                <p className="mt-1 whitespace-pre-wrap">{templateContent.content || "尚未填寫內容。"}</p>
-              </div>
-
-              <label className="flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                <input
-                  type="checkbox"
-                  aria-label="確認本次 LINE 發送"
-                  checked={isSendConfirmed}
-                  onChange={(event) => setIsSendConfirmed(event.target.checked)}
-                  className="mt-1 h-4 w-4"
-                />
-                <span>
-                  我已確認本次勾選項目、範本內容與發送人員，送出後會透過 LINE 推播給可發送的家屬。
-                </span>
-              </label>
-
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={selectAllFilteredRecipients}
-                  className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-brand-ink"
-                >
-                  全選目前名單
-                </button>
-                <button
-                  type="button"
-                  onClick={clearSelectedRecipients}
-                  className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-brand-ink"
-                >
-                  清除選擇
-                </button>
-                <button
-                  type="button"
-                  onClick={sendLineMessages}
-                  disabled={isSending}
-                  className="rounded-full bg-brand-forest px-5 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-400"
-                >
-                  {isSending ? "發送中" : "送出 LINE 群發"}
-                </button>
-              </div>
-            </div>
-          </Panel>
+            </section>
+          ) : null}
         </div>
 
-        <div className="space-y-4 xl:sticky xl:top-4">
+        <div className="space-y-4">
           <Panel title="個案關聯操作">
             <div className="space-y-3 text-sm">
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-600">
-                名單來源為 LINE webhook；家屬加入官方帳號並傳送訊息後，按下重新整理即可帶入右側名單。
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                  <p className="text-xs text-slate-500">關聯操作名單</p>
+                  <p className="mt-1 text-xl font-semibold text-brand-ink">{selectedManagedContactIds.length}</p>
+                </div>
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                  <p className="text-xs text-slate-500">目前顯示好友</p>
+                  <p className="mt-1 text-xl font-semibold text-brand-ink">{visibleManagedLineContacts.length}</p>
+                </div>
               </div>
               <div className="flex flex-wrap gap-2">
                 <button
@@ -1132,12 +1494,12 @@ export function AdminFamilyLinePage() {
                 </button>
               </div>
               <p className="text-xs text-slate-500">
-                已選 {selectedManagedContactIds.length} 位 LINE 好友；右側名單可同時勾選發送對象與關聯對象。
+                先在下方名單按「顯示詳細」勾選好友，再於此處關聯或取消關聯個案。
               </p>
             </div>
           </Panel>
 
-          <Panel title="LINE 名單與個案關聯">
+          <Panel title="LINE 好友名單">
             <div className="space-y-3">
               <div className="grid gap-3 md:grid-cols-[1fr_auto_auto] md:items-end">
                 <label className="block text-sm">
@@ -1171,20 +1533,54 @@ export function AdminFamilyLinePage() {
                   清除選擇
                 </button>
               </div>
+              {focusedPatientId ? (
+                <div className="space-y-2 rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+                  <p>
+                    目前只顯示
+                    {focusedPatient ? ` ${maskPatientName(focusedPatient.name)} ` : "此個案"}
+                    已關聯的 LINE 好友名單。
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setShowAllContactsForFocusedPatient((current) => !current)}
+                    className="rounded-full border border-emerald-200 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-700"
+                  >
+                    {showAllContactsForFocusedPatient ? "只看此個案關聯好友" : "顯示全部 LINE 好友以新增關聯"}
+                  </button>
+                </div>
+              ) : null}
 
               {managedLineContacts.length === 0 ? (
                 <div className="rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-8 text-center text-sm text-slate-500">
                   目前尚未收到 LINE 好友互動；請家屬加入官方帳號並傳送任一訊息後，再按「重新整理 LINE 好友名單」。
                 </div>
               ) : visibleManagedLineContacts.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-8 text-center text-sm text-slate-500">
-                  目前篩選醫師沒有可發送的 LINE 好友。請確認右上方個案關聯是否已連到該醫師的居家個案。
+                <div className="space-y-3 rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-8 text-center text-sm text-slate-500">
+                  <p>
+                    {focusedPatientId
+                      ? "目前此個案尚未關聯 LINE 好友。請先顯示全部好友，再勾選要關聯的名單。"
+                      : "目前篩選醫師沒有可發送的 LINE 好友。請確認右上方個案關聯是否已連到該醫師的居家個案。"}
+                  </p>
+                  {focusedPatientId ? (
+                    <button
+                      type="button"
+                      onClick={() => setShowAllContactsForFocusedPatient(true)}
+                      className="rounded-full border border-emerald-200 bg-white px-4 py-2 text-xs font-semibold text-emerald-700"
+                    >
+                      顯示全部 LINE 好友以新增關聯
+                    </button>
+                  ) : null}
                 </div>
               ) : (
                 <div className="space-y-3">
                   {visibleManagedLineContacts.map((contact) => {
                     const recipient = filteredRecipientByContactId.get(contact.id);
                     const isSendSelected = recipient ? selectedRecipientIds.includes(recipient.id) : false;
+                    const isDetailExpanded = expandedManagedContactIds.includes(contact.id);
+                    const recentSchedule = recipient ? resolveRecipientSchedule(recipient) : null;
+                    const recentSchedulePatient = recentSchedule
+                      ? db.patients.find((patient) => patient.id === recentSchedule.patient_id)
+                      : undefined;
                     const linkedNames = contact.linkedPatientIds
                       .map((patientId) => db.patients.find((patient) => patient.id === patientId))
                       .filter((patient): patient is Patient => Boolean(patient))
@@ -1197,67 +1593,100 @@ export function AdminFamilyLinePage() {
                         }`}
                       >
                         <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0 space-y-2">
-                            <label className="flex min-w-0 items-start gap-3">
-                              <input
-                                type="checkbox"
-                                aria-label={`${contact.displayName} 發送勾選`}
-                                checked={isSendSelected}
-                                disabled={!recipient}
-                                onChange={() => {
-                                  if (recipient) {
-                                    toggleRecipient(recipient.id);
-                                  }
-                                }}
-                                className="mt-1 h-4 w-4 disabled:opacity-40"
-                              />
-                              <span className="min-w-0">
-                                <span className="block font-semibold text-brand-ink">{contact.displayName}</span>
-                                <span className="mt-1 block text-xs text-slate-500">
+                          <div className="min-w-0">
+                            <p className="break-words font-semibold text-brand-ink">{contact.displayName}</p>
+                            <p className="mt-1 break-words text-sm text-slate-600">
+                              關聯個案：{linkedNames.length ? linkedNames.join("、") : "尚未關聯"}
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => toggleManagedContactDetail(contact.id)}
+                            aria-expanded={isDetailExpanded}
+                            className="shrink-0 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-brand-ink"
+                          >
+                            {isDetailExpanded ? "收合詳細" : "顯示詳細"}
+                          </button>
+                        </div>
+
+                        {isDetailExpanded ? (
+                          <div className="mt-4 border-l-2 border-slate-200 pl-4">
+                            <div className="space-y-3 rounded-2xl bg-slate-50 px-4 py-3">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <Badge
+                                  value={contact.source === "official_friend" ? "官方好友" : "Webhook 收到"}
+                                  compact
+                                />
+                                <span className="text-xs text-slate-500">
                                   發送對象：{recipient ? resolveRecipientLineStatus(recipient.lineUserId) : "不符合目前醫師篩選"}
                                 </span>
-                              </span>
-                            </label>
-                            <label className="flex min-w-0 items-start gap-3">
-                              <input
-                                type="checkbox"
-                                aria-label={`${contact.displayName} 批次關聯勾選`}
-                                checked={selectedManagedContactIds.includes(contact.id)}
-                                onChange={() => toggleManagedContactSelection(contact.id)}
-                                className="mt-1 h-4 w-4"
-                              />
-                              <span className="min-w-0 text-xs text-slate-600">選入右上方個案關聯操作</span>
-                            </label>
+                              </div>
+
+                              <div className="grid gap-3 md:grid-cols-2">
+                                <label className="flex min-w-0 items-start gap-3 rounded-2xl border border-slate-200 bg-white px-3 py-2">
+                                  <input
+                                    type="checkbox"
+                                    aria-label={`${contact.displayName} 發送勾選`}
+                                    checked={isSendSelected}
+                                    disabled={!recipient}
+                                    onChange={() => {
+                                      if (recipient) {
+                                        toggleRecipient(recipient.id);
+                                      }
+                                    }}
+                                    className="mt-1 h-4 w-4 disabled:opacity-40"
+                                  />
+                                  <span className="min-w-0 text-xs text-slate-600">
+                                    選入左側群發收件人
+                                  </span>
+                                </label>
+                                <label className="flex min-w-0 items-start gap-3 rounded-2xl border border-slate-200 bg-white px-3 py-2">
+                                  <input
+                                    type="checkbox"
+                                    aria-label={`${contact.displayName} 批次關聯勾選`}
+                                    checked={selectedManagedContactIds.includes(contact.id)}
+                                    onChange={() => toggleManagedContactSelection(contact.id)}
+                                    className="mt-1 h-4 w-4"
+                                  />
+                                  <span className="min-w-0 text-xs text-slate-600">
+                                    選入右上方個案關聯操作
+                                  </span>
+                                </label>
+                              </div>
+
+                              <div className="space-y-1 text-xs text-slate-500">
+                                <p>
+                                  關聯醫師：{recipient?.linkedDoctors.length
+                                    ? recipient.linkedDoctors.map((doctor) => doctor.name).join("、")
+                                    : "未指定醫師"}
+                                </p>
+                                <p>
+                                  最近排程：{recentSchedule
+                                    ? `${formatDateTimeFull(recentSchedule.scheduled_start_at)}${
+                                        recentSchedulePatient
+                                          ? ` / ${maskPatientName(recentSchedulePatient.name)}`
+                                          : ""
+                                      }`
+                                    : "尚無排程"}
+                                </p>
+                              </div>
+
+                              <div className="break-all rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-xs text-slate-700">
+                                {contact.lineUserId}
+                              </div>
+                              <label className="block">
+                                <span className="mb-1 block text-xs font-medium text-brand-ink">好友註記</span>
+                                <input
+                                  aria-label={`${contact.displayName} 好友註記`}
+                                  value={contact.note}
+                                  onChange={(event) => updateManagedContactNote(contact.id, event.target.value)}
+                                  placeholder="例如：主要照顧者、可接收公告"
+                                  className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm"
+                                />
+                              </label>
+                            </div>
                           </div>
-                          <Badge
-                            value={contact.source === "official_friend" ? "官方好友" : "Webhook 收到"}
-                            compact
-                          />
-                        </div>
-                        <p className="mt-3 text-slate-600">
-                          關聯個案：{linkedNames.length ? linkedNames.join("、") : "尚未關聯"}
-                        </p>
-                        <p className="mt-1 text-xs text-slate-500">
-                          關聯醫師：{recipient?.linkedDoctors.length
-                            ? recipient.linkedDoctors.map((doctor) => doctor.name).join("、")
-                            : "未指定醫師"}
-                        </p>
-                        <p className="mt-1 text-xs text-slate-500">
-                          最近排程：{recipient?.schedule ? formatDateTimeFull(recipient.schedule.scheduled_start_at) : "尚無排程"}
-                        </p>
-                        <div className="mt-3 break-all rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-xs text-slate-700">
-                          {contact.lineUserId}
-                        </div>
-                        <label className="mt-3 block">
-                          <span className="mb-1 block text-xs font-medium text-brand-ink">好友註記</span>
-                          <input
-                            aria-label={`${contact.displayName} 好友註記`}
-                            value={contact.note}
-                            onChange={(event) => updateManagedContactNote(contact.id, event.target.value)}
-                            placeholder="例如：主要照顧者、可接收公告"
-                            className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm"
-                          />
-                        </label>
+                        ) : null}
                       </div>
                     );
                   })}
