@@ -22,6 +22,26 @@ export function VisitAutomationPanel({ detail, compact = false }: VisitAutomatio
   );
   const latestSample = runtime?.latestSample;
   const arrivalReady = shouldPromptArrival(detail.schedule, runtime);
+  const navigationDestinationAddress = detail.schedule.address_snapshot || detail.patient.home_address;
+  const navigationDestinationKeyword = detail.schedule.location_keyword_snapshot || detail.patient.location_keyword;
+  const navigationUrl = services.maps.buildNavigationUrl({
+    destinationAddress: navigationDestinationAddress,
+    destinationKeyword: navigationDestinationKeyword,
+    destinationLatitude: detail.schedule.home_latitude_snapshot,
+    destinationLongitude: detail.schedule.home_longitude_snapshot,
+    originLatitude: latestSample?.latitude ?? null,
+    originLongitude: latestSample?.longitude ?? null,
+    navigationTarget: "web"
+  });
+  const navigationEmbedUrl = services.maps.buildNavigationEmbedUrl({
+    destinationAddress: navigationDestinationAddress,
+    destinationKeyword: navigationDestinationKeyword,
+    destinationLatitude: detail.schedule.home_latitude_snapshot,
+    destinationLongitude: detail.schedule.home_longitude_snapshot,
+    originLatitude: latestSample?.latitude ?? null,
+    originLongitude: latestSample?.longitude ?? null
+  });
+  const canManuallyConfirmArrival = Boolean(detail.record?.departure_time) && !detail.record?.arrival_time;
   const travelDurationMinutes =
     detail.record?.departure_time && detail.record?.arrival_time
       ? Math.max(
@@ -175,6 +195,53 @@ export function VisitAutomationPanel({ detail, compact = false }: VisitAutomatio
           {runtime.fallbackMessage}
         </div>
       ) : null}
+
+      <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 px-4 py-3 lg:px-5">
+          <div>
+            <p className="text-xs font-semibold tracking-[0.18em] text-brand-coral">內嵌導航介面</p>
+            <p className="mt-1 text-base font-semibold text-brand-ink">前往 {navigationDestinationAddress}</p>
+            <p className="mt-1 text-xs text-slate-500">
+              醫師可在本頁查看路線，抵達後直接按「已抵達」回寫狀態。
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <a
+              href={navigationUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex min-h-[44px] items-center justify-center rounded-full bg-brand-forest px-4 py-2 text-sm font-semibold text-white"
+            >
+              啟動 Google Maps 導航
+            </a>
+            <button
+              type="button"
+              onClick={handleConfirmArrival}
+              disabled={!canManuallyConfirmArrival}
+              className="inline-flex min-h-[44px] items-center justify-center rounded-full bg-brand-coral px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-300"
+            >
+              已抵達
+            </button>
+          </div>
+        </div>
+        {navigationEmbedUrl ? (
+          <iframe
+            title={`${navigationDestinationAddress} 內嵌導航`}
+            src={navigationEmbedUrl}
+            loading="lazy"
+            referrerPolicy="no-referrer-when-downgrade"
+            className="h-[420px] w-full border-0 lg:h-[520px]"
+            allowFullScreen
+          />
+        ) : (
+          <div className="bg-slate-50 px-4 py-5 text-sm text-slate-600 lg:px-5">
+            <p className="font-semibold text-brand-ink">尚未取得可嵌入的起點座標</p>
+            <p className="mt-2 leading-6">
+              請先按「出發」或「恢復」讓系統取得醫師定位；若現場網路或瀏覽器定位受限，仍可按「啟動 Google Maps 導航」開啟實際導航。抵達後可直接按「已抵達」回寫紀錄。
+            </p>
+          </div>
+        )}
+      </div>
 
       {!compact ? (
         <LocationSummaryCard
