@@ -1,7 +1,7 @@
 import {
   formatGoogleDriveApiError,
   resolveGoogleDriveAccessToken
-} from "../../_lib/google-drive-auth.js";
+} from "../_lib/google-drive-auth.js";
 
 function setJson(response, statusCode, payload) {
   response.status(statusCode).setHeader("Content-Type", "application/json");

@@ -2,19 +2,15 @@ import {
   ensureTeamCommunicationTable,
   query,
   validateRequiredString
-} from "../_lib/team-communications.js";
+} from "./_lib/team-communications.js";
 
 function setJson(response, statusCode, payload) {
   response.status(statusCode).setHeader("Content-Type", "application/json");
   response.send(JSON.stringify(payload));
 }
 
-function resolvePathSegments(request) {
-  const path = request.query?.path;
-  if (Array.isArray(path)) {
-    return path.map((segment) => String(segment));
-  }
-  return typeof path === "string" ? [path] : [];
+function resolveQueryValue(value) {
+  return Array.isArray(value) ? value[0] : value;
 }
 
 async function ensureTableOrFail(response) {
@@ -102,13 +98,14 @@ async function getUnreadCount(request, response) {
   });
 }
 
-async function markMessageRead(request, response, id) {
+async function markMessageRead(request, response) {
   if (request.method !== "PATCH") {
     response.setHeader("Allow", "PATCH");
     setJson(response, 405, { error: "Method Not Allowed" });
     return;
   }
 
+  const id = String(resolveQueryValue(request.query?.id) ?? "").trim();
   const { viewerRole, viewerUserId } = request.body ?? {};
   if (!validateRequiredString(id) || !validateRequiredString(viewerRole) || !validateRequiredString(viewerUserId)) {
     setJson(response, 400, { error: "缺少已讀標記必要資料。" });
@@ -133,22 +130,22 @@ async function markMessageRead(request, response, id) {
 }
 
 export default async function handler(request, response) {
-  const pathSegments = resolvePathSegments(request);
+  const action = String(resolveQueryValue(request.query?.action) ?? "").trim();
   const tableReady = await ensureTableOrFail(response);
   if (!tableReady) {
     return;
   }
 
-  if (pathSegments.length === 1 && pathSegments[0] === "read") {
+  if (action === "read") {
     await markConversationRead(request, response);
     return;
   }
-  if (pathSegments.length === 1 && pathSegments[0] === "unread-count") {
+  if (action === "unread-count") {
     await getUnreadCount(request, response);
     return;
   }
-  if (pathSegments.length === 2 && pathSegments[1] === "read") {
-    await markMessageRead(request, response, pathSegments[0]);
+  if (action === "message-read") {
+    await markMessageRead(request, response);
     return;
   }
 

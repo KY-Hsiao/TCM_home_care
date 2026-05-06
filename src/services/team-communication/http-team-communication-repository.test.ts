@@ -45,7 +45,7 @@ describe("httpTeamCommunicationRepository", () => {
     });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/team-communications/unread-count?role=doctor&userId=doc-001&doctorId=doc-001&adminUserId=admin-001",
+      "/api/team-communications-action?action=unread-count&role=doctor&userId=doc-001&doctorId=doc-001&adminUserId=admin-001",
       {
         cache: "no-store"
       }
@@ -62,7 +62,7 @@ describe("httpTeamCommunicationRepository", () => {
 
     await repository.markMessageRead("msg-001", "admin", "admin-001");
 
-    expect(fetchMock).toHaveBeenCalledWith("/api/team-communications/msg-001/read", {
+    expect(fetchMock).toHaveBeenCalledWith("/api/team-communications-action?action=message-read&id=msg-001", {
       method: "PATCH",
       headers: {
         "Content-Type": "application/json"
@@ -89,7 +89,7 @@ describe("httpTeamCommunicationRepository", () => {
       viewerUserId: "doc-001"
     });
 
-    expect(fetchMock).toHaveBeenCalledWith("/api/team-communications/read", {
+    expect(fetchMock).toHaveBeenCalledWith("/api/team-communications-action?action=read", {
       method: "PATCH",
       headers: {
         "Content-Type": "application/json"

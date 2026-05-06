@@ -335,9 +335,9 @@ describe("DoctorReturnRecordPage", () => {
     expect(screen.getByRole("checkbox", { name: "中藥" })).toBeChecked();
     expect(screen.getByLabelText("中藥處置內容")).toHaveValue("補陽還五湯 7 日份");
     expect(screen.getByText(/已從 Google Drive 載入/)).toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledWith("/api/admin/google-drive/records");
+    expect(fetchMock).toHaveBeenCalledWith("/api/admin/google-drive?action=records");
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/admin/google-drive/records?fileId=drive-file-1"
+      "/api/admin/google-drive?action=records&fileId=drive-file-1"
     );
   });
 

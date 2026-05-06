@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import handler from "./[resource].js";
+import handler from "./system.js";
 
 function createResponse() {
   return {

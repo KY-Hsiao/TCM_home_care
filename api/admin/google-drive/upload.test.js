@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import handler from "./[action].js";
+import handler from "../google-drive.js";
 
 function createResponse() {
   return {

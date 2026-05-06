@@ -44,7 +44,7 @@ export function createHttpTeamCommunicationRepository(): TeamCommunicationReposi
       if (query.readAfter) {
         params.set("readAfter", query.readAfter);
       }
-      const response = await fetch(`/api/team-communications/unread-count?${params.toString()}`, {
+      const response = await fetch(`/api/team-communications-action?action=unread-count&${params.toString()}`, {
         cache: "no-store"
       });
       const payload = (await readJsonOrThrow(response)) as { count: number };
@@ -62,7 +62,7 @@ export function createHttpTeamCommunicationRepository(): TeamCommunicationReposi
       return payload.item;
     },
     async markConversationRead(query: TeamCommunicationConversationQuery) {
-      const response = await fetch("/api/team-communications/read", {
+      const response = await fetch("/api/team-communications-action?action=read", {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json"
@@ -72,7 +72,9 @@ export function createHttpTeamCommunicationRepository(): TeamCommunicationReposi
       await readJsonOrThrow(response);
     },
     async markMessageRead(messageId: string, viewerRole: TeamCommunicationRole, viewerUserId: string) {
-      const response = await fetch(`/api/team-communications/${messageId}/read`, {
+      const response = await fetch(
+        `/api/team-communications-action?action=message-read&id=${encodeURIComponent(messageId)}`,
+        {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json"
@@ -81,7 +83,8 @@ export function createHttpTeamCommunicationRepository(): TeamCommunicationReposi
           viewerRole,
           viewerUserId
         })
-      });
+        }
+      );
       await readJsonOrThrow(response);
     }
   };

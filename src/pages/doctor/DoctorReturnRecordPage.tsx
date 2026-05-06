@@ -839,7 +839,7 @@ async function uploadHtmlToGoogleDrive(input: {
   filename: string;
   html: string;
 }) {
-  const response = await fetch("/api/admin/google-drive/upload", {
+  const response = await fetch("/api/admin/google-drive?action=upload", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input)
@@ -863,7 +863,7 @@ async function uploadHtmlToGoogleDrive(input: {
 }
 
 async function fetchGoogleDriveRecordFiles() {
-  const response = await fetch("/api/admin/google-drive/records");
+  const response = await fetch("/api/admin/google-drive?action=records");
   const payload = (await response.json().catch(() => ({}))) as {
     files?: DriveReturnRecordFile[];
     error?: string;
@@ -876,7 +876,7 @@ async function fetchGoogleDriveRecordFiles() {
 
 async function fetchGoogleDriveRecordHtml(fileId: string) {
   const response = await fetch(
-    `/api/admin/google-drive/records?fileId=${encodeURIComponent(fileId)}`
+    `/api/admin/google-drive?action=records&fileId=${encodeURIComponent(fileId)}`
   );
   const payload = (await response.json().catch(() => ({}))) as {
     file?: DriveReturnRecordFile;

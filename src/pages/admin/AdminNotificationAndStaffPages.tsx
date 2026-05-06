@@ -287,7 +287,7 @@ export function AdminStaffPage() {
     setIsLoadingEnvStatus(true);
     setSecretManagementMessage(null);
     try {
-      const response = await fetch("/api/admin/env-status", { cache: "no-store" });
+      const response = await fetch("/api/admin/system?resource=env-status", { cache: "no-store" });
       const payload = (await response.json().catch(() => null)) as EnvStatus | null;
       if (!response.ok || !payload?.variables) {
         throw new Error("環境變數狀態讀取失敗。");
@@ -329,7 +329,7 @@ export function AdminStaffPage() {
                 address: "旗山醫院"
               })
             })
-          : await fetch(`/api/admin/connection-test?service=${service}`, {
+          : await fetch(`/api/admin/system?resource=connection-test&service=${service}`, {
               cache: "no-store"
             });
       const payload = (await response.json().catch(() => ({}))) as {
