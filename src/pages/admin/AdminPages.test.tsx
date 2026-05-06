@@ -639,6 +639,21 @@ describe("AdminPages", () => {
     expect(routeLink.getAttribute("href")).not.toBe(initialHref);
   });
 
+  it("AdminSchedulesPage 可一鍵顛倒目前路線排序", () => {
+    renderWithProviders(<AdminSchedulesPage />);
+
+    selectScheduleFilters();
+
+    expectRouteStopLabel("第 1 站 王○珠");
+    expectRouteStopLabel("第 8 站 鄭○華");
+
+    fireEvent.click(screen.getByRole("button", { name: "排序顛倒" }));
+
+    expectRouteStopLabel("第 1 站 鄭○華");
+    expectRouteStopLabel("第 8 站 王○珠");
+    expect(screen.getByRole("status")).toHaveTextContent("已將目前路線排序顛倒");
+  });
+
   it("AdminSchedulesPage 可儲存路線、清除頁面，再完整還原醫師、日期、勾選狀態與排序", async () => {
     renderWithProviders(<AdminSchedulesPage />);
 

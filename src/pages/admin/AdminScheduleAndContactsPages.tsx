@@ -453,6 +453,13 @@ function reorderCheckedPlannerRows(rows: PlannerRow[], activePatientId: string, 
   return reindexPlannerRows([...nextCheckedRows, ...uncheckedRows]);
 }
 
+function reverseCheckedPlannerRows(rows: PlannerRow[]) {
+  const orderedRows = sortPlannerRows(rows);
+  const checkedRows = orderedRows.filter((row) => row.checked);
+  const uncheckedRows = orderedRows.filter((row) => !row.checked);
+  return reindexPlannerRows([...checkedRows.reverse(), ...uncheckedRows]);
+}
+
 function parseDoctorServiceSlot(slot: string) {
   const matchedWeekday = weekdayOptions.find((weekday) => slot.startsWith(weekday));
   const matchedTimeSlot = routeTimeSlotOptions.find((timeSlot) => slot.endsWith(timeSlot));
@@ -1960,6 +1967,16 @@ export function AdminSchedulesPage() {
     );
   };
 
+  const reversePlannerRows = () => {
+    if (checkedRows.length < 2) {
+      setRecentAction("至少要保留兩站以上，才需要排序顛倒。");
+      return;
+    }
+
+    setPlannerRows((current) => reverseCheckedPlannerRows(current));
+    setRecentAction("已將目前路線排序顛倒，並重新計算每段預估交通時間。");
+  };
+
   const handlePlannerRowDragStart = (patientId: string) => {
     setDraggingPlannerPatientId(patientId);
     setDragTargetPlannerPatientId(patientId);
@@ -2720,6 +2737,14 @@ export function AdminSchedulesPage() {
                     className="rounded-full border border-brand-forest/20 bg-white px-3 py-1.5 text-xs font-semibold text-brand-forest disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-400"
                   >
                     {isGeocodingPlannerRows ? "座標查詢中" : "自動排序"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={reversePlannerRows}
+                    disabled={checkedRows.length < 2 || isGeocodingPlannerRows}
+                    className="rounded-full border border-brand-forest/20 bg-white px-3 py-1.5 text-xs font-semibold text-brand-forest disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-400"
+                  >
+                    排序顛倒
                   </button>
                 </div>
               </div>
