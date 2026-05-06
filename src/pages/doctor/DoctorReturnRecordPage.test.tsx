@@ -270,7 +270,7 @@ describe("DoctorReturnRecordPage", () => {
     expect(screen.getByLabelText("提醒內容")).toHaveValue("請持續追蹤翻身與夜間痰聲變化");
   });
 
-  it("可從 Google Drive 歷史病歷檔選擇日期並載入目前個案內容", async () => {
+  it("會自動從 Google Drive 歷史病歷檔載入目前個案內容", async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce({
@@ -322,8 +322,6 @@ describe("DoctorReturnRecordPage", () => {
     });
     expect(screen.getByLabelText("選擇歷史病歷檔案")).toHaveValue("drive-file-1");
 
-    fireEvent.click(screen.getByRole("button", { name: "載入選定檔案" }));
-
     await waitFor(() => {
       expect(screen.getByLabelText("主訴")).toHaveValue("其他");
     });
@@ -332,7 +330,7 @@ describe("DoctorReturnRecordPage", () => {
     expect(screen.getByLabelText("聞 其他")).toHaveValue("夜間痰聲明顯");
     expect(screen.getByRole("checkbox", { name: "中藥" })).toBeChecked();
     expect(screen.getByLabelText("中藥處置內容")).toHaveValue("補陽還五湯 7 日份");
-    expect(screen.getByText(/已從 Google Drive 載入/)).toBeInTheDocument();
+    expect(screen.getByText(/已自動從 Google Drive 載入/)).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith("/api/admin/google-drive?action=records");
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/admin/google-drive?action=records&fileId=drive-file-1"

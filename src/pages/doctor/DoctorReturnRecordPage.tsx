@@ -898,9 +898,12 @@ async function fetchGoogleDriveRecordHtml(fileId: string) {
     file?: DriveReturnRecordFile;
     html?: string;
     error?: string;
+    reason?: string;
   };
   if (!response.ok) {
-    throw new Error(payload.error ?? `Google Drive 病歷檔讀取失敗：HTTP ${response.status}`);
+    const error = new Error(payload.error ?? `Google Drive 病歷檔讀取失敗：HTTP ${response.status}`);
+    error.name = payload.reason ?? `HTTP_${response.status}`;
+    throw error;
   }
   return {
     file: payload.file,
@@ -1144,7 +1147,7 @@ export function DoctorReturnRecordPage({
       : null
   );
 
-  const { control, getValues, handleSubmit, register, reset, setValue } =
+  const { control, formState, getValues, handleSubmit, register, reset, setValue } =
     useForm<ReturnRecordFormValues>({
       defaultValues: {
         route_key: defaultRouteKey,
@@ -1264,6 +1267,9 @@ export function DoctorReturnRecordPage({
     [repositories, selectedPatientId, selectedProfile, session.activeDoctorId]
   );
   const previousAutoDraftRef = useRef("");
+  const autoLoadedDriveRecordKeyRef = useRef("");
+  const formDirtyRef = useRef(false);
+  formDirtyRef.current = formState.isDirty;
   const previousRecordUpdatedAt = previousRecord?.updated_at ?? "";
   const selectedPatientMedicalHistory = selectedProfile?.patient.important_medical_history ?? "";
   const selectedDraftKey = useMemo(
@@ -1370,6 +1376,148 @@ export function DoctorReturnRecordPage({
     void loadDriveHistoryFiles();
   }, [driveHistory.status, loadDriveHistoryFiles, selectedProfile]);
 
+  const loadDriveRecordIntoForm = useCallback(
+    async (
+      fileId: string,
+      options: {
+        mode: "auto" | "manual";
+        shouldApply?: () => boolean;
+      }
+    ) => {
+      if (!selectedProfile || !selectedPatientId) {
+        return false;
+      }
+
+      const result = await fetchGoogleDriveRecordHtml(fileId);
+      if (options.shouldApply && !options.shouldApply()) {
+        return false;
+      }
+      const nextValues = buildDriveReturnRecordFormValues({
+        html: result.html,
+        chartNumber: selectedProfile.patient.chart_number,
+        patientName: selectedProfile.patient.name,
+        routeKey: selectedRoute?.key ?? "",
+        patientId: selectedPatientId,
+        timeDefaults: returnRecordTimeDefaults
+      });
+      if (!nextValues) {
+        if (options.mode === "manual") {
+          setDriveHistory((current) => ({
+            ...current,
+            status: "error",
+            message: "選定的 Google Drive 病歷檔內找不到目前個案，請改選其他日期或檔案。"
+          }));
+        }
+        return false;
+      }
+
+      if (options.shouldApply && !options.shouldApply()) {
+        return false;
+      }
+
+      const initialDraft =
+        nextValues.generated_record_text || buildInitialGeneratedRecordText(nextValues);
+      previousAutoDraftRef.current = initialDraft;
+      reset({
+        ...nextValues,
+        generated_record_text: initialDraft
+      });
+      setSelectedDriveFileId(fileId);
+      setDraftSaveMessage(
+        options.mode === "auto"
+          ? `已自動從 Google Drive 載入「${result.file?.name ?? "歷史病歷檔"}」作為此個案預先症狀，可再依本次狀況修改。`
+          : `已從 Google Drive 載入「${result.file?.name ?? "選定病歷檔"}」中的此個案內容，可再依本次狀況修改。`
+      );
+      setDriveHistory((current) => ({
+        ...current,
+        status: "ready",
+        message:
+          options.mode === "auto"
+            ? "已自動套用 Google Drive 中符合目前個案的歷史病歷；仍可改選其他檔案再載入。"
+            : "已載入選定的 Google Drive 病歷檔。"
+      }));
+      return true;
+    },
+    [reset, returnRecordTimeDefaults, selectedPatientId, selectedProfile, selectedRoute?.key]
+  );
+
+  useEffect(() => {
+    if (
+      driveHistory.status !== "ready" ||
+      !driveHistory.files.length ||
+      !selectedProfile ||
+      !selectedPatientId ||
+      selectedSavedDraft ||
+      formState.isDirty
+    ) {
+      return;
+    }
+
+    const autoLoadKey = [
+      selectedPatientId,
+      selectedProfile.patient.chart_number,
+      driveHistory.files.map((file) => file.id).join(",")
+    ].join("::");
+    if (autoLoadedDriveRecordKeyRef.current === autoLoadKey) {
+      return;
+    }
+    autoLoadedDriveRecordKeyRef.current = autoLoadKey;
+
+    let isCurrentAttempt = true;
+    setIsLoadingDriveRecord(true);
+    setDriveHistory((current) => ({
+      ...current,
+      message: "正在從 Google Drive 歷史病歷檔尋找目前個案內容。"
+    }));
+
+    void (async () => {
+      try {
+        for (const file of driveHistory.files) {
+          const loaded = await loadDriveRecordIntoForm(file.id, {
+            mode: "auto",
+            shouldApply: () => isCurrentAttempt && !formDirtyRef.current
+          });
+          if (!isCurrentAttempt) {
+            return;
+          }
+          if (loaded) {
+            return;
+          }
+        }
+        setDriveHistory((current) => ({
+          ...current,
+          status: "ready",
+          message: `已讀取 ${driveHistory.files.length} 個 Google Drive 歷史病歷檔，但找不到目前個案內容；可改選其他檔案手動載入。`
+        }));
+      } catch (error) {
+        if (!isCurrentAttempt) {
+          return;
+        }
+        setDriveHistory((current) => ({
+          ...current,
+          status: "error",
+          message: formatGoogleDriveHistoryError(error)
+        }));
+      } finally {
+        if (isCurrentAttempt) {
+          setIsLoadingDriveRecord(false);
+        }
+      }
+    })();
+
+    return () => {
+      isCurrentAttempt = false;
+    };
+  }, [
+    driveHistory.files,
+    driveHistory.status,
+    formState.isDirty,
+    loadDriveRecordIntoForm,
+    selectedPatientId,
+    selectedProfile,
+    selectedSavedDraft
+  ]);
+
   const loadSelectedDriveRecordIntoForm = async () => {
     if (!selectedProfile || !selectedPatientId || !selectedDriveFileId) {
       return;
@@ -1381,47 +1529,12 @@ export function DoctorReturnRecordPage({
       message: "正在載入選定的 Google Drive 病歷檔。"
     }));
     try {
-      const result = await fetchGoogleDriveRecordHtml(selectedDriveFileId);
-      const nextValues = buildDriveReturnRecordFormValues({
-        html: result.html,
-        chartNumber: selectedProfile.patient.chart_number,
-        patientName: selectedProfile.patient.name,
-        routeKey: selectedRoute?.key ?? "",
-        patientId: selectedPatientId,
-        timeDefaults: returnRecordTimeDefaults
-      });
-      if (!nextValues) {
-        setDriveHistory((current) => ({
-          ...current,
-          status: "error",
-          message: "選定的 Google Drive 病歷檔內找不到目前個案，請改選其他日期或檔案。"
-        }));
-        return;
-      }
-
-      const initialDraft =
-        nextValues.generated_record_text || buildInitialGeneratedRecordText(nextValues);
-      previousAutoDraftRef.current = initialDraft;
-      reset({
-        ...nextValues,
-        generated_record_text: initialDraft
-      });
-      setDraftSaveMessage(
-        `已從 Google Drive 載入「${result.file?.name ?? "選定病歷檔"}」中的此個案內容，可再依本次狀況修改。`
-      );
-      setDriveHistory((current) => ({
-        ...current,
-        status: "ready",
-        message: "已載入選定的 Google Drive 病歷檔。"
-      }));
+      await loadDriveRecordIntoForm(selectedDriveFileId, { mode: "manual" });
     } catch (error) {
       setDriveHistory((current) => ({
         ...current,
         status: "error",
-        message:
-          error instanceof Error
-            ? error.message
-            : "Google Drive 病歷檔載入失敗。"
+        message: formatGoogleDriveHistoryError(error)
       }));
     } finally {
       setIsLoadingDriveRecord(false);
