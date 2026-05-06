@@ -31,6 +31,16 @@ async function callGeocode(body) {
   };
 }
 
+async function callMapsConfig() {
+  const response = createResponse();
+  await handler({ method: "GET", query: { resource: "config" } }, response);
+  return {
+    statusCode: response.statusCode,
+    headers: response.headers,
+    body: JSON.parse(response.body)
+  };
+}
+
 describe("/api/maps/geocode", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
@@ -165,5 +175,39 @@ describe("/api/maps/geocode", () => {
     expect(result.statusCode).toBe(503);
     expect(result.body.reason).toBe("API_KEY_MISSING");
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("GET resource=config 會回傳內嵌 Google Map 導航需要的 browser key", async () => {
+    vi.stubEnv("GOOGLE_MAPS_BROWSER_API_KEY", "browser-key");
+    vi.stubEnv("GOOGLE_MAPS_MAP_ID", "map-id-1");
+
+    const result = await callMapsConfig();
+
+    expect(result.statusCode).toBe(200);
+    expect(result.body).toEqual({
+      ok: true,
+      mapsApiKey: "browser-key",
+      mapId: "map-id-1"
+    });
+  });
+
+  it("GET resource=config 未設定 browser key 時可沿用 GOOGLE_MAPS_API_KEY", async () => {
+    vi.stubEnv("GOOGLE_MAPS_API_KEY", "server-map-key");
+
+    const result = await callMapsConfig();
+
+    expect(result.statusCode).toBe(200);
+    expect(result.body.mapsApiKey).toBe("server-map-key");
+  });
+
+  it("GET resource=config 缺 key 時回傳明確錯誤", async () => {
+    vi.stubEnv("GOOGLE_MAPS_BROWSER_API_KEY", "");
+    vi.stubEnv("GOOGLE_MAPS_API_KEY", "");
+    vi.stubEnv("VITE_GOOGLE_MAPS_API_KEY", "");
+
+    const result = await callMapsConfig();
+
+    expect(result.statusCode).toBe(503);
+    expect(result.body.reason).toBe("API_KEY_MISSING");
   });
 });
