@@ -232,8 +232,8 @@ async function handleGoogleCalendarEvents(request, response) {
   }
 
   const body = normalizeBody(request);
-  const calendarId = String(body.googleCalendarId ?? body.calendarId ?? "").trim();
-  const googleApiKey = String(body.googleApiKey ?? body.googleMapsApiKey ?? "").trim();
+  const calendarId = String(process.env.GOOGLE_CALENDAR_ID ?? "").trim();
+  const googleApiKey = String(process.env.GOOGLE_MAPS_API_KEY ?? process.env.VITE_GOOGLE_MAPS_API_KEY ?? "").trim();
   const dateValue = String(body.date ?? "").trim();
   const dateRange = buildTaipeiDateRange(dateValue);
 

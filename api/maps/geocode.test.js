@@ -151,24 +151,10 @@ describe("/api/maps/geocode", () => {
     expect(result.body.error).toContain("This API project is not authorized.");
   });
 
-  it("可使用前端送入的 Google Maps API key 查座標", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        status: "OK",
-        results: [
-          {
-            formatted_address: "高雄市旗山區延平一路123號",
-            geometry: {
-              location: {
-                lat: 22.88612,
-                lng: 120.48234
-              }
-            }
-          }
-        ]
-      })
-    });
+  it("缺少環境變數時忽略前端送入的 Google Maps API key", async () => {
+    vi.stubEnv("GOOGLE_MAPS_API_KEY", "");
+    vi.stubEnv("VITE_GOOGLE_MAPS_API_KEY", "");
+    const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
 
     const result = await callGeocode({
@@ -176,7 +162,8 @@ describe("/api/maps/geocode", () => {
       googleMapsApiKey: "browser-google-key"
     });
 
-    expect(result.statusCode).toBe(200);
-    expect(fetchMock.mock.calls[0][0]).toContain("key=browser-google-key");
+    expect(result.statusCode).toBe(503);
+    expect(result.body.reason).toBe("API_KEY_MISSING");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

@@ -22,7 +22,6 @@ import { AppShell } from "./AppShell";
 import { SESSION_STORAGE_KEY } from "../auth-storage";
 import { MOCK_DB_STORAGE_KEY } from "../../data/mock/db";
 import { createSeedDb } from "../../data/seed";
-import { ADMIN_API_TOKEN_STORAGE_KEY } from "../../shared/utils/admin-api-tokens";
 
 function renderShell(initialEntry: string, element: ReactElement) {
   return render(
@@ -178,14 +177,30 @@ describe("AppShell", () => {
         authenticatedAdminId: "admin-001"
       })
     );
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        latitude: 22.88794,
-        longitude: 120.48341,
-        formattedAddress: "高雄市旗山區中學路60號"
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          ok: true,
+          variables: {
+            LINE_CHANNEL_ACCESS_TOKEN: true,
+            LINE_CHANNEL_SECRET: false,
+            GOOGLE_MAPS_API_KEY: true,
+            GOOGLE_CALENDAR_ID: true,
+            GOOGLE_DRIVE_ACCESS_TOKEN: true,
+            GOOGLE_DRIVE_FOLDER_ID: true
+          }
+        })
       })
-    });
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          latitude: 22.88794,
+          longitude: 120.48341,
+          formattedAddress: "高雄市旗山區中學路60號"
+        })
+      });
     vi.stubGlobal("fetch", fetchMock);
 
     const { unmount } = renderShell("/admin/staff", <AdminStaffPage />);
@@ -199,43 +214,14 @@ describe("AppShell", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "顯示機密管理" }));
     expect(screen.getByRole("button", { name: "收起機密管理" })).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByRole("link", { name: "取得 LINE Channel Access Token" })).toHaveAttribute(
-      "href",
-      "https://developers.line.biz/console/"
-    );
-    expect(screen.getByRole("link", { name: "取得 Google Maps API Key" })).toHaveAttribute(
-      "href",
-      "https://console.cloud.google.com/apis/credentials"
-    );
-    expect(screen.getByRole("link", { name: "開啟 Google 日曆設定" })).toHaveAttribute(
-      "href",
-      "https://calendar.google.com/calendar/u/0/r/settings"
-    );
-    expect(screen.getByRole("link", { name: "查看 Calendar ID 位置" })).toHaveAttribute(
-      "href",
-      "https://support.google.com/a/answer/1626902"
-    );
-    expect(screen.getByLabelText("LINE Channel Access Token")).toBeInTheDocument();
-    expect(screen.getByLabelText("LINE Channel Secret")).toBeInTheDocument();
-    expect(screen.getByLabelText("Google Maps API Key")).toBeInTheDocument();
-    expect(screen.getByLabelText("Google Calendar ID")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText("Vercel 環境變數設定狀態")).toBeInTheDocument();
+      expect(screen.getByText("LINE_CHANNEL_ACCESS_TOKEN")).toBeInTheDocument();
+      expect(screen.getByText("GOOGLE_DRIVE_FOLDER_ID")).toBeInTheDocument();
+    });
+    expect(screen.queryByLabelText("LINE Channel Access Token")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Google Maps API Key")).not.toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText("LINE Channel Access Token"), {
-      target: { value: "browser-line-token" }
-    });
-    fireEvent.change(screen.getByLabelText("Google Maps API Key"), {
-      target: { value: "browser-google-key" }
-    });
-    fireEvent.change(screen.getByLabelText("Google Calendar ID"), {
-      target: { value: "doctor@example.com" }
-    });
-    await waitFor(() =>
-      expect(JSON.parse(window.localStorage.getItem(ADMIN_API_TOKEN_STORAGE_KEY) ?? "{}")).toMatchObject({
-        lineChannelAccessToken: "browser-line-token",
-        googleMapsApiKey: "browser-google-key",
-        googleCalendarId: "doctor@example.com"
-      })
-    );
     fireEvent.click(screen.getByRole("button", { name: "測試 Google Maps 連線" }));
 
     await waitFor(() =>
@@ -245,10 +231,7 @@ describe("AppShell", () => {
       "/api/maps/geocode",
       expect.objectContaining({
         method: "POST",
-        body: JSON.stringify({
-          address: "旗山醫院",
-          googleMapsApiKey: "browser-google-key"
-        })
+        body: JSON.stringify({ address: "旗山醫院" })
       })
     );
 
@@ -260,8 +243,8 @@ describe("AppShell", () => {
     unmount();
     renderShell("/admin/staff", <AdminStaffPage />);
     fireEvent.click(screen.getByRole("button", { name: "顯示機密管理" }));
-    expect(screen.getByLabelText("LINE Channel Access Token")).toHaveValue("browser-line-token");
-    expect(screen.getByLabelText("Google Maps API Key")).toHaveValue("browser-google-key");
+    expect(screen.queryByLabelText("LINE Channel Access Token")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Google Maps API Key")).not.toBeInTheDocument();
   });
 
   it("登入後若有未讀通知，Shell 會明確顯示未讀提示", () => {

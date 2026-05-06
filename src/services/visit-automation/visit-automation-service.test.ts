@@ -170,7 +170,7 @@ describe("visit automation service", () => {
         lineUserId: "Unextstopaaaaaaaaaaaaaaaaaaaaaaaaa"
       })
     ]);
-    expect(requestBody.lineChannelAccessToken).toBe("browser-line-token");
+    expect(requestBody).not.toHaveProperty("lineChannelAccessToken");
     await vi.waitFor(() => {
       expect(harness.repositories.contactRepository.getContactLogsByScheduleId("vs-016")).toEqual(
         expect.arrayContaining([
@@ -318,7 +318,7 @@ describe("visit automation service", () => {
         lineUserId: "Usecondstopaaaaaaaaaaaaaaaaaaaaaa"
       })
     ]);
-    expect(requestBody.lineChannelAccessToken).toBe("browser-line-token");
+    expect(requestBody).not.toHaveProperty("lineChannelAccessToken");
     expect(harness.repositories.contactRepository.getContactLogsByScheduleId("vs-015")).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

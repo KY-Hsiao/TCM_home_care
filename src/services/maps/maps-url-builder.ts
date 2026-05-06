@@ -6,7 +6,6 @@ import type {
   RouteMapPreviewState
 } from "../types";
 import { resolveLocationKeyword } from "../../shared/utils/location-keyword";
-import { loadAdminApiTokenSettings } from "../../shared/utils/admin-api-tokens";
 
 const MAX_ROUTE_PREVIEW_WAYPOINTS = 9;
 
@@ -34,7 +33,7 @@ function resolveMapQuery({ address, locationKeyword, latitude, longitude }: Rout
 }
 
 function resolveMapsApiKey(defaultEmbedApiKey: string) {
-  return defaultEmbedApiKey || loadAdminApiTokenSettings().googleMapsApiKey.trim();
+  return defaultEmbedApiKey;
 }
 
 function buildGoogleMapsDirectionsUrl(input: {
@@ -202,10 +201,7 @@ export function createMapsUrlBuilder(options?: { embedApiKey?: string | null }):
         const response = await fetch("/api/maps/geocode", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            address: normalizedAddress,
-            googleMapsApiKey: loadAdminApiTokenSettings().googleMapsApiKey.trim()
-          }),
+          body: JSON.stringify({ address: normalizedAddress }),
           signal
         });
         const payload = (await response.json().catch(() => null)) as GoogleGeocodingResponse | null;

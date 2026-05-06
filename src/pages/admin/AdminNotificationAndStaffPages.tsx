@@ -3,11 +3,7 @@ import { useAppContext } from "../../app/use-app-context";
 import type { AdminUser, Doctor } from "../../domain/models";
 import { Badge } from "../../shared/ui/Badge";
 import { Panel } from "../../shared/ui/Panel";
-import {
-  loadAdminApiTokenSettings,
-  persistAdminApiTokenSettings,
-  type AdminApiTokenSettings
-} from "../../shared/utils/admin-api-tokens";
+import { clearLegacyAdminApiTokenSettings } from "../../shared/utils/admin-api-tokens";
 
 type ManageableRole = "doctor" | "admin";
 
@@ -30,6 +26,52 @@ type StaffListItem = {
   accountLabel: string;
   secondaryLabel: string;
 };
+
+type EnvVariableName =
+  | "LINE_CHANNEL_ACCESS_TOKEN"
+  | "LINE_CHANNEL_SECRET"
+  | "GOOGLE_MAPS_API_KEY"
+  | "GOOGLE_CALENDAR_ID"
+  | "GOOGLE_DRIVE_ACCESS_TOKEN"
+  | "GOOGLE_DRIVE_FOLDER_ID";
+
+type EnvStatus = {
+  ok: boolean;
+  variables: Record<EnvVariableName, boolean>;
+};
+
+const envVariableLabels: Array<{ key: EnvVariableName; label: string; usage: string }> = [
+  {
+    key: "LINE_CHANNEL_ACCESS_TOKEN",
+    label: "LINE Channel Access Token",
+    usage: "LINE 家屬通知發送"
+  },
+  {
+    key: "LINE_CHANNEL_SECRET",
+    label: "LINE Channel Secret",
+    usage: "LINE webhook 驗證"
+  },
+  {
+    key: "GOOGLE_MAPS_API_KEY",
+    label: "Google Maps API Key",
+    usage: "補座標與 Google 日曆地點解析"
+  },
+  {
+    key: "GOOGLE_CALENDAR_ID",
+    label: "Google Calendar ID",
+    usage: "排程日期行程檢查"
+  },
+  {
+    key: "GOOGLE_DRIVE_ACCESS_TOKEN",
+    label: "Google Drive Access Token",
+    usage: "回院病歷 HTML 上傳"
+  },
+  {
+    key: "GOOGLE_DRIVE_FOLDER_ID",
+    label: "Google Drive Folder ID",
+    usage: "回院病歷儲存資料夾"
+  }
+];
 
 const serviceDayOptions = [
   "星期一",
@@ -168,11 +210,10 @@ export function AdminStaffPage() {
   const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [activeServiceDay, setActiveServiceDay] = useState<ServiceDay>(serviceDayOptions[0]);
   const [recentAction, setRecentAction] = useState<string | null>(null);
-  const [apiTokens, setApiTokens] = useState<AdminApiTokenSettings>(() =>
-    loadAdminApiTokenSettings()
-  );
   const [isSecretManagementOpen, setIsSecretManagementOpen] = useState(false);
   const [isTestingGoogleMapsConnection, setIsTestingGoogleMapsConnection] = useState(false);
+  const [isLoadingEnvStatus, setIsLoadingEnvStatus] = useState(false);
+  const [envStatus, setEnvStatus] = useState<EnvStatus | null>(null);
   const [secretManagementMessage, setSecretManagementMessage] = useState<{
     tone: "success" | "error";
     message: string;
@@ -215,19 +256,36 @@ export function AdminStaffPage() {
     ? db.visit_schedules.filter((schedule) => schedule.assigned_doctor_id === draft.sourceId).length
     : 0;
 
-  useEffect(() => {
-    persistAdminApiTokenSettings(apiTokens);
-  }, [apiTokens]);
-
-  const updateApiToken = (key: keyof AdminApiTokenSettings, value: string) => {
-    setApiTokens((current) => ({
-      ...current,
-      [key]: value
-    }));
-    if (key === "googleMapsApiKey") {
-      setSecretManagementMessage(null);
+  const loadEnvStatus = async () => {
+    setIsLoadingEnvStatus(true);
+    setSecretManagementMessage(null);
+    try {
+      const response = await fetch("/api/admin/env-status", { cache: "no-store" });
+      const payload = (await response.json().catch(() => null)) as EnvStatus | null;
+      if (!response.ok || !payload?.variables) {
+        throw new Error("環境變數狀態讀取失敗。");
+      }
+      setEnvStatus(payload);
+    } catch {
+      setSecretManagementMessage({
+        tone: "error",
+        message: "無法讀取 Vercel 環境變數設定狀態，請確認部署 API 是否可用。"
+      });
+    } finally {
+      setIsLoadingEnvStatus(false);
     }
   };
+
+  useEffect(() => {
+    clearLegacyAdminApiTokenSettings();
+  }, []);
+
+  useEffect(() => {
+    if (!isSecretManagementOpen || envStatus) {
+      return;
+    }
+    void loadEnvStatus();
+  }, [envStatus, isSecretManagementOpen]);
 
   const testGoogleMapsConnection = async () => {
     setIsTestingGoogleMapsConnection(true);
@@ -239,8 +297,7 @@ export function AdminStaffPage() {
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          address: "旗山醫院",
-          googleMapsApiKey: apiTokens.googleMapsApiKey.trim()
+          address: "旗山醫院"
         })
       });
       const payload = (await response.json().catch(() => ({}))) as {
@@ -481,110 +538,44 @@ export function AdminStaffPage() {
         >
           {isSecretManagementOpen ? (
             <>
-              <div className="grid gap-3 text-sm lg:grid-cols-2 xl:grid-cols-4">
-                <label className="block">
-                  <span className="mb-1 block font-medium text-brand-ink">LINE Channel Access Token</span>
-                  <a
-                    href="https://developers.line.biz/console/"
-                    target="_blank"
-                    rel="noreferrer"
-                    className="mb-2 inline-flex text-xs font-semibold text-emerald-700 underline decoration-emerald-200 underline-offset-4"
-                  >
-                    取得 LINE Channel Access Token
-                  </a>
-                  <input
-                    type="password"
-                    aria-label="LINE Channel Access Token"
-                    value={apiTokens.lineChannelAccessToken}
-                    onChange={(event) => updateApiToken("lineChannelAccessToken", event.target.value)}
-                    placeholder="貼上 LINE Messaging API access token"
-                    className="w-full rounded-2xl border border-slate-200 px-4 py-3"
-                  />
-                </label>
-                <label className="block">
-                  <span className="mb-1 block font-medium text-brand-ink">LINE Channel Secret</span>
-                  <input
-                    type="password"
-                    aria-label="LINE Channel Secret"
-                    value={apiTokens.lineChannelSecret}
-                    onChange={(event) => updateApiToken("lineChannelSecret", event.target.value)}
-                    placeholder="貼上 LINE webhook secret"
-                    className="w-full rounded-2xl border border-slate-200 px-4 py-3"
-                  />
-                </label>
-                <label className="block">
-                  <span className="mb-1 block font-medium text-brand-ink">Google Maps API Key</span>
-                  <a
-                    href="https://console.cloud.google.com/apis/credentials"
-                    target="_blank"
-                    rel="noreferrer"
-                    className="mb-2 inline-flex text-xs font-semibold text-emerald-700 underline decoration-emerald-200 underline-offset-4"
-                  >
-                    取得 Google Maps API Key
-                  </a>
-                  <input
-                    type="password"
-                    aria-label="Google Maps API Key"
-                    value={apiTokens.googleMapsApiKey}
-                    onChange={(event) => updateApiToken("googleMapsApiKey", event.target.value)}
-                    placeholder="貼上 Geocoding API key"
-                    className="w-full rounded-2xl border border-slate-200 px-4 py-3"
-                  />
-                </label>
-                <label className="block">
-                  <span className="mb-1 block font-medium text-brand-ink">Google Calendar ID / 分享碼</span>
-                  <span className="mb-2 flex flex-wrap gap-x-3 gap-y-1">
-                    <a
-                      href="https://calendar.google.com/calendar/u/0/r/settings"
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex text-xs font-semibold text-emerald-700 underline decoration-emerald-200 underline-offset-4"
-                    >
-                      開啟 Google 日曆設定
-                    </a>
-                    <a
-                      href="https://support.google.com/a/answer/1626902"
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex text-xs font-semibold text-emerald-700 underline decoration-emerald-200 underline-offset-4"
-                    >
-                      查看 Calendar ID 位置
-                    </a>
-                  </span>
-                  <input
-                    aria-label="Google Calendar ID"
-                    value={apiTokens.googleCalendarId}
-                    onChange={(event) => updateApiToken("googleCalendarId", event.target.value)}
-                    placeholder="例如 xxx@group.calendar.google.com 或 Gmail"
-                    className="w-full rounded-2xl border border-slate-200 px-4 py-3"
-                  />
-                </label>
-                <label className="block">
-                  <span className="mb-1 block font-medium text-brand-ink">Google Drive API Token</span>
-                  <input
-                    type="password"
-                    aria-label="Google Drive API Token"
-                    value={apiTokens.googleDriveAccessToken}
-                    onChange={(event) => updateApiToken("googleDriveAccessToken", event.target.value)}
-                    placeholder="貼上可寫入 Drive 的 OAuth access token"
-                    className="w-full rounded-2xl border border-slate-200 px-4 py-3"
-                  />
-                </label>
-                <label className="block">
-                  <span className="mb-1 block font-medium text-brand-ink">Google Drive 資料夾連結</span>
-                  <input
-                    aria-label="Google Drive 資料夾連結"
-                    value={apiTokens.googleDriveFolderUrl}
-                    onChange={(event) => updateApiToken("googleDriveFolderUrl", event.target.value)}
-                    placeholder="貼上 Google Drive folder URL 或 folder ID"
-                    className="w-full rounded-2xl border border-slate-200 px-4 py-3"
-                  />
-                </label>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                <p className="font-semibold text-brand-ink">Vercel 環境變數設定狀態</p>
+                <p className="mt-1">
+                  API Token 不再由瀏覽器輸入或保存。請在 Vercel 專案的 Environment Variables 設定下列變數，前端只會檢查是否已設定，不會顯示任何 token 值。
+                </p>
               </div>
-              <p className="mt-3 text-xs text-slate-500">
-                Token、Calendar ID 與 Drive 資料夾連結會保存在這台瀏覽器，用於 LINE 群發/好友同步、排程頁 Google 補座標、Google 日曆查詢，以及回院病歷網頁檔儲存到 Google Drive。正式部署仍建議同步設定環境變數。
-              </p>
+              <div className="mt-4 grid gap-3 text-sm lg:grid-cols-2 xl:grid-cols-3">
+                {envVariableLabels.map((item) => {
+                  const configured = envStatus?.variables?.[item.key] ?? false;
+                  return (
+                    <div key={item.key} className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="font-semibold text-brand-ink">{item.label}</p>
+                          <p className="mt-1 text-xs text-slate-500">{item.key}</p>
+                        </div>
+                        <span
+                          className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                            configured ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"
+                          }`}
+                        >
+                          {configured ? "已設定" : "未設定"}
+                        </span>
+                      </div>
+                      <p className="mt-3 text-xs text-slate-500">{item.usage}</p>
+                    </div>
+                  );
+                })}
+              </div>
               <div className="mt-3 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void loadEnvStatus()}
+                  disabled={isLoadingEnvStatus}
+                  className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {isLoadingEnvStatus ? "重新整理中" : "重新整理狀態"}
+                </button>
                 <button
                   type="button"
                   onClick={() => void testGoogleMapsConnection()}
@@ -609,7 +600,7 @@ export function AdminStaffPage() {
             </>
           ) : (
             <p className="text-sm text-slate-500">
-              已收納 LINE 與 Google API 欄位。需要修改或測試連線時，請先按「顯示機密管理」。
+              API Token 改由 Vercel 環境變數管理。需要檢查設定狀態或測試連線時，請先按「顯示機密管理」。
             </p>
           )}
         </Panel>

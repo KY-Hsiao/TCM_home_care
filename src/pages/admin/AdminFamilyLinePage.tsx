@@ -6,7 +6,6 @@ import { Badge } from "../../shared/ui/Badge";
 import { Panel } from "../../shared/ui/Panel";
 import { formatDateTimeFull } from "../../shared/utils/format";
 import { maskPatientName } from "../../shared/utils/patient-name";
-import { loadAdminApiTokenSettings } from "../../shared/utils/admin-api-tokens";
 
 type FamilyLineAutomationSettings = {
   doctorLeaveAutoBroadcast: boolean;
@@ -197,7 +196,6 @@ export function AdminFamilyLinePage() {
   const [activeLineTool, setActiveLineTool] = useState<"instant" | "single" | "automation" | "template" | null>(null);
   const [expandedManagedContactIds, setExpandedManagedContactIds] = useState<string[]>([]);
   const [showAllContactsForFocusedPatient, setShowAllContactsForFocusedPatient] = useState(false);
-  const [apiTokens] = useState(() => loadAdminApiTokenSettings());
 
   useEffect(() => {
     window.localStorage.removeItem(LEGACY_BINDINGS_STORAGE_KEY);
@@ -664,12 +662,7 @@ export function AdminFamilyLinePage() {
     }
     try {
       const response = await fetch("/api/admin/family-line/friends", {
-        cache: "no-store",
-        headers: apiTokens.lineChannelAccessToken.trim()
-          ? {
-              "X-Line-Channel-Access-Token": apiTokens.lineChannelAccessToken.trim()
-            }
-          : undefined
+        cache: "no-store"
       });
       const payload = (await response.json().catch(() => ({}))) as {
         error?: string;
@@ -743,7 +736,7 @@ export function AdminFamilyLinePage() {
     } finally {
       setIsSyncingLineFriends(false);
     }
-  }, [apiTokens.lineChannelAccessToken]);
+  }, []);
 
   useEffect(() => {
     if (import.meta.env.MODE === "test") {
@@ -783,7 +776,6 @@ export function AdminFamilyLinePage() {
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          lineChannelAccessToken: apiTokens.lineChannelAccessToken.trim(),
           subject: outboundSubject,
           content: outboundContent,
           recipients: buildLineSendRecipients(sendableRecipients)
@@ -849,7 +841,6 @@ export function AdminFamilyLinePage() {
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          lineChannelAccessToken: apiTokens.lineChannelAccessToken.trim(),
           subject,
           content,
           recipients: buildLineSendRecipients(sendableRecipients)
@@ -912,7 +903,6 @@ export function AdminFamilyLinePage() {
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          lineChannelAccessToken: apiTokens.lineChannelAccessToken.trim(),
           subject,
           content,
           recipients: buildLineSendRecipients([selectedSingleRecipient])

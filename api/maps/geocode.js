@@ -7,13 +7,8 @@ function isRequiredString(value) {
   return typeof value === "string" && value.trim().length > 0;
 }
 
-function resolveGoogleMapsApiKey(requestBody) {
-  return (
-    String(requestBody?.googleMapsApiKey ?? "").trim() ||
-    process.env.GOOGLE_MAPS_API_KEY ||
-    process.env.VITE_GOOGLE_MAPS_API_KEY ||
-    ""
-  );
+function resolveGoogleMapsApiKey() {
+  return process.env.GOOGLE_MAPS_API_KEY || process.env.VITE_GOOGLE_MAPS_API_KEY || "";
 }
 
 function normalizeGoogleFailure(status, errorMessage, address) {
@@ -107,7 +102,7 @@ export default async function handler(request, response) {
   }
 
   const address = String(request.body?.address ?? "").trim();
-  const apiKey = resolveGoogleMapsApiKey(request.body);
+  const apiKey = resolveGoogleMapsApiKey();
   if (!isRequiredString(apiKey)) {
     setJson(response, 503, {
       reason: "API_KEY_MISSING",

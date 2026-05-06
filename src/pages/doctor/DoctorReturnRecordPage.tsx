@@ -27,10 +27,6 @@ import {
 } from "../../modules/doctor/doctor-return-record";
 import { Panel } from "../../shared/ui/Panel";
 import {
-  loadAdminApiTokenSettings,
-  type AdminApiTokenSettings
-} from "../../shared/utils/admin-api-tokens";
-import {
   formatDateOnly,
   formatDateTimeFull,
   fromDateTimeLocalValue,
@@ -443,73 +439,23 @@ function downloadTextFile(filename: string, content: string, type: string) {
   URL.revokeObjectURL(downloadUrl);
 }
 
-function resolveGoogleDriveFolderId(folderUrl: string) {
-  const trimmed = folderUrl.trim();
-  if (!trimmed) {
-    return "";
-  }
-  const foldersMatch = trimmed.match(/\/folders\/([a-zA-Z0-9_-]+)/);
-  if (foldersMatch?.[1]) {
-    return foldersMatch[1];
-  }
-  const queryMatch = trimmed.match(/[?&]id=([a-zA-Z0-9_-]+)/);
-  if (queryMatch?.[1]) {
-    return queryMatch[1];
-  }
-  return /^[a-zA-Z0-9_-]+$/.test(trimmed) ? trimmed : "";
-}
-
 async function uploadHtmlToGoogleDrive(input: {
-  settings: AdminApiTokenSettings;
   filename: string;
   html: string;
 }) {
-  const accessToken = input.settings.googleDriveAccessToken.trim();
-  const folderId = resolveGoogleDriveFolderId(input.settings.googleDriveFolderUrl);
-  if (!accessToken || !folderId) {
-    return {
-      ok: false,
-      message: "尚未在機密管理區設定 Google Drive API Token 與資料夾連結。"
-    };
-  }
-
-  const metadata = {
-    name: input.filename,
-    mimeType: "text/html",
-    parents: [folderId]
-  };
-  const delimiter = "tcm_home_care_boundary";
-  const body = [
-    `--${delimiter}`,
-    "Content-Type: application/json; charset=UTF-8",
-    "",
-    JSON.stringify(metadata),
-    `--${delimiter}`,
-    "Content-Type: text/html; charset=UTF-8",
-    "",
-    input.html,
-    `--${delimiter}--`
-  ].join("\r\n");
-
-  const response = await fetch(
-    "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink",
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": `multipart/related; boundary=${delimiter}`
-      },
-      body
-    }
-  );
+  const response = await fetch("/api/admin/google-drive/upload", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input)
+  });
   const payload = (await response.json().catch(() => ({}))) as {
     webViewLink?: string;
-    error?: { message?: string };
+    error?: string;
   };
   if (!response.ok) {
     return {
       ok: false,
-      message: payload.error?.message ?? `Google Drive 上傳失敗：HTTP ${response.status}`
+      message: payload.error ?? `Google Drive 上傳失敗：HTTP ${response.status}`
     };
   }
   return {
@@ -1206,7 +1152,6 @@ export function DoctorReturnRecordPage({
     }
     setGoogleDriveStatus("正在儲存到 Google Drive。");
     const result = await uploadHtmlToGoogleDrive({
-      settings: loadAdminApiTokenSettings(),
       filename: htmlExportFileName || "居家個案病例紀錄.html",
       html: htmlExportText
     });

@@ -7,7 +7,6 @@ import { SESSION_STORAGE_KEY } from "../../app/auth-storage";
 import { AppProviders } from "../../app/providers";
 import { MOCK_DB_STORAGE_KEY } from "../../data/mock/db";
 import { createSeedDb } from "../../data/seed";
-import { ADMIN_API_TOKEN_STORAGE_KEY } from "../../shared/utils/admin-api-tokens";
 import { DoctorLocationPage } from "../doctor/DoctorPages";
 import {
   AdminDashboardPage,
@@ -180,14 +179,7 @@ describe("AdminPages", () => {
     expect(timeSlotSelect).toHaveValue("上午");
   });
 
-  it("AdminSchedulesPage 選日期後會用機密管理的 Google Calendar ID 檢查當日行程", async () => {
-    window.localStorage.setItem(
-      ADMIN_API_TOKEN_STORAGE_KEY,
-      JSON.stringify({
-        googleCalendarId: "doctor@example.com",
-        googleMapsApiKey: "google-key"
-      })
-    );
+  it("AdminSchedulesPage 選日期後會呼叫後端 Calendar 檢查當日行程", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
@@ -212,11 +204,7 @@ describe("AdminPages", () => {
         "/api/deployment/sync?resource=calendar-events",
         expect.objectContaining({
           method: "POST",
-          body: JSON.stringify({
-            date: "2026-05-06",
-            googleCalendarId: "doctor@example.com",
-            googleApiKey: "google-key"
-          })
+          body: JSON.stringify({ date: "2026-05-06" })
         })
       );
       expect(screen.getByText(/Google 日曆在 2026\/05\/06 有 1 筆行程/)).toBeInTheDocument();
@@ -543,10 +531,7 @@ describe("AdminPages", () => {
       "/api/maps/geocode",
       expect.objectContaining({
         method: "POST",
-        body: JSON.stringify({
-          address: "高雄市旗山區延平一路 128 號",
-          googleMapsApiKey: ""
-        })
+        body: JSON.stringify({ address: "高雄市旗山區延平一路 128 號" })
       })
     );
   });
@@ -586,14 +571,21 @@ describe("AdminPages", () => {
     window.localStorage.setItem(MOCK_DB_STORAGE_KEY, JSON.stringify(customDb));
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue({
-        ok: false,
-        status: 422,
-        json: async () => ({
-          reason: "ZERO_RESULTS",
-          error: "Google Geocoding API 回傳 ZERO_RESULTS：找不到「高雄市旗山區延平一路 128 號」的座標"
-        })
-      })
+      vi.fn((url) =>
+        String(url).includes("/api/deployment/sync")
+          ? Promise.resolve({
+              ok: true,
+              json: async () => ({ events: [] })
+            })
+          : Promise.resolve({
+              ok: false,
+              status: 422,
+              json: async () => ({
+                reason: "ZERO_RESULTS",
+                error: "Google Geocoding API 回傳 ZERO_RESULTS：找不到「高雄市旗山區延平一路 128 號」的座標"
+              })
+            })
+      )
     );
 
     renderWithProviders(<AdminSchedulesPage />);
@@ -1685,14 +1677,6 @@ describe("AdminPages", () => {
 
   it("AdminFamilyLinePage 可即時群發自訂訊息並選擇收件人", async () => {
     window.localStorage.setItem(
-      ADMIN_API_TOKEN_STORAGE_KEY,
-      JSON.stringify({
-        lineChannelAccessToken: "browser-line-token",
-        lineChannelSecret: "",
-        googleMapsApiKey: ""
-      })
-    );
-    window.localStorage.setItem(
       "tcm-family-line-managed-contacts",
       JSON.stringify([
         {
@@ -1729,11 +1713,11 @@ describe("AdminPages", () => {
     const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(requestBody).toEqual(
       expect.objectContaining({
-        lineChannelAccessToken: "browser-line-token",
         subject: "臨時訪視通知",
         content: "今日訪視時間提前，請家屬協助留意。"
       })
     );
+    expect(requestBody).not.toHaveProperty("lineChannelAccessToken");
     expect(requestBody.recipients[0]).toEqual(
       expect.objectContaining({
         caregiverId: "line-contact:line-contact-a",
@@ -1748,14 +1732,6 @@ describe("AdminPages", () => {
   });
 
   it("AdminFamilyLinePage 可單獨發 LINE 訊息給指定家屬", async () => {
-    window.localStorage.setItem(
-      ADMIN_API_TOKEN_STORAGE_KEY,
-      JSON.stringify({
-        lineChannelAccessToken: "browser-line-token",
-        lineChannelSecret: "",
-        googleMapsApiKey: ""
-      })
-    );
     window.localStorage.setItem(
       "tcm-family-line-managed-contacts",
       JSON.stringify([
@@ -1803,11 +1779,11 @@ describe("AdminPages", () => {
     const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(requestBody).toEqual(
       expect.objectContaining({
-        lineChannelAccessToken: "browser-line-token",
         subject: "單一個案提醒",
         content: "請協助留意今日用藥。"
       })
     );
+    expect(requestBody).not.toHaveProperty("lineChannelAccessToken");
     expect(requestBody.recipients).toHaveLength(1);
     expect(requestBody.recipients[0]).toEqual(
       expect.objectContaining({

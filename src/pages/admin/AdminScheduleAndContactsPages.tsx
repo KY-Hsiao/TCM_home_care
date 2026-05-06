@@ -8,7 +8,6 @@ import { Badge } from "../../shared/ui/Badge";
 import { Panel } from "../../shared/ui/Panel";
 import { formatDateOnly, formatDateTimeFull } from "../../shared/utils/format";
 import { maskPatientName } from "../../shared/utils/patient-name";
-import { loadAdminApiTokenSettings } from "../../shared/utils/admin-api-tokens";
 
 type RouteTimeSlot = "上午" | "下午";
 type PlannerStatus = "scheduled" | "paused" | "on_the_way" | "in_treatment" | "completed";
@@ -1290,26 +1289,6 @@ export function AdminSchedulesPage() {
       return;
     }
 
-    const apiTokens = loadAdminApiTokenSettings();
-    const googleCalendarId = apiTokens.googleCalendarId.trim();
-    const googleApiKey = apiTokens.googleMapsApiKey.trim();
-    if (!googleCalendarId) {
-      setGoogleCalendarDateCheck({
-        status: "idle",
-        message: "尚未在機密管理區設定 Google Calendar ID，無法檢查特定日期行程。",
-        events: []
-      });
-      return;
-    }
-    if (!googleApiKey) {
-      setGoogleCalendarDateCheck({
-        status: "error",
-        message: "尚未在機密管理區設定 Google API Key，無法讀取 Google 日曆。",
-        events: []
-      });
-      return;
-    }
-
     let isCancelled = false;
     setGoogleCalendarDateCheck({
       status: "checking",
@@ -1320,11 +1299,7 @@ export function AdminSchedulesPage() {
     void fetch("/api/deployment/sync?resource=calendar-events", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        date: routeDate,
-        googleCalendarId,
-        googleApiKey
-      })
+      body: JSON.stringify({ date: routeDate })
     })
       .then(async (response) => {
         const payload = await response.json();
@@ -3388,7 +3363,6 @@ export function AdminLeaveRequestsPage() {
               "Content-Type": "application/json"
             },
             body: JSON.stringify({
-              lineChannelAccessToken: loadAdminApiTokenSettings().lineChannelAccessToken.trim(),
               subject: "醫師請假公告",
               content: `您好，${doctorName} ${selectedLeaveRequest.start_date} 至 ${selectedLeaveRequest.end_date} 請假，原訂居家訪視可能需改派或改期。行政人員會再與您確認後續安排。`,
               recipients: selectedLeaveLineRecipients.map((recipient) => ({

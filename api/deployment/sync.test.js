@@ -171,6 +171,8 @@ describe("/api/deployment/sync?resource=app-db", () => {
   });
 
   it("可用 Calendar ID 與 Google API Key 讀取指定日期行程", async () => {
+    vi.stubEnv("GOOGLE_CALENDAR_ID", "doctor@example.com");
+    vi.stubEnv("GOOGLE_MAPS_API_KEY", "google-key");
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
@@ -189,9 +191,7 @@ describe("/api/deployment/sync?resource=app-db", () => {
     const handler = await importHandlerWithQuery(vi.fn());
 
     const result = await callCalendarEvents(handler, {
-      date: "2026-05-06",
-      googleCalendarId: "doctor@example.com",
-      googleApiKey: "google-key"
+      date: "2026-05-06"
     });
 
     expect(result.statusCode).toBe(200);
@@ -211,14 +211,28 @@ describe("/api/deployment/sync?resource=app-db", () => {
   });
 
   it("Calendar ID 缺漏時會回傳明確原因", async () => {
+    vi.stubEnv("GOOGLE_MAPS_API_KEY", "google-key");
     const handler = await importHandlerWithQuery(vi.fn());
 
     const result = await callCalendarEvents(handler, {
-      date: "2026-05-06",
-      googleApiKey: "google-key"
+      date: "2026-05-06"
     });
 
     expect(result.statusCode).toBe(400);
     expect(result.body.reason).toBe("CALENDAR_ID_MISSING");
+  });
+
+  it("Google API Key 缺漏時會回傳明確原因", async () => {
+    vi.stubEnv("GOOGLE_CALENDAR_ID", "doctor@example.com");
+    vi.stubEnv("GOOGLE_MAPS_API_KEY", "");
+    vi.stubEnv("VITE_GOOGLE_MAPS_API_KEY", "");
+    const handler = await importHandlerWithQuery(vi.fn());
+
+    const result = await callCalendarEvents(handler, {
+      date: "2026-05-06"
+    });
+
+    expect(result.statusCode).toBe(400);
+    expect(result.body.reason).toBe("GOOGLE_API_KEY_MISSING");
   });
 });

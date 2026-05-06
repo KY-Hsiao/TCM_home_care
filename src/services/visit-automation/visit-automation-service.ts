@@ -11,7 +11,6 @@ import type {
   VisitAutomationService
 } from "../types";
 import { geolocationScenarios } from "../geolocation/scenarios";
-import { loadAdminApiTokenSettings } from "../../shared/utils/admin-api-tokens";
 
 type ManagedFamilyLineContact = {
   id: string;
@@ -354,8 +353,6 @@ export class MockVisitAutomationService implements VisitAutomationService {
       doctorName: currentDetail.doctor.name,
       lineUserId: contact.lineUserId
     }));
-    const apiTokens = loadAdminApiTokenSettings();
-
     try {
       const response = await fetch("/api/admin/family-line/send", {
         method: "POST",
@@ -363,8 +360,7 @@ export class MockVisitAutomationService implements VisitAutomationService {
         body: JSON.stringify({
           subject,
           content,
-          recipients,
-          lineChannelAccessToken: apiTokens.lineChannelAccessToken
+          recipients
         })
       });
       const payload = (await response.json().catch(() => ({}))) as {
@@ -548,8 +544,6 @@ export class MockVisitAutomationService implements VisitAutomationService {
       doctorName: recipient.doctorName,
       lineUserId: recipient.lineUserId
     }));
-    const apiTokens = loadAdminApiTokenSettings();
-
     try {
       const response = await fetch("/api/admin/family-line/send", {
         method: "POST",
@@ -557,8 +551,7 @@ export class MockVisitAutomationService implements VisitAutomationService {
         body: JSON.stringify({
           subject,
           content,
-          recipients,
-          lineChannelAccessToken: apiTokens.lineChannelAccessToken
+          recipients
         })
       });
       const payload = (await response.json().catch(() => ({}))) as {

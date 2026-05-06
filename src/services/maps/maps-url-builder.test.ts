@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createMapsUrlBuilder } from "./maps-url-builder";
-import { ADMIN_API_TOKEN_STORAGE_KEY } from "../../shared/utils/admin-api-tokens";
 
 describe("maps url builder", () => {
   afterEach(() => {
@@ -205,9 +204,9 @@ describe("maps url builder", () => {
     expect(url).toContain("olng=120.48341");
   });
 
-  it("行政端輸入的 Google Maps API key 也可作為內嵌導航 key", () => {
+  it("未設定 embed api key 時不會使用瀏覽器保存的 Google Maps API key", () => {
     window.localStorage.setItem(
-      ADMIN_API_TOKEN_STORAGE_KEY,
+      "tcm-admin-api-token-settings",
       JSON.stringify({ googleMapsApiKey: "browser-google-key" })
     );
     const maps = createMapsUrlBuilder({ embedApiKey: "" });
@@ -220,11 +219,7 @@ describe("maps url builder", () => {
       originLongitude: 120.48341
     });
 
-    expect(url).toContain("/internal-navigation.html?");
-    expect(url).toContain("key=browser-google-key");
-    expect(url).toContain("v=nav-fixed-small-vector-20260506");
-    expect(url).toContain("dlat=22.886");
-    expect(url).toContain("dlng=120.482");
+    expect(url).toBeNull();
   });
 
   it("未設定 embed api key 時，單站導航不再退回一般內嵌地圖", () => {
@@ -292,17 +287,14 @@ describe("maps url builder", () => {
       "/api/maps/geocode",
       expect.objectContaining({
         method: "POST",
-        body: JSON.stringify({
-          address: "高雄市旗山區延平一路 123 號",
-          googleMapsApiKey: ""
-        })
+        body: JSON.stringify({ address: "高雄市旗山區延平一路 123 號" })
       })
     );
   });
 
-  it("補座標時會帶入行政端輸入的 Google Maps API key", async () => {
+  it("補座標時不會帶入瀏覽器保存的 Google Maps API key", async () => {
     window.localStorage.setItem(
-      ADMIN_API_TOKEN_STORAGE_KEY,
+      "tcm-admin-api-token-settings",
       JSON.stringify({ googleMapsApiKey: "browser-google-key" })
     );
     const fetchMock = vi.fn().mockResolvedValue({
@@ -321,10 +313,7 @@ describe("maps url builder", () => {
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/maps/geocode",
       expect.objectContaining({
-        body: JSON.stringify({
-          address: "高雄市旗山區延平一路 123 號",
-          googleMapsApiKey: "browser-google-key"
-        })
+        body: JSON.stringify({ address: "高雄市旗山區延平一路 123 號" })
       })
     );
   });

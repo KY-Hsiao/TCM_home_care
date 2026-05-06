@@ -108,12 +108,8 @@ describe("/api/admin/family-line/send", () => {
     );
   });
 
-  it("未設定環境變數時可使用前端送入的 LINE token", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      text: async () => ""
-    });
+  it("未設定環境變數時忽略前端送入的 LINE token", async () => {
+    const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
 
     const result = await callSend({
@@ -123,14 +119,8 @@ describe("/api/admin/family-line/send", () => {
       recipients: [{ caregiverId: "cg-001", patientId: "pat-001", lineUserId: "U111" }]
     });
 
-    expect(result.statusCode).toBe(200);
-    expect(fetchMock).toHaveBeenCalledWith(
-      "https://api.line.me/v2/bot/message/multicast",
-      expect.objectContaining({
-        headers: expect.objectContaining({
-          Authorization: "Bearer browser-line-token"
-        })
-      })
-    );
+    expect(result.statusCode).toBe(503);
+    expect(result.body.error).toContain("LINE_CHANNEL_ACCESS_TOKEN");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
