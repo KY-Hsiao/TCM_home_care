@@ -56,10 +56,12 @@ function buildInternalNavigationUrl(input: {
 }) {
   const params = new URLSearchParams({
     destination: input.destination,
-    key: input.mapsApiKey,
     v: "nav-fixed-small-vector-20260506",
     navZoom: "17"
   });
+  if (input.mapsApiKey) {
+    params.set("key", input.mapsApiKey);
+  }
   if (input.mapId) {
     params.set("mapId", input.mapId);
   }
@@ -75,7 +77,7 @@ function buildInternalNavigationUrl(input: {
   if (input.originLongitude !== undefined && input.originLongitude !== null) {
     params.set("olng", String(input.originLongitude));
   }
-  return `/internal-navigation.html?${params.toString()}`;
+  return `/internal-navigation-v2.html?${params.toString()}`;
 }
 
 function buildRouteWaypointQuery(waypoints: RouteMapInput["waypoints"]) {
@@ -143,7 +145,7 @@ export function createMapsUrlBuilder(options?: { embedApiKey?: string | null }):
         longitude: destinationLongitude
       });
       const mapsApiKey = resolveMapsApiKey(embedApiKey);
-      if (!mapsApiKey || destinationLatitude === null || destinationLongitude === null) {
+      if (destinationLatitude === null || destinationLongitude === null) {
         return null;
       }
       return buildInternalNavigationUrl({

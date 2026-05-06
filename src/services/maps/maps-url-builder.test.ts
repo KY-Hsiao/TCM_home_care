@@ -195,7 +195,7 @@ describe("maps url builder", () => {
       originLongitude: 120.48341
     });
 
-    expect(url).toContain("/internal-navigation.html?");
+    expect(url).toContain("/internal-navigation-v2.html?");
     expect(url).toContain("key=general-map-key");
     expect(url).toContain("v=nav-fixed-small-vector-20260506");
     expect(url).toContain("dlat=22.886");
@@ -204,7 +204,7 @@ describe("maps url builder", () => {
     expect(url).toContain("olng=120.48341");
   });
 
-  it("未設定 embed api key 時不會使用瀏覽器保存的 Google Maps API key", () => {
+  it("未設定 embed api key 時不會使用瀏覽器保存的 Google Maps API key，改由內嵌頁讀取後端設定", () => {
     window.localStorage.setItem(
       "tcm-admin-api-token-settings",
       JSON.stringify({ googleMapsApiKey: "browser-google-key" })
@@ -219,10 +219,12 @@ describe("maps url builder", () => {
       originLongitude: 120.48341
     });
 
-    expect(url).toBeNull();
+    expect(url).toContain("/internal-navigation-v2.html?");
+    expect(url).not.toContain("browser-google-key");
+    expect(url).not.toContain("key=");
   });
 
-  it("未設定 embed api key 時，單站導航不再退回一般內嵌地圖", () => {
+  it("未設定 embed api key 時，單站導航會改由內嵌頁向後端讀取 Maps key", () => {
     const maps = createMapsUrlBuilder({ embedApiKey: "" });
 
     const url = maps.buildNavigationEmbedUrl({
@@ -233,7 +235,10 @@ describe("maps url builder", () => {
       originLongitude: 120.48341
     });
 
-    expect(url).toBeNull();
+    expect(url).toContain("/internal-navigation-v2.html?");
+    expect(url).not.toContain("key=");
+    expect(url).toContain("dlat=22.886");
+    expect(url).toContain("dlng=120.482");
   });
 
   it("waypoint 超過上限時會回傳 fallback 狀態", () => {

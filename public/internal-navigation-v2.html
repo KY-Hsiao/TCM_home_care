@@ -1,0 +1,533 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>內嵌導航</title>
+    <style>
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans TC", sans-serif;
+        background: #0f172a;
+      }
+      .nav {
+        position: relative;
+        height: 100vh;
+        width: 100vw;
+        overflow: hidden;
+      }
+      .map {
+        position: absolute;
+        inset: 0;
+        height: 100%;
+        width: 100%;
+      }
+      .top {
+        position: absolute;
+        z-index: 4;
+        left: 12px;
+        right: 12px;
+        top: calc(env(safe-area-inset-top, 0px) + 12px);
+        border-radius: 24px;
+        background: rgba(15, 23, 42, 0.92);
+        color: #fff;
+        padding: 16px;
+        box-shadow: 0 14px 34px rgba(15, 23, 42, 0.32);
+      }
+      .top span {
+        display: block;
+        color: #bfdbfe;
+        font-size: 12px;
+        font-weight: 800;
+        letter-spacing: 0.12em;
+      }
+      .top strong {
+        display: block;
+        margin-top: 5px;
+        font-size: 28px;
+        line-height: 1.18;
+      }
+      .top small {
+        display: block;
+        margin-top: 6px;
+        color: #e0f2fe;
+        font-size: 13px;
+      }
+      .bottom {
+        position: absolute;
+        z-index: 4;
+        left: 12px;
+        right: 12px;
+        bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 8px;
+      }
+      .box {
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.95);
+        padding: 10px 12px;
+        box-shadow: 0 10px 24px rgba(15, 23, 42, 0.2);
+      }
+      .box span {
+        display: block;
+        color: #64748b;
+        font-size: 11px;
+        font-weight: 800;
+      }
+      .box strong {
+        display: block;
+        margin-top: 4px;
+        color: #172033;
+        font-size: 16px;
+      }
+      .hidden {
+        display: none;
+      }
+      .warn {
+        position: absolute;
+        z-index: 5;
+        left: 12px;
+        right: 12px;
+        top: 50%;
+        transform: translateY(-50%);
+        border-radius: 20px;
+        background: #fff7ed;
+        color: #9a3412;
+        padding: 14px 16px;
+        box-shadow: 0 16px 38px rgba(15, 23, 42, 0.25);
+      }
+      #directionsPanel {
+        display: none;
+      }
+      @media (max-width: 560px) {
+        .bottom {
+          grid-template-columns: 1fr 1fr;
+        }
+        .box:last-child {
+          grid-column: 1 / 3;
+        }
+        .top strong {
+          font-size: 24px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="nav">
+      <div id="map" class="map"></div>
+      <div id="fallback" class="warn hidden"></div>
+      <section class="top">
+        <span>前方動作</span>
+        <strong id="currentInstruction">等待定位</strong>
+        <small id="stepDistanceText">允許定位後開始導航</small>
+      </section>
+      <section class="bottom">
+        <div class="box"><span>剩餘距離</span><strong id="distanceText">—</strong></div>
+        <div class="box"><span>剩餘時間</span><strong id="durationText">—</strong></div>
+        <div class="box"><span>速度</span><strong id="speedText">—</strong></div>
+      </section>
+      <div id="directionsPanel"></div>
+    </main>
+    <script>
+      const query = new URLSearchParams(location.search);
+      let mapsApiKey = query.get("key") || "";
+      let mapId = query.get("mapId") || "";
+      const destinationLatitude = Number(query.get("dlat"));
+      const destinationLongitude = Number(query.get("dlng"));
+      const originLatitude = Number(query.get("olat"));
+      const originLongitude = Number(query.get("olng"));
+      const headingOffset = Number(query.get("headingOffset") || 0);
+      const navigationZoom = Number(query.get("navZoom") || 17);
+      const hasDestination =
+        Number.isFinite(destinationLatitude) && Number.isFinite(destinationLongitude);
+      const hasOrigin = Number.isFinite(originLatitude) && Number.isFinite(originLongitude);
+      const $ = (id) => document.getElementById(id);
+
+      let map;
+      let directionsService;
+      let directionsRenderer;
+      let currentMarker;
+      let currentLeg;
+      let currentSteps = [];
+      let stepIndex = 0;
+      let lastRouteAt = 0;
+      let lastHeading = 0;
+      let filteredPosition;
+      let lastRawPosition;
+      let lastSpeedPosition;
+      let lastSpeedAt;
+      let currentSpeed = 0;
+      let wakeLock = null;
+
+      const STEP_ADVANCE_METERS = 55;
+      const ARRIVAL_METERS = 70;
+      const REROUTE_INTERVAL_MS = 28000;
+      const POSITION_ALPHA = 0.42;
+      const HEADING_ALPHA = 0.22;
+      const SPEED_ALPHA = 0.3;
+      const CAR_ICON_PATH =
+        "M -10 -18 L 10 -18 L 15 -7 L 15 12 L 8 20 L -8 20 L -15 12 L -15 -7 Z M -6 -12 L 6 -12 L 9 -5 L -9 -5 Z";
+
+      async function keepAwake() {
+        try {
+          if ("wakeLock" in navigator && document.visibilityState === "visible" && !wakeLock) {
+            wakeLock = await navigator.wakeLock.request("screen");
+            wakeLock.addEventListener("release", () => {
+              wakeLock = null;
+            });
+          }
+        } catch (error) {
+          wakeLock = null;
+        }
+      }
+
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") {
+          void keepAwake();
+        }
+      });
+      window.addEventListener("pagehide", () => {
+        try {
+          wakeLock?.release();
+        } catch (error) {
+          wakeLock = null;
+        }
+      });
+
+      function warn(text) {
+        $("fallback").classList.remove("hidden");
+        $("fallback").textContent = text;
+      }
+
+      function clearWarn() {
+        $("fallback").classList.add("hidden");
+        $("fallback").textContent = "";
+      }
+
+      function stripHtml(html) {
+        const element = document.createElement("div");
+        element.innerHTML = html || "";
+        return element.textContent || "";
+      }
+
+      function resolveAction(html) {
+        const text = stripHtml(html).replace(/\s+/g, "");
+        if (text.includes("迴轉") || text.includes("回轉")) return "迴轉";
+        if (text.includes("左")) return "左轉";
+        if (text.includes("右")) return "右轉";
+        return "直行";
+      }
+
+      function rad(value) {
+        return (value * Math.PI) / 180;
+      }
+
+      function distanceMeters(left, right) {
+        const earthRadius = 6371000;
+        const latDelta = rad(right.lat - left.lat);
+        const lngDelta = rad(right.lng - left.lng);
+        const value =
+          Math.sin(latDelta / 2) ** 2 +
+          Math.cos(rad(left.lat)) *
+            Math.cos(rad(right.lat)) *
+            Math.sin(lngDelta / 2) ** 2;
+        return earthRadius * 2 * Math.atan2(Math.sqrt(value), Math.sqrt(1 - value));
+      }
+
+      function latLngToPoint(latLng) {
+        return { lat: latLng.lat(), lng: latLng.lng() };
+      }
+
+      function formatDistance(meters) {
+        if (!Number.isFinite(meters)) return "—";
+        return meters >= 1000 ? `${(meters / 1000).toFixed(1)}公里` : `${Math.round(meters)}公尺`;
+      }
+
+      function remainingDistance(position, index) {
+        if (!currentLeg) return NaN;
+        let total = currentSteps[index]
+          ? distanceMeters(position, latLngToPoint(currentSteps[index].end_location))
+          : 0;
+        for (let step = index + 1; step < currentSteps.length; step += 1) {
+          total += currentSteps[step].distance?.value || 0;
+        }
+        return total;
+      }
+
+      function routeHeading(from, to) {
+        if (window.google?.maps?.geometry) {
+          return (
+            google.maps.geometry.spherical.computeHeading(
+              new google.maps.LatLng(from.lat, from.lng),
+              new google.maps.LatLng(to.lat, to.lng)
+            ) + 360
+          ) % 360;
+        }
+        return 0;
+      }
+
+      function stepRouteHeading(position, step, target) {
+        const path = step?.path || [];
+        if (path.length > 1) {
+          let bestIndex = 0;
+          let bestDistance = Number.POSITIVE_INFINITY;
+          for (let index = 0; index < path.length - 1; index += 1) {
+            const distance = distanceMeters(position, latLngToPoint(path[index]));
+            if (distance < bestDistance) {
+              bestDistance = distance;
+              bestIndex = index;
+            }
+          }
+          return routeHeading(latLngToPoint(path[bestIndex]), latLngToPoint(path[bestIndex + 1]));
+        }
+        return routeHeading(position, target);
+      }
+
+      function smoothHeading(nextHeading) {
+        const delta = ((nextHeading - lastHeading + 540) % 360) - 180;
+        lastHeading = (lastHeading + delta * HEADING_ALPHA + 360) % 360;
+        return Math.round(lastHeading);
+      }
+
+      function smoothPosition(rawPosition) {
+        if (!filteredPosition) {
+          filteredPosition = rawPosition;
+          return rawPosition;
+        }
+        if (distanceMeters(filteredPosition, rawPosition) < 4) {
+          return filteredPosition;
+        }
+        filteredPosition = {
+          lat: filteredPosition.lat + (rawPosition.lat - filteredPosition.lat) * POSITION_ALPHA,
+          lng: filteredPosition.lng + (rawPosition.lng - filteredPosition.lng) * POSITION_ALPHA
+        };
+        return filteredPosition;
+      }
+
+      function updateSpeed(position, now, geolocationSpeed) {
+        let nextSpeed =
+          Number.isFinite(geolocationSpeed) && geolocationSpeed >= 0 ? geolocationSpeed * 3.6 : null;
+        if (nextSpeed === null && lastSpeedPosition && lastSpeedAt) {
+          const seconds = (now - lastSpeedAt) / 1000;
+          if (seconds > 0.6) {
+            nextSpeed = (distanceMeters(lastSpeedPosition, position) / seconds) * 3.6;
+          }
+        }
+        lastSpeedPosition = position;
+        lastSpeedAt = now;
+        if (nextSpeed !== null && Number.isFinite(nextSpeed)) {
+          currentSpeed = currentSpeed
+            ? currentSpeed * (1 - SPEED_ALPHA) + nextSpeed * SPEED_ALPHA
+            : nextSpeed;
+        }
+      }
+
+      function carIcon(heading) {
+        return {
+          path: CAR_ICON_PATH,
+          scale: 1,
+          rotation: heading,
+          fillColor: "#2563eb",
+          fillOpacity: 1,
+          strokeColor: "#fff",
+          strokeWeight: 2,
+          anchor: new google.maps.Point(0, 0)
+        };
+      }
+
+      function followRoute(position, target, step) {
+        const heading = smoothHeading(
+          (stepRouteHeading(position, step, target) + headingOffset + 360) % 360
+        );
+        try {
+          map.panTo(position);
+          map.setZoom(navigationZoom);
+          map.setTilt(45);
+          map.setHeading(heading);
+        } catch (error) {
+          map.setCenter(position);
+        }
+        currentMarker?.setIcon(carIcon(heading));
+      }
+
+      function updateNavigation(position) {
+        if (!currentLeg || currentSteps.length === 0) return;
+        const destination = latLngToPoint(currentLeg.end_location);
+        const toDestination = distanceMeters(position, destination);
+        if (toDestination <= ARRIVAL_METERS) {
+          $("currentInstruction").textContent = "已接近目的地";
+          $("stepDistanceText").textContent = "可按已抵達";
+          $("speedText").textContent = `${Math.round(currentSpeed)} km/h`;
+          followRoute(position, destination, null);
+          return;
+        }
+
+        while (
+          stepIndex < currentSteps.length - 1 &&
+          distanceMeters(position, latLngToPoint(currentSteps[stepIndex].end_location)) <=
+            STEP_ADVANCE_METERS
+        ) {
+          stepIndex += 1;
+        }
+
+        const step = currentSteps[stepIndex];
+        const stepEnd = latLngToPoint(step.end_location);
+        const distanceToNextStep = distanceMeters(position, stepEnd);
+        followRoute(position, stepEnd, step);
+        $("currentInstruction").textContent = `${formatDistance(distanceToNextStep)}後${resolveAction(
+          step.instructions
+        )}`;
+        $("stepDistanceText").textContent = "";
+        $("distanceText").textContent = formatDistance(remainingDistance(position, stepIndex));
+        $("speedText").textContent = `${Math.round(currentSpeed)} km/h`;
+      }
+
+      function routeFrom(position) {
+        directionsService.route(
+          {
+            origin: position,
+            destination: { lat: destinationLatitude, lng: destinationLongitude },
+            travelMode: google.maps.TravelMode.DRIVING,
+            unitSystem: google.maps.UnitSystem.METRIC
+          },
+          (result, status) => {
+            if (status === "OK" && result) {
+              clearWarn();
+              directionsRenderer.setDirections(result);
+              currentLeg = result.routes[0]?.legs[0];
+              currentSteps = currentLeg?.steps || [];
+              stepIndex = 0;
+              if (currentLeg) {
+                $("distanceText").textContent = currentLeg.distance?.text || "—";
+                $("durationText").textContent = currentLeg.duration?.text || "—";
+                updateNavigation(position);
+              }
+              return;
+            }
+            clearWarn();
+            $("currentInstruction").textContent = "請依地圖前進";
+            $("stepDistanceText").textContent = "";
+          }
+        );
+      }
+
+      function updatePosition(latitude, longitude, force, accuracy, geolocationSpeed) {
+        const rawPosition = { lat: latitude, lng: longitude };
+        const now = Date.now();
+        if (accuracy && accuracy > 90 && filteredPosition) return;
+        const position = force ? rawPosition : smoothPosition(rawPosition);
+        updateSpeed(position, now, geolocationSpeed);
+        if (lastRawPosition && distanceMeters(lastRawPosition, rawPosition) < 1.5 && !force) return;
+        lastRawPosition = rawPosition;
+
+        if (!currentMarker) {
+          currentMarker = new google.maps.Marker({
+            position,
+            map,
+            label: "醫師",
+            icon: carIcon(lastHeading)
+          });
+        } else {
+          currentMarker.setPosition(position);
+        }
+
+        if (force || !currentLeg || now - lastRouteAt > REROUTE_INTERVAL_MS) {
+          routeFrom(position);
+          lastRouteAt = now;
+        } else {
+          updateNavigation(position);
+        }
+      }
+
+      window.initMap = () => {
+        void keepAwake();
+        if (!hasDestination) {
+          warn("目的地缺少座標");
+          return;
+        }
+
+        const start = hasOrigin
+          ? { lat: originLatitude, lng: originLongitude }
+          : { lat: destinationLatitude, lng: destinationLongitude };
+        const mapOptions = {
+          center: start,
+          zoom: navigationZoom,
+          tilt: 45,
+          heading: lastHeading,
+          mapTypeControl: false,
+          streetViewControl: false,
+          fullscreenControl: false,
+          zoomControl: false
+        };
+        if (mapId) {
+          mapOptions.mapId = mapId;
+        }
+        if (window.google?.maps?.RenderingType) {
+          mapOptions.renderingType = google.maps.RenderingType.VECTOR;
+        }
+
+        map = new google.maps.Map($("map"), mapOptions);
+        directionsService = new google.maps.DirectionsService();
+        directionsRenderer = new google.maps.DirectionsRenderer({
+          map,
+          panel: $("directionsPanel"),
+          suppressMarkers: false,
+          preserveViewport: true
+        });
+        if (hasOrigin) {
+          updatePosition(start.lat, start.lng, true, 0, null);
+        }
+        if (navigator.geolocation) {
+          navigator.geolocation.watchPosition(
+            (position) =>
+              updatePosition(
+                position.coords.latitude,
+                position.coords.longitude,
+                false,
+                position.coords.accuracy,
+                position.coords.speed
+              ),
+            () => {},
+            { enableHighAccuracy: true, maximumAge: 2000, timeout: 10000 }
+          );
+        }
+      };
+
+      async function loadMapsConfig() {
+        if (mapsApiKey) return true;
+        try {
+          const response = await fetch("/api/maps/config");
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok || !payload.mapsApiKey) {
+            warn(payload.error || "缺少 Google Maps API key");
+            return false;
+          }
+          mapsApiKey = payload.mapsApiKey;
+          mapId = payload.mapId || mapId;
+          return true;
+        } catch (error) {
+          warn("無法讀取 Google Maps 設定，請確認 Vercel 環境變數。");
+          return false;
+        }
+      }
+
+      async function loadGoogleMaps() {
+        const hasKey = await loadMapsConfig();
+        if (!hasKey) return;
+        const script = document.createElement("script");
+        script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(
+          mapsApiKey
+        )}&callback=initMap&libraries=geometry&language=zh-TW`;
+        script.async = true;
+        script.defer = true;
+        document.head.appendChild(script);
+      }
+
+      void loadGoogleMaps();
+      void keepAwake();
+    </script>
+  </body>
+</html>
