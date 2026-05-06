@@ -196,9 +196,13 @@ describe("maps url builder", () => {
       originLongitude: 120.48341
     });
 
-    expect(url).toContain("https://www.google.com/maps/embed/v1/directions");
+    expect(url).toContain("/internal-navigation.html?");
     expect(url).toContain("key=general-map-key");
-    expect(url).toContain(encodeURIComponent("22.88794,120.48341"));
+    expect(url).toContain("v=nav-fixed-small-vector-20260506");
+    expect(url).toContain("dlat=22.886");
+    expect(url).toContain("dlng=120.482");
+    expect(url).toContain("olat=22.88794");
+    expect(url).toContain("olng=120.48341");
   });
 
   it("行政端輸入的 Google Maps API key 也可作為內嵌導航 key", () => {
@@ -216,9 +220,11 @@ describe("maps url builder", () => {
       originLongitude: 120.48341
     });
 
-    expect(url).toContain("https://www.google.com/maps/embed/v1/directions");
+    expect(url).toContain("/internal-navigation.html?");
     expect(url).toContain("key=browser-google-key");
-    expect(url).toContain("mode=driving");
+    expect(url).toContain("v=nav-fixed-small-vector-20260506");
+    expect(url).toContain("dlat=22.886");
+    expect(url).toContain("dlng=120.482");
   });
 
   it("未設定 embed api key 時，單站導航不再退回一般內嵌地圖", () => {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAppContext } from "../../app/use-app-context";
 import type { NotificationCenterItem, SavedRoutePlan, VisitSchedule } from "../../domain/models";
 import type { RouteMapInput } from "../../services/types";
@@ -1582,7 +1582,7 @@ export function AdminSchedulesPage() {
     });
   };
 
-  const resolveMissingPlannerCoordinates = async (sourceRows: PlannerRow[]) => {
+  const resolveMissingPlannerCoordinates = useCallback(async (sourceRows: PlannerRow[]) => {
     const targetRows = sortPlannerRows(sourceRows).filter(
       (row) => row.checked && !getPlannerRowCoordinate(row)
     );
@@ -1707,9 +1707,9 @@ export function AdminSchedulesPage() {
       failedCount: failedRows.size,
       failureReasons: [...new Set(failedRows.values())]
     };
-  };
+  }, [repositories.patientRepository, services.maps]);
 
-  const geocodePlannerRows = async () => {
+  const geocodePlannerRows = useCallback(async () => {
     const result = await resolveMissingPlannerCoordinates(plannerRows);
     if (result.resolvedCount === 0 && result.failedCount === 0) {
       setGeocodingMessage("目前已勾選個案都有可用座標。");
@@ -1723,7 +1723,7 @@ export function AdminSchedulesPage() {
         : "全部已可納入地圖預覽與自動排序。";
     setGeocodingMessage(`已由 Google Map 補上 ${result.resolvedCount} 位個案座標。${failedText}`);
     return result.rows;
-  };
+  }, [plannerRows, resolveMissingPlannerCoordinates]);
 
   const autoGeocodingRequestKey = useMemo(() => {
     if (!selectedDoctorId || !routeDate || !effectiveSelectedWeekday || !selectedTimeSlot) {
@@ -1756,7 +1756,7 @@ export function AdminSchedulesPage() {
 
     autoGeocodingRequestKeyRef.current = autoGeocodingRequestKey;
     void geocodePlannerRows();
-  }, [autoGeocodingRequestKey, isGeocodingPlannerRows]);
+  }, [autoGeocodingRequestKey, geocodePlannerRows, isGeocodingPlannerRows]);
 
   const autoSortPlannerRows = async () => {
     if (checkedRows.length < 2) {
@@ -3242,13 +3242,17 @@ export function AdminLeaveRequestsPage() {
     leaveRequests[0];
   const deleteConfirmLeaveRequest =
     leaveRequests.find((leaveRequest) => leaveRequest.id === deleteConfirmLeaveRequestId) ?? null;
-  const impactedSchedules = selectedLeaveRequest
-    ? repositories.staffingRepository.getImpactedSchedules(
-        selectedLeaveRequest.doctor_id,
-        selectedLeaveRequest.start_date,
-        selectedLeaveRequest.end_date
-      )
-    : [];
+  const impactedSchedules = useMemo(
+    () =>
+      selectedLeaveRequest
+        ? repositories.staffingRepository.getImpactedSchedules(
+            selectedLeaveRequest.doctor_id,
+            selectedLeaveRequest.start_date,
+            selectedLeaveRequest.end_date
+          )
+        : [],
+    [repositories.staffingRepository, selectedLeaveRequest]
+  );
   const impactedPatientIds = useMemo(
     () => new Set(impactedSchedules.map((schedule) => schedule.patient_id)),
     [impactedSchedules]
@@ -3279,7 +3283,7 @@ export function AdminLeaveRequestsPage() {
 
   useEffect(() => {
     setSelectedLeaveLineRecipientIds(leaveLineRecipients.map((recipient) => recipient.id));
-  }, [selectedLeaveRequest?.id, leaveLineRecipientIdsKey]);
+  }, [leaveLineRecipients, leaveLineRecipientIdsKey, selectedLeaveRequest?.id]);
 
   useEffect(() => {
     if (import.meta.env.MODE === "test") {

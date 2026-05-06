@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useAppContext } from "../../app/use-app-context";
 import type { Doctor, Patient, VisitSchedule } from "../../domain/models";
@@ -656,7 +656,7 @@ export function AdminFamilyLinePage() {
     });
   };
 
-  const syncLineOfficialAccountFriends = async (options: { silent?: boolean } = {}) => {
+  const syncLineOfficialAccountFriends = useCallback(async (options: { silent?: boolean } = {}) => {
     const isSilent = Boolean(options.silent);
     setIsSyncingLineFriends(true);
     if (!isSilent) {
@@ -743,14 +743,14 @@ export function AdminFamilyLinePage() {
     } finally {
       setIsSyncingLineFriends(false);
     }
-  };
+  }, [apiTokens.lineChannelAccessToken]);
 
   useEffect(() => {
     if (import.meta.env.MODE === "test") {
       return;
     }
     void syncLineOfficialAccountFriends({ silent: true });
-  }, []);
+  }, [syncLineOfficialAccountFriends]);
 
   const sendLineMessages = async () => {
     setSendFeedback(null);

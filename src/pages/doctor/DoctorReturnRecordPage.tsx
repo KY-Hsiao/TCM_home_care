@@ -11,8 +11,11 @@ import {
   buildPreviousFourDiagnosisSelections,
   buildFourDiagnosisSummary,
   buildFourDiagnosisSummaryFromRecord,
+  buildReturnRecordCopyText,
   buildReturnRecordCsv,
   buildReturnRecordDraft,
+  buildReturnRecordHtml,
+  buildReturnRecordHtmlFileName,
   buildTreatmentProvidedSummary,
   calculateTreatmentDurationMinutes,
   extractReminderNoteFromRecord,
@@ -23,6 +26,10 @@ import {
   resolvePreviousMedicalHistory
 } from "../../modules/doctor/doctor-return-record";
 import { Panel } from "../../shared/ui/Panel";
+import {
+  loadAdminApiTokenSettings,
+  type AdminApiTokenSettings
+} from "../../shared/utils/admin-api-tokens";
 import {
   formatDateOnly,
   formatDateTimeFull,
@@ -259,6 +266,19 @@ function buildRouteOptionKey(schedule: VisitSchedule) {
     : `route-slot:${schedule.assigned_doctor_id}:${schedule.scheduled_start_at.slice(0, 10)}:${schedule.service_time_slot}`;
 }
 
+function resolveExistingRouteOptionKey(
+  routeOptions: RouteOption[],
+  matchedVisit: CompletedHomeVisitContext | null
+) {
+  if (!matchedVisit) {
+    return undefined;
+  }
+
+  return routeOptions.find((option) =>
+    option.schedules.some((schedule) => schedule.id === matchedVisit.detail.schedule.id)
+  )?.key;
+}
+
 function resolveReturnRecordTimeDefaults(
   matchedVisit: CompletedHomeVisitContext | null
 ): ReturnRecordTimeDefaults {
@@ -390,6 +410,116 @@ function isReturnRecordSchedule(schedule: VisitSchedule) {
   );
 }
 
+function findLatestReturnRecord(
+  records: VisitRecord[],
+  schedules: VisitSchedule[]
+) {
+  const returnScheduleIds = new Set(
+    schedules
+      .filter((schedule) => isReturnRecordSchedule(schedule))
+      .map((schedule) => schedule.id)
+  );
+  const sortedRecords = [...records].sort(
+    (left, right) => new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime()
+  );
+  return (
+    sortedRecords.find(
+      (record) =>
+        returnScheduleIds.has(record.visit_schedule_id) ||
+        record.visit_schedule_id.startsWith("vs-return-")
+    ) ?? sortedRecords[0]
+  );
+}
+
+function downloadTextFile(filename: string, content: string, type: string) {
+  const blob = new Blob([content], { type });
+  const downloadUrl = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = downloadUrl;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(downloadUrl);
+}
+
+function resolveGoogleDriveFolderId(folderUrl: string) {
+  const trimmed = folderUrl.trim();
+  if (!trimmed) {
+    return "";
+  }
+  const foldersMatch = trimmed.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+  if (foldersMatch?.[1]) {
+    return foldersMatch[1];
+  }
+  const queryMatch = trimmed.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  if (queryMatch?.[1]) {
+    return queryMatch[1];
+  }
+  return /^[a-zA-Z0-9_-]+$/.test(trimmed) ? trimmed : "";
+}
+
+async function uploadHtmlToGoogleDrive(input: {
+  settings: AdminApiTokenSettings;
+  filename: string;
+  html: string;
+}) {
+  const accessToken = input.settings.googleDriveAccessToken.trim();
+  const folderId = resolveGoogleDriveFolderId(input.settings.googleDriveFolderUrl);
+  if (!accessToken || !folderId) {
+    return {
+      ok: false,
+      message: "尚未在機密管理區設定 Google Drive API Token 與資料夾連結。"
+    };
+  }
+
+  const metadata = {
+    name: input.filename,
+    mimeType: "text/html",
+    parents: [folderId]
+  };
+  const delimiter = "tcm_home_care_boundary";
+  const body = [
+    `--${delimiter}`,
+    "Content-Type: application/json; charset=UTF-8",
+    "",
+    JSON.stringify(metadata),
+    `--${delimiter}`,
+    "Content-Type: text/html; charset=UTF-8",
+    "",
+    input.html,
+    `--${delimiter}--`
+  ].join("\r\n");
+
+  const response = await fetch(
+    "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink",
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": `multipart/related; boundary=${delimiter}`
+      },
+      body
+    }
+  );
+  const payload = (await response.json().catch(() => ({}))) as {
+    webViewLink?: string;
+    error?: { message?: string };
+  };
+  if (!response.ok) {
+    return {
+      ok: false,
+      message: payload.error?.message ?? `Google Drive 上傳失敗：HTTP ${response.status}`
+    };
+  }
+  return {
+    ok: true,
+    message: payload.webViewLink
+      ? `已儲存到 Google Drive：${payload.webViewLink}`
+      : "已儲存到 Google Drive。"
+  };
+}
+
 type DoctorReturnRecordPageProps = {
   embeddedWindow?: boolean;
   onCloseWindow?: () => void;
@@ -402,6 +532,8 @@ export function DoctorReturnRecordPage({
   const { repositories, session } = useAppContext();
   const [searchParams, setSearchParams] = useSearchParams();
   const [isReturnRecordModalOpen, setIsReturnRecordModalOpen] = useState(true);
+  const [googleDriveStatus, setGoogleDriveStatus] = useState<string | null>(null);
+  const [copiedPatientId, setCopiedPatientId] = useState<string | null>(null);
   const activeDoctor = useMemo(
     () =>
       repositories.patientRepository
@@ -488,8 +620,55 @@ export function DoctorReturnRecordPage({
         } satisfies RouteOption;
       });
 
-    return routeOptionDrafts
-      .filter((option): option is RouteOption => option !== null)
+    const savedRouteOptions = routeOptionDrafts
+      .filter((option): option is RouteOption => option !== null);
+    const savedScheduleIds = new Set(
+      savedRouteOptions.flatMap((option) => option.schedules.map((schedule) => schedule.id))
+    );
+    const fallbackScheduleIds = new Set(
+      [requestedPatientLatestCompletedVisit, latestCompletedHomeVisit]
+        .map((visit) => visit?.detail.schedule.id)
+        .filter((id): id is string => Boolean(id))
+    );
+    const fallbackRouteOptions = Array.from(
+      homeVisitSchedules
+        .filter(
+          (schedule) =>
+            !savedScheduleIds.has(schedule.id) &&
+            fallbackScheduleIds.has(schedule.id)
+        )
+        .reduce<Map<string, VisitSchedule[]>>((result, schedule) => {
+          const key = buildRouteOptionKey(schedule);
+          const existingSchedules = result.get(key) ?? [];
+          result.set(key, [...existingSchedules, schedule]);
+          return result;
+        }, new Map<string, VisitSchedule[]>())
+        .entries()
+    ).map(([key, schedules]) => {
+      const sortedSchedules = [...schedules].sort((left, right) => {
+        const leftOrder = left.route_order ?? Number.MAX_SAFE_INTEGER;
+        const rightOrder = right.route_order ?? Number.MAX_SAFE_INTEGER;
+        if (leftOrder !== rightOrder) {
+          return leftOrder - rightOrder;
+        }
+        return new Date(left.scheduled_start_at).getTime() - new Date(right.scheduled_start_at).getTime();
+      });
+      const firstSchedule = sortedSchedules[0];
+      const routeDate = firstSchedule.scheduled_start_at.slice(0, 10);
+      const serviceTimeSlot = firstSchedule.service_time_slot.includes("下午")
+        ? "下午"
+        : "上午";
+      return {
+        key,
+        routeName: `${formatDateOnly(routeDate)} ${serviceTimeSlot}出巡`,
+        routeDate,
+        serviceTimeSlot,
+        routeGroupId: firstSchedule.route_group_id || null,
+        schedules: sortedSchedules
+      } satisfies RouteOption;
+    });
+
+    return [...savedRouteOptions, ...fallbackRouteOptions]
       .sort((left, right) => {
         const leftLatest = Math.max(
           ...left.schedules.map((schedule) => new Date(schedule.updated_at).getTime())
@@ -499,14 +678,20 @@ export function DoctorReturnRecordPage({
         );
         return rightLatest - leftLatest;
       });
-  }, [homeVisitSchedules, repositories, session.activeDoctorId]);
+  }, [
+    homeVisitSchedules,
+    latestCompletedHomeVisit,
+    repositories,
+    requestedPatientLatestCompletedVisit,
+    session.activeDoctorId
+  ]);
 
   const defaultRouteKey =
     routeOptions.find((option) => option.key === searchParams.get("routeKey"))?.key ??
-    (requestedPatientLatestCompletedVisit
-      ? buildRouteOptionKey(requestedPatientLatestCompletedVisit.detail.schedule)
-      : undefined) ??
-    (latestCompletedHomeVisit ? buildRouteOptionKey(latestCompletedHomeVisit.detail.schedule) : routeOptions[0]?.key ?? "");
+    resolveExistingRouteOptionKey(routeOptions, requestedPatientLatestCompletedVisit) ??
+    resolveExistingRouteOptionKey(routeOptions, latestCompletedHomeVisit) ??
+    routeOptions[0]?.key ??
+    "";
   const defaultRoute = routeOptions.find((option) => option.key === defaultRouteKey) ?? routeOptions[0];
   const defaultRouteCompletedVisit =
     defaultRoute
@@ -650,7 +835,19 @@ export function DoctorReturnRecordPage({
     },
     [repositories, selectedPatientId, selectedRoute, session.activeDoctorId]
   );
-  const previousRecord = useMemo(() => selectedProfile?.visitRecords[0], [selectedProfile]);
+  const previousRecord = useMemo(
+    () =>
+      selectedProfile && selectedPatientId
+        ? findLatestReturnRecord(
+            selectedProfile.visitRecords,
+            repositories.visitRepository.getSchedules({
+              doctorId: session.activeDoctorId,
+              patientId: selectedPatientId
+            })
+          )
+        : undefined,
+    [repositories, selectedPatientId, selectedProfile, session.activeDoctorId]
+  );
   const previousAutoDraftRef = useRef("");
   const previousRecordUpdatedAt = previousRecord?.updated_at ?? "";
   const selectedPatientMedicalHistory = selectedProfile?.patient.important_medical_history ?? "";
@@ -957,6 +1154,18 @@ export function DoctorReturnRecordPage({
       .replace(/\s+/g, "");
     return `此次出巡病歷_${routeDateToken}_${routeNameToken}.csv`;
   }, [exportRows]);
+  const htmlExportFileName = useMemo(() => {
+    if (!exportRows.length) {
+      return "";
+    }
+    return buildReturnRecordHtmlFileName({
+      routeDate: exportRows[0].routeDate,
+      doctorName: exportRows[0].doctorName,
+      serviceTimeSlot: exportRows[0].serviceTimeSlot
+    });
+  }, [exportRows]);
+
+  const htmlExportText = useMemo(() => buildReturnRecordHtml(exportRows), [exportRows]);
 
   const handleExportCsv = () => {
     if (!exportRows.length) {
@@ -976,6 +1185,54 @@ export function DoctorReturnRecordPage({
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(downloadUrl);
+  };
+
+  const handleExportHtml = () => {
+    if (!exportRows.length) {
+      window.alert("尚未找到此次出巡可匯出的病歷資料。");
+      return;
+    }
+    downloadTextFile(
+      htmlExportFileName || "居家個案病例紀錄.html",
+      htmlExportText,
+      "text/html;charset=utf-8"
+    );
+  };
+
+  const handleSaveHtmlToGoogleDrive = async () => {
+    if (!exportRows.length) {
+      window.alert("尚未找到此次出巡可儲存的病歷資料。");
+      return;
+    }
+    setGoogleDriveStatus("正在儲存到 Google Drive。");
+    const result = await uploadHtmlToGoogleDrive({
+      settings: loadAdminApiTokenSettings(),
+      filename: htmlExportFileName || "居家個案病例紀錄.html",
+      html: htmlExportText
+    });
+    setGoogleDriveStatus(result.message);
+    if (!result.ok) {
+      window.alert(result.message);
+    }
+  };
+
+  const handleCopyRecord = async (row: (typeof exportRows)[number]) => {
+    const copyText = buildReturnRecordCopyText(row);
+    try {
+      await navigator.clipboard.writeText(copyText);
+    } catch {
+      const textarea = document.createElement("textarea");
+      textarea.value = copyText;
+      textarea.style.position = "fixed";
+      textarea.style.left = "-9999px";
+      document.body.appendChild(textarea);
+      textarea.focus();
+      textarea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textarea);
+    }
+    setCopiedPatientId(row.linkedHomeVisitScheduleId);
+    window.setTimeout(() => setCopiedPatientId(null), 1600);
   };
 
   const onSubmit = (values: ReturnRecordFormValues) => {
@@ -1188,6 +1445,17 @@ export function DoctorReturnRecordPage({
                 {maskPatientName(matchedCompletedVisit.detail.patient.name)}
               </div>
             ) : null}
+            <div className="mt-4 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="font-semibold text-brand-ink">當日網頁檔名稱</p>
+                <span className="break-all text-xs text-slate-500">
+                  {htmlExportFileName || "尚未產生"}
+                </span>
+              </div>
+              <p className="mt-2 text-xs leading-5">
+                網頁檔會以單次巡診為單位，檔名使用日期、醫師姓名、上午或下午與「居家個案病例紀錄」。
+              </p>
+            </div>
           </div>
 
           <div className="grid gap-3 lg:grid-cols-2 lg:gap-4">
@@ -1424,6 +1692,55 @@ export function DoctorReturnRecordPage({
             >
               建立回院病歷
             </button>
+            <button
+              type="button"
+              onClick={handleExportHtml}
+              disabled={!exportRows.length}
+              className="w-full rounded-full border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-brand-ink disabled:cursor-not-allowed disabled:opacity-50 lg:w-auto"
+            >
+              匯出巡診網頁檔
+            </button>
+            <button
+              type="button"
+              onClick={handleSaveHtmlToGoogleDrive}
+              disabled={!exportRows.length}
+              className="w-full rounded-full bg-brand-forest px-5 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50 lg:w-auto"
+            >
+              儲存到 Google Drive
+            </button>
+          </div>
+          {googleDriveStatus ? (
+            <p className="text-xs text-slate-500">{googleDriveStatus}</p>
+          ) : null}
+          <div className="rounded-[1.5rem] border border-slate-200 bg-white p-4 lg:rounded-3xl">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-sm font-semibold text-brand-ink">當日個案紀錄</p>
+              <span className="text-xs text-slate-500">{exportRows.length} 筆</span>
+            </div>
+            <div className="mt-3 space-y-2">
+              {exportRows.map((row) => (
+                <div
+                  key={row.linkedHomeVisitScheduleId}
+                  className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3 text-sm"
+                >
+                  <div className="min-w-0">
+                    <p className="font-semibold text-brand-ink">
+                      {row.routeOrder ?? ""}｜{maskPatientName(row.patientName)}｜{row.chartNumber}
+                    </p>
+                    <p className="mt-1 line-clamp-2 text-xs text-slate-500">
+                      {row.generatedRecordText || "尚無病歷全文"}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void handleCopyRecord(row)}
+                    className="rounded-full bg-white px-4 py-2 text-xs font-semibold text-brand-forest ring-1 ring-slate-200"
+                  >
+                    {copiedPatientId === row.linkedHomeVisitScheduleId ? "已複製" : "複製"}
+                  </button>
+                </div>
+              ))}
+            </div>
           </div>
     </form>
   );

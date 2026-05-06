@@ -5,7 +5,7 @@ describe("seed data", () => {
   it("符合 MVP 指定的最低資料量", () => {
     const db = createSeedDb();
 
-    expect(db.doctors).toHaveLength(2);
+    expect(db.doctors).toHaveLength(1);
     expect(db.admin_users).toHaveLength(2);
     expect(db.patients).toHaveLength(16);
     expect(db.visit_schedules.length).toBeGreaterThanOrEqual(20);

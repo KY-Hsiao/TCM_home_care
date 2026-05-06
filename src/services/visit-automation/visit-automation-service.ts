@@ -539,7 +539,15 @@ export class MockVisitAutomationService implements VisitAutomationService {
     const subject = "訪視後關心";
     const content =
       "您好，今日居家訪視已完成，醫師已抵達回程終點。請持續觀察個案狀態、補充水分並依醫師建議照護。若有不適或疑問，請回覆此 LINE 訊息。";
-    const recipients = recipientsWithSchedule.map(({ scheduleId: _scheduleId, ...recipient }) => recipient);
+    const recipients = recipientsWithSchedule.map((recipient) => ({
+      caregiverId: recipient.caregiverId,
+      caregiverName: recipient.caregiverName,
+      patientId: recipient.patientId,
+      patientName: recipient.patientName,
+      doctorId: recipient.doctorId,
+      doctorName: recipient.doctorName,
+      lineUserId: recipient.lineUserId
+    }));
     const apiTokens = loadAdminApiTokenSettings();
 
     try {

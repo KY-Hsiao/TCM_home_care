@@ -144,6 +144,24 @@ export type TreatmentProvidedSelections = {
   treatment_topical_medication_note: string;
 };
 
+export type ReturnRecordHtmlRow = ReturnRecordCsvRow;
+
+function escapeHtml(value: string | number | boolean | null | undefined) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function normalizeFileToken(value: string) {
+  return value
+    .replace(/[\\/:*?"<>|]/g, "-")
+    .replace(/\s+/g, "")
+    .trim();
+}
+
 function normalizeTagsWithOther(
   tags: string[],
   otherValue: string,
@@ -338,6 +356,140 @@ export function buildReturnRecordCsv(rows: ReturnRecordCsvRow[]) {
   return [header, ...csvRows]
     .map((columns) => columns.map((value) => escapeCsvCell(value)).join(","))
     .join("\n");
+}
+
+export function buildReturnRecordHtmlFileName(input: {
+  routeDate: string;
+  doctorName: string;
+  serviceTimeSlot: string;
+}) {
+  const dateToken = input.routeDate.replace(/-/g, "");
+  const doctorToken = normalizeFileToken(input.doctorName || "未指定醫師");
+  const slotToken = normalizeFileToken(input.serviceTimeSlot || "未指定時段");
+  return `${dateToken}_${doctorToken}_${slotToken}_居家個案病例紀錄.html`;
+}
+
+export function buildReturnRecordCopyText(row: ReturnRecordHtmlRow) {
+  return [
+    `個案：${row.patientName}（${row.chartNumber}）`,
+    `醫師：${row.doctorName}`,
+    `出巡：${formatDateOnly(row.routeDate)} ${row.serviceTimeSlot}`,
+    `站序：${row.routeOrder ?? ""}`,
+    `回院病歷時間：${formatDateTimeFull(row.returnRecordStartTime)} 至 ${formatDateTimeFull(row.returnRecordEndTime)}`,
+    `主訴：${row.chiefComplaint || "未填寫"}`,
+    row.fourDiagnosisSummary,
+    `病史：${row.medicalHistory || "未填寫"}`,
+    row.reminderNote ? `提醒：${row.reminderNote}` : "",
+    "",
+    row.generatedRecordText
+  ]
+    .filter((line, index, lines) => line || lines[index - 1])
+    .join("\n")
+    .trim();
+}
+
+export function buildReturnRecordHtml(rows: ReturnRecordHtmlRow[]) {
+  const firstRow = rows[0];
+  const title = firstRow
+    ? `${formatDateOnly(firstRow.routeDate)} ${firstRow.doctorName} ${firstRow.serviceTimeSlot} 居家個案病例紀錄`
+    : "居家個案病例紀錄";
+  const generatedAt = formatDateTimeFull(new Date().toISOString());
+  const recordCards = rows
+    .map((row, index) => {
+      const copyText = buildReturnRecordCopyText(row);
+      return `
+        <article class="record-card" id="record-${index + 1}">
+          <div class="record-header">
+            <div>
+              <p class="eyebrow">第 ${escapeHtml(row.routeOrder ?? index + 1)} 站</p>
+              <h2>${escapeHtml(row.patientName)} <span>${escapeHtml(row.chartNumber)}</span></h2>
+            </div>
+            <button type="button" class="copy-button" data-copy-target="record-copy-${index + 1}">複製</button>
+          </div>
+          <dl class="meta-grid">
+            <div><dt>回院病歷時間</dt><dd>${escapeHtml(formatDateTimeFull(row.returnRecordStartTime))} 至 ${escapeHtml(formatDateTimeFull(row.returnRecordEndTime))}</dd></div>
+            <div><dt>居家訪視時間</dt><dd>${escapeHtml(formatDateTimeFull(row.scheduledStartAt))} 至 ${escapeHtml(formatDateTimeFull(row.scheduledEndAt))}</dd></div>
+            <div><dt>主訴</dt><dd>${escapeHtml(row.chiefComplaint || "未填寫")}</dd></div>
+            <div><dt>異常個案</dt><dd>${row.isException ? "是" : "否"}</dd></div>
+          </dl>
+          <section>
+            <h3>四診摘要</h3>
+            <p>${escapeHtml(row.fourDiagnosisSummary || "未填寫")}</p>
+          </section>
+          <section>
+            <h3>病史</h3>
+            <p>${escapeHtml(row.medicalHistory || "未填寫")}</p>
+          </section>
+          ${row.reminderNote ? `<section><h3>提醒內容</h3><p>${escapeHtml(row.reminderNote)}</p></section>` : ""}
+          <section>
+            <h3>病歷全文</h3>
+            <pre>${escapeHtml(row.generatedRecordText || "未填寫")}</pre>
+          </section>
+          <textarea id="record-copy-${index + 1}" class="copy-source" aria-hidden="true">${escapeHtml(copyText)}</textarea>
+        </article>`;
+    })
+    .join("\n");
+
+  return `<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${escapeHtml(title)}</title>
+  <style>
+    body { margin: 0; background: #f8fafc; color: #172033; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    main { width: min(1100px, calc(100% - 32px)); margin: 0 auto; padding: 28px 0 40px; }
+    header { margin-bottom: 18px; }
+    h1 { margin: 0; font-size: 28px; line-height: 1.3; }
+    .summary { margin: 8px 0 0; color: #64748b; }
+    .record-card { margin-top: 16px; border: 1px solid #e2e8f0; border-radius: 8px; background: #fff; padding: 18px; }
+    .record-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; border-bottom: 1px solid #e2e8f0; padding-bottom: 12px; }
+    .eyebrow { margin: 0 0 4px; color: #0f766e; font-size: 13px; font-weight: 700; }
+    h2 { margin: 0; font-size: 22px; }
+    h2 span { color: #64748b; font-size: 16px; font-weight: 600; }
+    h3 { margin: 16px 0 6px; font-size: 15px; }
+    p { margin: 0; line-height: 1.7; white-space: pre-wrap; }
+    pre { margin: 0; white-space: pre-wrap; word-break: break-word; line-height: 1.7; font: 14px/1.7 ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .meta-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 14px 0 0; }
+    dt { color: #64748b; font-size: 12px; font-weight: 700; }
+    dd { margin: 3px 0 0; line-height: 1.6; }
+    .copy-button { border: 1px solid #cbd5e1; border-radius: 999px; background: #fff; color: #172033; padding: 8px 14px; font-weight: 700; cursor: pointer; }
+    .copy-button.copied { background: #0f766e; color: #fff; border-color: #0f766e; }
+    .copy-source { position: absolute; left: -9999px; width: 1px; height: 1px; opacity: 0; }
+    @media (max-width: 720px) { .meta-grid { grid-template-columns: 1fr; } h1 { font-size: 22px; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>${escapeHtml(title)}</h1>
+      <p class="summary">路線：${escapeHtml(firstRow?.routeName ?? "未指定")}｜共 ${rows.length} 位個案｜產生時間：${escapeHtml(generatedAt)}</p>
+    </header>
+    ${recordCards || "<p>尚無病歷資料。</p>"}
+  </main>
+  <script>
+    document.querySelectorAll(".copy-button").forEach(function(button) {
+      button.addEventListener("click", async function() {
+        var target = document.getElementById(button.getAttribute("data-copy-target"));
+        var text = target ? target.value : "";
+        try {
+          await navigator.clipboard.writeText(text);
+        } catch (error) {
+          target.focus();
+          target.select();
+          document.execCommand("copy");
+        }
+        button.textContent = "已複製";
+        button.classList.add("copied");
+        window.setTimeout(function() {
+          button.textContent = "複製";
+          button.classList.remove("copied");
+        }, 1600);
+      });
+    });
+  </script>
+</body>
+</html>`;
 }
 
 export function resolvePreviousMedicalHistory(record: VisitRecord | undefined, fallback = "") {

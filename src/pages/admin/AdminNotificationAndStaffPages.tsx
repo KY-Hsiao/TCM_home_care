@@ -559,9 +559,38 @@ export function AdminStaffPage() {
                     className="w-full rounded-2xl border border-slate-200 px-4 py-3"
                   />
                 </label>
+                <label className="block">
+                  <span className="mb-1 block font-medium text-brand-ink">Google Drive API Token</span>
+                  <a
+                    href="https://developers.google.com/drive/api/guides/manage-uploads"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mb-2 inline-flex text-xs font-semibold text-emerald-700 underline decoration-emerald-200 underline-offset-4"
+                  >
+                    Google Drive 上傳說明
+                  </a>
+                  <input
+                    type="password"
+                    aria-label="Google Drive API Token"
+                    value={apiTokens.googleDriveAccessToken}
+                    onChange={(event) => updateApiToken("googleDriveAccessToken", event.target.value)}
+                    placeholder="貼上可寫入 Drive 的 OAuth access token"
+                    className="w-full rounded-2xl border border-slate-200 px-4 py-3"
+                  />
+                </label>
+                <label className="block">
+                  <span className="mb-1 block font-medium text-brand-ink">Google Drive 資料夾連結</span>
+                  <input
+                    aria-label="Google Drive 資料夾連結"
+                    value={apiTokens.googleDriveFolderUrl}
+                    onChange={(event) => updateApiToken("googleDriveFolderUrl", event.target.value)}
+                    placeholder="貼上 Google Drive folder URL 或 folder ID"
+                    className="w-full rounded-2xl border border-slate-200 px-4 py-3"
+                  />
+                </label>
               </div>
               <p className="mt-3 text-xs text-slate-500">
-                Token 與 Calendar ID 會保存在這台瀏覽器，用於 LINE 群發/好友同步、排程頁 Google 補座標，以及後續判斷 Google 日曆特定日期是否有行程。正式部署仍建議同步設定環境變數。
+                Token、Calendar ID 與 Drive 資料夾連結會保存在這台瀏覽器，用於 LINE 群發/好友同步、排程頁 Google 補座標、Google 日曆查詢，以及回院病歷網頁檔儲存到 Google Drive。正式部署仍建議同步設定環境變數。
               </p>
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <button

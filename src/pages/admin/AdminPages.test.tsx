@@ -1112,8 +1112,8 @@ describe("AdminPages", () => {
 
     renderWithProviders(<AdminDoctorTrackingPage />);
 
-    expect(screen.getByLabelText("路線日期")).toHaveValue("2026-05-05");
-    expect(screen.getByRole("combobox", { name: "規劃時段" })).toHaveValue("上午");
+    expect(screen.getByLabelText("路線日期")).toHaveValue("2026-05-06");
+    expect(screen.getByRole("combobox", { name: "規劃時段" })).toHaveValue("下午");
 
     fireEvent.change(screen.getByLabelText("路線日期"), {
       target: { value: "2026-05-06" }
@@ -2060,8 +2060,8 @@ describe("AdminPages", () => {
           {
             id: "leave-001",
             doctor_id: "doc-001",
-            start_date: "2026-05-05",
-            end_date: "2026-05-05",
+            start_date: "2026-05-06",
+            end_date: "2026-05-06",
             reason: "院內會議",
             handoff_note: "請協助檢查上午個案。",
             status: "pending",
@@ -2077,7 +2077,7 @@ describe("AdminPages", () => {
     expect(screen.getByRole("heading", { name: "待處理請假" })).toBeInTheDocument();
     expect(screen.getByText("院內會議")).toBeInTheDocument();
     expect(screen.getByText("請協助檢查上午個案。")).toBeInTheDocument();
-    expect(screen.getByText("5 筆")).toBeInTheDocument();
+    expect(screen.getByText("7 筆")).toBeInTheDocument();
     expect(screen.queryByText("王麗珠")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "核准請假" }));
@@ -2822,7 +2822,7 @@ describe("AdminPages", () => {
     fireEvent.click(screen.getByRole("button", { name: "刪除個案" }));
 
     expect(screen.getByRole("status")).toHaveTextContent(
-      "已刪除 李○蘭，並清除 3 筆相關排程，其中 1 筆進行中訪視已取消並除名。"
+      "已刪除 李○蘭，並清除 2 筆相關排程，其中 1 筆進行中訪視已取消並除名。"
     );
     expect(screen.queryByRole("button", { name: "編輯 李○蘭" })).not.toBeInTheDocument();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();

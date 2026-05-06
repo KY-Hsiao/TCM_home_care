@@ -3,6 +3,8 @@ export type AdminApiTokenSettings = {
   lineChannelSecret: string;
   googleMapsApiKey: string;
   googleCalendarId: string;
+  googleDriveAccessToken: string;
+  googleDriveFolderUrl: string;
 };
 
 export const ADMIN_API_TOKEN_STORAGE_KEY = "tcm-admin-api-token-settings";
@@ -11,7 +13,9 @@ export const defaultAdminApiTokenSettings: AdminApiTokenSettings = {
   lineChannelAccessToken: "",
   lineChannelSecret: "",
   googleMapsApiKey: "",
-  googleCalendarId: ""
+  googleCalendarId: "",
+  googleDriveAccessToken: "",
+  googleDriveFolderUrl: ""
 };
 
 export function loadAdminApiTokenSettings(): AdminApiTokenSettings {

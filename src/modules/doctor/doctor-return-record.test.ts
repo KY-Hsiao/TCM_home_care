@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildReturnRecordCopyText,
   buildReturnRecordCsv,
   buildPreviousFourDiagnosisSelections,
+  buildReturnRecordHtml,
+  buildReturnRecordHtmlFileName,
   buildReturnRecordDraft,
   calculateTreatmentDurationMinutes,
   fourDiagnosisOptions,
@@ -223,5 +226,46 @@ describe("doctor return record helpers", () => {
     expect(csv).toContain(
       "\"治療日期：1150510\n開始治療時間：1020\n結束治療時間：1050\n四診：望 少神；聞 語音低弱\n主訴：腰痠,夜尿多\""
     );
+  });
+
+  it("會輸出單次巡診網頁檔名稱與每案複製內容", () => {
+    const row = {
+      routeDate: "2026-05-10",
+      routeName: "2026/05/10 上午出巡",
+      doctorName: "蕭坤元醫師",
+      serviceTimeSlot: "上午",
+      routeOrder: 1,
+      patientName: "王麗珠",
+      chartNumber: "TCM-001",
+      scheduledStartAt: "2026-05-10T01:10:00.000Z",
+      scheduledEndAt: "2026-05-10T01:50:00.000Z",
+      departureFromPatientHomeTime: "2026-05-10T01:55:00.000Z",
+      returnRecordStartTime: "2026-05-10T02:20:00.000Z",
+      returnRecordEndTime: "2026-05-10T02:50:00.000Z",
+      chiefComplaint: "腰痠",
+      fourDiagnosisSummary: "四診：望 少神；聞 語音低弱",
+      medicalHistory: "糖尿病",
+      isException: false,
+      reminderNote: "請追蹤夜間翻身狀況",
+      generatedRecordText: "治療日期：1150510\n開始治療時間：1020\n結束治療時間：1050",
+      linkedHomeVisitScheduleId: "vs-home-1",
+      returnRecordScheduleId: "vs-return-1"
+    };
+
+    expect(
+      buildReturnRecordHtmlFileName({
+        routeDate: row.routeDate,
+        doctorName: row.doctorName,
+        serviceTimeSlot: row.serviceTimeSlot
+      })
+    ).toBe("20260510_蕭坤元醫師_上午_居家個案病例紀錄.html");
+
+    expect(buildReturnRecordCopyText(row)).toContain("個案：王麗珠（TCM-001）");
+    expect(buildReturnRecordCopyText(row)).toContain("治療日期：1150510");
+
+    const html = buildReturnRecordHtml([row]);
+    expect(html).toContain("<title>2026/05/10 蕭坤元醫師 上午 居家個案病例紀錄</title>");
+    expect(html).toContain('class="copy-button"');
+    expect(html).toContain("王麗珠");
   });
 });
