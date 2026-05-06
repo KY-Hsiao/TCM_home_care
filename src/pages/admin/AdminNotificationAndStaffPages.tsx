@@ -561,14 +561,6 @@ export function AdminStaffPage() {
                 </label>
                 <label className="block">
                   <span className="mb-1 block font-medium text-brand-ink">Google Drive API Token</span>
-                  <a
-                    href="https://developers.google.com/drive/api/guides/manage-uploads"
-                    target="_blank"
-                    rel="noreferrer"
-                    className="mb-2 inline-flex text-xs font-semibold text-emerald-700 underline decoration-emerald-200 underline-offset-4"
-                  >
-                    Google Drive 上傳說明
-                  </a>
                   <input
                     type="password"
                     aria-label="Google Drive API Token"
