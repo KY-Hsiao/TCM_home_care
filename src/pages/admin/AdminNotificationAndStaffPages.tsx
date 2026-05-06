@@ -46,56 +46,118 @@ type EnvStatus = {
 
 type ConnectionTestService = "google-maps" | "gpt" | "google-drive";
 
-const envVariableLabels: Array<{ key: EnvVariableName; label: string; usage: string }> = [
+type EnvSetupItem = {
+  key: EnvVariableName;
+  label: string;
+  note: string;
+  source: string;
+};
+
+type EnvServiceGroup = {
+  title: string;
+  description: string;
+  requiredKeys: EnvVariableName[];
+  readyText: string;
+  pendingText: string;
+  items: EnvSetupItem[];
+};
+
+const envServiceGroups: EnvServiceGroup[] = [
   {
-    key: "LINE_CHANNEL_ACCESS_TOKEN",
-    label: "LINE Channel Access Token",
-    usage: "LINE 家屬通知發送"
+    title: "LINE 家屬通知",
+    description: "用於家屬 LINE 推播與 webhook 驗證。",
+    requiredKeys: ["LINE_CHANNEL_ACCESS_TOKEN", "LINE_CHANNEL_SECRET"],
+    readyText: "LINE 可用",
+    pendingText: "LINE 尚未完成",
+    items: [
+      {
+        key: "LINE_CHANNEL_ACCESS_TOKEN",
+        label: "LINE Channel Access Token",
+        note: "發送家屬通知需要這個 token。",
+        source: "LINE Developers > Messaging API channel > Messaging API > Channel access token，按 Issue/Reissue 取得。"
+      },
+      {
+        key: "LINE_CHANNEL_SECRET",
+        label: "LINE Channel Secret",
+        note: "驗證 LINE webhook 來源需要這個 secret。",
+        source: "LINE Developers > Messaging API channel > Basic settings > Channel secret。"
+      }
+    ]
   },
   {
-    key: "LINE_CHANNEL_SECRET",
-    label: "LINE Channel Secret",
-    usage: "LINE webhook 驗證"
+    title: "GPT / OpenAI",
+    description: "用於 GPT 連線測試與後續 AI 功能。",
+    requiredKeys: ["OPENAI_API_KEY"],
+    readyText: "GPT 可用",
+    pendingText: "GPT 尚未完成",
+    items: [
+      {
+        key: "OPENAI_API_KEY",
+        label: "OpenAI API Key",
+        note: "後端呼叫 GPT 時使用，不會傳到瀏覽器。",
+        source: "OpenAI Platform > API keys 建立 Project key，再貼到 Vercel。"
+      }
+    ]
   },
   {
-    key: "OPENAI_API_KEY",
-    label: "OpenAI API Key",
-    usage: "GPT 連線與後續 AI 功能"
+    title: "Google Maps / Calendar",
+    description: "用於補座標、路線地點解析與排程日期行程檢查。",
+    requiredKeys: ["GOOGLE_MAPS_API_KEY", "GOOGLE_CALENDAR_ID"],
+    readyText: "Maps / Calendar 可用",
+    pendingText: "Maps / Calendar 尚未完成",
+    items: [
+      {
+        key: "GOOGLE_MAPS_API_KEY",
+        label: "Google Maps API Key",
+        note: "補座標會用到，Google Cloud 專案需啟用 Geocoding API。",
+        source: "Google Cloud Console > APIs & Services > Credentials 建立 API key，建議限制可用 API。"
+      },
+      {
+        key: "GOOGLE_CALENDAR_ID",
+        label: "Google Calendar ID",
+        note: "排程日期檢查會讀取這個日曆。",
+        source: "Google Calendar > 日曆設定 > 整合日曆 > 日曆 ID。"
+      }
+    ]
   },
   {
-    key: "GOOGLE_MAPS_API_KEY",
-    label: "Google Maps API Key",
-    usage: "補座標與 Google 日曆地點解析"
-  },
-  {
-    key: "GOOGLE_CALENDAR_ID",
-    label: "Google Calendar ID",
-    usage: "排程日期行程檢查"
-  },
-  {
-    key: "GOOGLE_DRIVE_ACCESS_TOKEN",
-    label: "Google Drive Access Token",
-    usage: "回院病歷 HTML 上傳；短效備援，建議改用 Refresh Token"
-  },
-  {
-    key: "GOOGLE_DRIVE_REFRESH_TOKEN",
-    label: "Google Drive Refresh Token",
-    usage: "回院病歷 Drive 授權自動更新"
-  },
-  {
-    key: "GOOGLE_DRIVE_CLIENT_ID",
-    label: "Google Drive Client ID",
-    usage: "Refresh Token 換取 Drive Access Token"
-  },
-  {
-    key: "GOOGLE_DRIVE_CLIENT_SECRET",
-    label: "Google Drive Client Secret",
-    usage: "Refresh Token 換取 Drive Access Token"
-  },
-  {
-    key: "GOOGLE_DRIVE_FOLDER_ID",
-    label: "Google Drive Folder ID",
-    usage: "回院病歷儲存資料夾"
+    title: "Google Drive 回院病歷",
+    description: "用於上傳 HTML 病歷、列出 Drive 既有病歷，並讓使用者選擇前次紀錄。",
+    requiredKeys: ["GOOGLE_DRIVE_FOLDER_ID"],
+    readyText: "Drive 可用",
+    pendingText: "Drive 尚未完成",
+    items: [
+      {
+        key: "GOOGLE_DRIVE_FOLDER_ID",
+        label: "Google Drive Folder ID",
+        note: "回院病歷儲存的資料夾。",
+        source: "開啟 Google Drive 資料夾，網址 /folders/ 後面的字串就是 Folder ID。"
+      },
+      {
+        key: "GOOGLE_DRIVE_REFRESH_TOKEN",
+        label: "Google Drive Refresh Token",
+        note: "建議設定。可自動換新 access token，避免一小時後失效。",
+        source: "Google Cloud OAuth Client 搭配 Drive API scope 取得 refresh_token。"
+      },
+      {
+        key: "GOOGLE_DRIVE_CLIENT_ID",
+        label: "Google Drive Client ID",
+        note: "Refresh Token 換取 Drive access token 需要。",
+        source: "Google Cloud Console > APIs & Services > Credentials > OAuth 2.0 Client IDs。"
+      },
+      {
+        key: "GOOGLE_DRIVE_CLIENT_SECRET",
+        label: "Google Drive Client Secret",
+        note: "Refresh Token 換取 Drive access token 需要。",
+        source: "同一個 OAuth Client 的 Client secret。"
+      },
+      {
+        key: "GOOGLE_DRIVE_ACCESS_TOKEN",
+        label: "Google Drive Access Token",
+        note: "只當短效備援，通常約 1 小時會過期；正式環境不建議只靠這個。",
+        source: "OAuth Playground 或 OAuth 流程可臨時換取，但過期後必須更新 Vercel 再重新部署。"
+      }
+    ]
   }
 ];
 
@@ -564,6 +626,55 @@ export function AdminStaffPage() {
     setRecentAction(`已移除 ${draft.name || "該角色"}。`);
   };
 
+  const getEnvVariableStatus = (key: EnvVariableName) => envStatus?.variables?.[key];
+  const resolveEnvGroupStatus = (group: EnvServiceGroup) => {
+    if (!envStatus) {
+      return {
+        ready: false,
+        label: isLoadingEnvStatus ? "讀取中" : "尚未讀取",
+        detail: "按「重新整理狀態」後，系統會從後端讀取 Vercel 是否已設定，不會顯示任何 token 值。",
+        missingKeys: [] as EnvVariableName[]
+      };
+    }
+
+    if (group.title === "Google Drive 回院病歷") {
+      const hasFolder = Boolean(getEnvVariableStatus("GOOGLE_DRIVE_FOLDER_ID"));
+      const hasRefreshToken = Boolean(getEnvVariableStatus("GOOGLE_DRIVE_REFRESH_TOKEN"));
+      const hasClientId = Boolean(getEnvVariableStatus("GOOGLE_DRIVE_CLIENT_ID"));
+      const hasClientSecret = Boolean(getEnvVariableStatus("GOOGLE_DRIVE_CLIENT_SECRET"));
+      const hasAccessToken = Boolean(getEnvVariableStatus("GOOGLE_DRIVE_ACCESS_TOKEN"));
+      const refreshTokenReady = hasRefreshToken && hasClientId && hasClientSecret;
+      const ready = hasFolder && (refreshTokenReady || hasAccessToken);
+      const missingKeys: EnvVariableName[] = [];
+      if (!hasFolder) {
+        missingKeys.push("GOOGLE_DRIVE_FOLDER_ID");
+      }
+      if (!refreshTokenReady && !hasAccessToken) {
+        missingKeys.push("GOOGLE_DRIVE_REFRESH_TOKEN", "GOOGLE_DRIVE_CLIENT_ID", "GOOGLE_DRIVE_CLIENT_SECRET");
+      }
+
+      return {
+        ready,
+        label: ready ? group.readyText : group.pendingText,
+        detail: refreshTokenReady
+          ? "目前使用 Refresh Token 方案，Drive 授權可自動更新。"
+          : hasAccessToken
+            ? "目前只使用短效 Access Token；若 Drive 顯示授權失效，請改補 Refresh Token 三件組。"
+            : "需要 Folder ID，並設定 Refresh Token 三件組；Access Token 只建議當臨時備援。",
+        missingKeys
+      };
+    }
+
+    const missingKeys = group.requiredKeys.filter((key) => !getEnvVariableStatus(key));
+    const ready = missingKeys.length === 0;
+    return {
+      ready,
+      label: ready ? group.readyText : group.pendingText,
+      detail: ready ? "必要設定已存在，可使用下方測試按鈕確認連線。" : "請先補齊缺少的 Vercel 環境變數。",
+      missingKeys
+    };
+  };
+
   return (
     <div className="space-y-6">
       {recentAction ? (
@@ -592,33 +703,74 @@ export function AdminStaffPage() {
           {isSecretManagementOpen ? (
             <>
               <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-                <p className="font-semibold text-brand-ink">Vercel 環境變數設定狀態</p>
+                <p className="font-semibold text-brand-ink">外部服務設定狀態</p>
                 <p className="mt-1">
-                  API Token 不再由瀏覽器輸入或保存。請在 Vercel 專案的 Environment Variables 設定下列變數，前端只會檢查是否已設定，不會顯示任何 token 值。Google Drive 建議使用 Refresh Token，避免 Access Token 到期後上傳失敗。
+                  Token 不再由瀏覽器輸入或保存。請到 Vercel 專案的 Settings / Environment Variables 設定，
+                  然後重新部署 Production。此畫面只顯示「是否已設定」，不會顯示任何 token 值。
                 </p>
               </div>
-              <div className="mt-4 grid gap-3 text-sm lg:grid-cols-2 xl:grid-cols-3">
-                {envVariableLabels.map((item) => {
-                  const configured = envStatus?.variables?.[item.key] ?? false;
+              <div className="mt-4 grid gap-4 text-sm xl:grid-cols-2">
+                {envServiceGroups.map((group) => {
+                  const groupStatus = resolveEnvGroupStatus(group);
                   return (
-                    <div key={item.key} className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                    <div key={group.title} className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
                       <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <p className="font-semibold text-brand-ink">{item.label}</p>
-                          <p className="mt-1 text-xs text-slate-500">{item.key}</p>
+                        <div className="min-w-0">
+                          <p className="font-semibold text-brand-ink">{group.title}</p>
+                          <p className="mt-1 text-xs text-slate-500">{group.description}</p>
                         </div>
                         <span
                           className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                            configured ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"
+                            groupStatus.ready ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"
                           }`}
                         >
-                          {configured ? "已設定" : "未設定"}
+                          {groupStatus.label}
                         </span>
                       </div>
-                      <p className="mt-3 text-xs text-slate-500">{item.usage}</p>
+                      <p className="mt-3 text-xs font-semibold text-slate-600">{groupStatus.detail}</p>
+                      {groupStatus.missingKeys.length > 0 ? (
+                        <p className="mt-2 text-xs text-amber-700">
+                          缺少：{groupStatus.missingKeys.join("、")}
+                        </p>
+                      ) : null}
+                      <div className="mt-3 space-y-2 border-t border-slate-100 pt-3">
+                        {group.items.map((item) => {
+                          const configured = getEnvVariableStatus(item.key);
+                          return (
+                            <div key={item.key} className="rounded-xl bg-slate-50 px-3 py-2">
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <div>
+                                  <p className="text-xs font-semibold text-brand-ink">{item.label}</p>
+                                  <p className="mt-0.5 font-mono text-[11px] text-slate-500">{item.key}</p>
+                                </div>
+                                <span
+                                  className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
+                                    configured === undefined
+                                      ? "bg-slate-200 text-slate-600"
+                                      : configured
+                                        ? "bg-emerald-100 text-emerald-800"
+                                        : "bg-amber-100 text-amber-800"
+                                  }`}
+                                >
+                                  {configured === undefined ? "待讀取" : configured ? "已設定" : "未設定"}
+                                </span>
+                              </div>
+                              <p className="mt-2 text-xs text-slate-600">{item.note}</p>
+                              <p className="mt-1 text-xs text-slate-500">取得方式：{item.source}</p>
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
                   );
                 })}
+              </div>
+              <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
+                <p className="font-semibold">Google Drive 建議設定方式</p>
+                <p className="mt-1">
+                  正式使用請設定 `GOOGLE_DRIVE_REFRESH_TOKEN`、`GOOGLE_DRIVE_CLIENT_ID`、`GOOGLE_DRIVE_CLIENT_SECRET`
+                  與 `GOOGLE_DRIVE_FOLDER_ID`。只設定 `GOOGLE_DRIVE_ACCESS_TOKEN` 會很容易過期，出現授權失效時需要重新產生 token。
+                </p>
               </div>
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <button
