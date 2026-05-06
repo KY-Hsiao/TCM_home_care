@@ -317,8 +317,6 @@ describe("DoctorReturnRecordPage", () => {
 
     renderWithProviders(<DoctorReturnRecordPage />, "/doctor/return-records?patientId=pat-001");
 
-    fireEvent.click(screen.getByRole("button", { name: "讀取 Google Drive 檔案清單" }));
-
     await waitFor(() => {
       expect(screen.getByLabelText("選擇歷史病歷檔案")).toBeInTheDocument();
     });
@@ -339,6 +337,25 @@ describe("DoctorReturnRecordPage", () => {
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/admin/google-drive?action=records&fileId=drive-file-1"
     );
+  });
+
+  it("Google Drive 授權失效時會提示改設定 refresh token", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+      json: async () => ({
+        reason: "GOOGLE_DRIVE_AUTH_INVALID",
+        error: "Google Drive 授權已失效。"
+      })
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderWithProviders(<DoctorReturnRecordPage />, "/doctor/return-records?patientId=pat-001");
+
+    await waitFor(() => {
+      expect(screen.getByText(/請到 Vercel 改設定 GOOGLE_DRIVE_REFRESH_TOKEN/)).toBeInTheDocument();
+    });
+    expect(screen.queryByLabelText("選擇歷史病歷檔案")).not.toBeInTheDocument();
   });
 
   it("會對應剛完成的居家訪視時間作為回院病歷設定時間", () => {

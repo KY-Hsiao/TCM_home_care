@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { addMinutes } from "date-fns";
 import { useForm, useWatch } from "react-hook-form";
@@ -867,11 +867,27 @@ async function fetchGoogleDriveRecordFiles() {
   const payload = (await response.json().catch(() => ({}))) as {
     files?: DriveReturnRecordFile[];
     error?: string;
+    reason?: string;
   };
   if (!response.ok) {
-    throw new Error(payload.error ?? `Google Drive 病歷檔清單讀取失敗：HTTP ${response.status}`);
+    const error = new Error(payload.error ?? `Google Drive 病歷檔清單讀取失敗：HTTP ${response.status}`);
+    error.name = payload.reason ?? `HTTP_${response.status}`;
+    throw error;
   }
   return Array.isArray(payload.files) ? payload.files : [];
+}
+
+function formatGoogleDriveHistoryError(error: unknown) {
+  if (error instanceof Error) {
+    if (error.name === "GOOGLE_DRIVE_AUTH_INVALID") {
+      return "Google Drive 授權已失效，無法載入已儲存檔案。請到 Vercel 改設定 GOOGLE_DRIVE_REFRESH_TOKEN、GOOGLE_DRIVE_CLIENT_ID、GOOGLE_DRIVE_CLIENT_SECRET，或更新短效 GOOGLE_DRIVE_ACCESS_TOKEN 後重新部署。";
+    }
+    if (error.name === "GOOGLE_DRIVE_AUTH_ENV_MISSING" || error.name === "GOOGLE_DRIVE_ENV_MISSING") {
+      return "Google Drive 尚未完成 Vercel 環境變數設定，請確認 GOOGLE_DRIVE_FOLDER_ID 與 Drive 授權變數。";
+    }
+    return error.message;
+  }
+  return "Google Drive 歷史病歷檔讀取失敗。";
 }
 
 async function fetchGoogleDriveRecordHtml(fileId: string) {
@@ -1318,7 +1334,7 @@ export function DoctorReturnRecordPage({
     setDraftSaveMessage("已載入此個案前次病歷內容，可再依本次狀況修改。");
   };
 
-  const loadDriveHistoryFiles = async () => {
+  const loadDriveHistoryFiles = useCallback(async () => {
     setDriveHistory((current) => ({
       ...current,
       status: "loading",
@@ -1340,14 +1356,19 @@ export function DoctorReturnRecordPage({
       setDriveHistory({
         status: "error",
         files: [],
-        message:
-          error instanceof Error
-            ? error.message
-            : "Google Drive 歷史病歷檔讀取失敗。"
+        message: formatGoogleDriveHistoryError(error)
       });
       setSelectedDriveFileId("");
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    if (!selectedProfile || driveHistory.status !== "idle") {
+      return;
+    }
+
+    void loadDriveHistoryFiles();
+  }, [driveHistory.status, loadDriveHistoryFiles, selectedProfile]);
 
   const loadSelectedDriveRecordIntoForm = async () => {
     if (!selectedProfile || !selectedPatientId || !selectedDriveFileId) {
@@ -1977,14 +1998,14 @@ export function DoctorReturnRecordPage({
             {selectedProfile ? (
               <div className="mt-4 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600">
                 <div className="flex flex-wrap items-center justify-between gap-3">
-                  <p>從 Google Drive 歷史病歷檔選擇日期或檔案，再載入目前個案的主訴、四診、病史與病歷草稿內容。</p>
+                  <p>系統會自動載入 Google Drive 歷史病歷檔清單；選擇日期或檔案後，可帶入目前個案的主訴、四診、病史與病歷草稿內容。</p>
                   <button
                     type="button"
                     onClick={loadDriveHistoryFiles}
                     disabled={driveHistory.status === "loading"}
                     className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-brand-forest disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    {driveHistory.status === "loading" ? "讀取中" : "讀取 Google Drive 檔案清單"}
+                    {driveHistory.status === "loading" ? "讀取中" : "重新讀取 Google Drive 檔案清單"}
                   </button>
                 </div>
                 {driveHistory.message ? (
