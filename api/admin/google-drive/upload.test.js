@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import handler from "./upload.js";
+import handler from "./[action].js";
 
 function createResponse() {
   return {
@@ -23,7 +23,7 @@ function createResponse() {
 
 async function callUpload(body, method = "POST") {
   const response = createResponse();
-  await handler({ method, body }, response);
+  await handler({ method, body, query: { action: "upload" } }, response);
   return {
     statusCode: response.statusCode,
     headers: response.headers,

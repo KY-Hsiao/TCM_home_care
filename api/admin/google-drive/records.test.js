@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import handler from "./records.js";
+import handler from "./[action].js";
 
 function createResponse() {
   return {
@@ -23,7 +23,7 @@ function createResponse() {
 
 async function callRecords(query = {}, method = "GET") {
   const response = createResponse();
-  await handler({ method, query }, response);
+  await handler({ method, query: { ...query, action: "records" } }, response);
   return {
     statusCode: response.statusCode,
     headers: response.headers,

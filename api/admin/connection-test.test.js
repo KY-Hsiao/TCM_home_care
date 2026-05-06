@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import handler from "./connection-test.js";
+import handler from "./[resource].js";
 
 function createResponse() {
   return {
@@ -23,7 +23,7 @@ function createResponse() {
 
 async function callConnectionTest(query = {}, method = "GET") {
   const response = createResponse();
-  await handler({ method, query }, response);
+  await handler({ method, query: { ...query, resource: "connection-test" } }, response);
   return {
     statusCode: response.statusCode,
     headers: response.headers,

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import handler from "./env-status.js";
+import handler from "./[resource].js";
 
 function createResponse() {
   return {
@@ -23,7 +23,7 @@ function createResponse() {
 
 async function callStatus(method = "GET") {
   const response = createResponse();
-  await handler({ method }, response);
+  await handler({ method, query: { resource: "env-status" } }, response);
   return {
     statusCode: response.statusCode,
     headers: response.headers,

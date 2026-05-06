@@ -1,4 +1,7 @@
-import { resolveGoogleDriveAccessToken, formatGoogleDriveApiError } from "./google-drive/auth.js";
+import {
+  formatGoogleDriveApiError,
+  resolveGoogleDriveAccessToken
+} from "../_lib/google-drive-auth.js";
 
 function setJson(response, statusCode, payload) {
   response.status(statusCode).setHeader("Content-Type", "application/json");
@@ -11,6 +14,32 @@ function isConfigured(value) {
 
 function resolveQueryValue(value) {
   return Array.isArray(value) ? value[0] : value;
+}
+
+function handleEnvStatus(request, response) {
+  if (request.method !== "GET") {
+    response.setHeader("Allow", "GET");
+    setJson(response, 405, { error: "Method Not Allowed" });
+    return;
+  }
+
+  setJson(response, 200, {
+    ok: true,
+    variables: {
+      LINE_CHANNEL_ACCESS_TOKEN: isConfigured(process.env.LINE_CHANNEL_ACCESS_TOKEN),
+      LINE_CHANNEL_SECRET: isConfigured(process.env.LINE_CHANNEL_SECRET),
+      OPENAI_API_KEY: isConfigured(process.env.OPENAI_API_KEY),
+      GOOGLE_MAPS_API_KEY:
+        isConfigured(process.env.GOOGLE_MAPS_API_KEY) ||
+        isConfigured(process.env.VITE_GOOGLE_MAPS_API_KEY),
+      GOOGLE_CALENDAR_ID: isConfigured(process.env.GOOGLE_CALENDAR_ID),
+      GOOGLE_DRIVE_ACCESS_TOKEN: isConfigured(process.env.GOOGLE_DRIVE_ACCESS_TOKEN),
+      GOOGLE_DRIVE_REFRESH_TOKEN: isConfigured(process.env.GOOGLE_DRIVE_REFRESH_TOKEN),
+      GOOGLE_DRIVE_CLIENT_ID: isConfigured(process.env.GOOGLE_DRIVE_CLIENT_ID),
+      GOOGLE_DRIVE_CLIENT_SECRET: isConfigured(process.env.GOOGLE_DRIVE_CLIENT_SECRET),
+      GOOGLE_DRIVE_FOLDER_ID: isConfigured(process.env.GOOGLE_DRIVE_FOLDER_ID)
+    }
+  });
 }
 
 async function testGptConnection(response) {
@@ -98,7 +127,7 @@ async function testGoogleDriveConnection(response) {
   });
 }
 
-export default async function handler(request, response) {
+async function handleConnectionTest(request, response) {
   if (request.method !== "GET") {
     response.setHeader("Allow", "GET");
     setJson(response, 405, { error: "Method Not Allowed" });
@@ -126,4 +155,21 @@ export default async function handler(request, response) {
       error: error instanceof Error ? error.message : "連線測試失敗。"
     });
   }
+}
+
+export default async function handler(request, response) {
+  const resource = String(resolveQueryValue(request.query?.resource) ?? "").trim();
+  if (resource === "env-status") {
+    handleEnvStatus(request, response);
+    return;
+  }
+  if (resource === "connection-test") {
+    await handleConnectionTest(request, response);
+    return;
+  }
+
+  setJson(response, 404, {
+    reason: "ADMIN_RESOURCE_NOT_FOUND",
+    error: "找不到指定的行政端 API。"
+  });
 }
