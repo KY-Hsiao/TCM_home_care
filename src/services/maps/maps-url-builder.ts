@@ -48,6 +48,7 @@ function buildGoogleMapsDirectionsUrl(input: {
 
 function buildInternalNavigationUrl(input: {
   mapsApiKey: string;
+  mapId: string;
   destination: string;
   destinationLatitude: number | null;
   destinationLongitude: number | null;
@@ -57,9 +58,12 @@ function buildInternalNavigationUrl(input: {
   const params = new URLSearchParams({
     destination: input.destination,
     key: input.mapsApiKey,
-    v: "nav-fixed-small-20260506",
+    v: "nav-fixed-small-vector-20260506",
     navZoom: "17"
   });
+  if (input.mapId) {
+    params.set("mapId", input.mapId);
+  }
   if (input.destinationLatitude !== null) {
     params.set("dlat", String(input.destinationLatitude));
   }
@@ -92,6 +96,7 @@ export function createMapsUrlBuilder(options?: { embedApiKey?: string | null }):
     import.meta.env.VITE_GOOGLE_MAPS_EMBED_API_KEY ??
     import.meta.env.VITE_GOOGLE_MAPS_API_KEY ??
     "";
+  const mapId = import.meta.env.VITE_GOOGLE_MAPS_MAP_ID ?? "";
   let lastGeocodeError: string | null = null;
 
   return {
@@ -144,6 +149,7 @@ export function createMapsUrlBuilder(options?: { embedApiKey?: string | null }):
       }
       return buildInternalNavigationUrl({
         mapsApiKey,
+        mapId,
         destination,
         destinationLatitude,
         destinationLongitude,
