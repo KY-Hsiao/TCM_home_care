@@ -172,7 +172,9 @@ export const savedRoutePlanSchema = z.object({
       route_order: z.number().nullable(),
       status: z.enum(routeItemStatusValues),
       patient_name: z.string(),
-      address: z.string()
+      address: z.string(),
+      travel_minutes_from_previous: z.number().nullable().optional(),
+      travel_distance_kilometers_from_previous: z.number().nullable().optional()
     })
   ),
   execution_status: z.enum(routeExecutionStatusValues),

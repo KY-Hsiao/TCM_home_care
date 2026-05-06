@@ -28,6 +28,7 @@ const emptyTreatmentFields = {
 describe("DoctorReturnRecordPage", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
     window.localStorage.clear();
     vi.spyOn(window, "alert").mockImplementation(() => undefined);
   });
@@ -69,6 +70,7 @@ describe("DoctorReturnRecordPage", () => {
     expect(screen.getByLabelText("主訴其他內容")).toBeInTheDocument();
     expect(screen.getByLabelText("提醒內容")).toBeInTheDocument();
     expect(screen.getByLabelText("相關外傷")).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText("其他", { selector: 'input[value="其他"][name="medical_history_tags"]' }));
     expect(screen.getByLabelText("病史其他內容")).toBeInTheDocument();
 
     const inspectionFieldset = screen.getByText("望").closest("fieldset");
@@ -131,6 +133,72 @@ describe("DoctorReturnRecordPage", () => {
     });
   });
 
+  it("可儲存單一個案暫存，切換個案後再回來仍保留勾選與輸入", async () => {
+    renderWithProviders(<DoctorReturnRecordPage />, "/doctor/return-records?patientId=pat-001");
+
+    fireEvent.change(screen.getByLabelText("主訴"), {
+      target: { value: "其他" }
+    });
+    fireEvent.change(screen.getByLabelText("主訴其他內容"), {
+      target: { value: "暫存主訴測試" }
+    });
+    fireEvent.click(screen.getByRole("checkbox", { name: "中藥" }));
+    fireEvent.change(screen.getByLabelText("中藥處置內容"), {
+      target: { value: "暫存中藥內容" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "儲存此個案暫存" }));
+
+    expect(screen.getByText(/已儲存此個案暫存/)).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("選擇個案"), {
+      target: { value: "pat-002" }
+    });
+    await waitFor(() => {
+      expect(screen.queryByDisplayValue("暫存主訴測試")).not.toBeInTheDocument();
+    });
+
+    fireEvent.change(screen.getByLabelText("選擇個案"), {
+      target: { value: "pat-001" }
+    });
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("主訴")).toHaveValue("其他");
+      expect(screen.getByLabelText("主訴其他內容")).toHaveValue("暫存主訴測試");
+      expect(screen.getByRole("checkbox", { name: "中藥" })).toBeChecked();
+      expect(screen.getByLabelText("中藥處置內容")).toHaveValue("暫存中藥內容");
+    });
+  });
+
+  it("切換個案時會先保留目前輸入，當日個案紀錄不會被空白表單覆蓋", async () => {
+    renderWithProviders(<DoctorReturnRecordPage />, "/doctor/return-records?patientId=pat-001");
+
+    fireEvent.change(screen.getByLabelText("主訴"), {
+      target: { value: "其他" }
+    });
+    fireEvent.change(screen.getByLabelText("主訴其他內容"), {
+      target: { value: "第一位已輸入主訴" }
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/第一位已輸入主訴/)).toBeInTheDocument();
+    });
+
+    fireEvent.change(screen.getByLabelText("選擇個案"), {
+      target: { value: "pat-002" }
+    });
+    fireEvent.change(screen.getByLabelText("主訴"), {
+      target: { value: "其他" }
+    });
+    fireEvent.change(screen.getByLabelText("主訴其他內容"), {
+      target: { value: "第二位已輸入主訴" }
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/第一位已輸入主訴/)).toBeInTheDocument();
+      expect(screen.getByText(/第二位已輸入主訴/)).toBeInTheDocument();
+    });
+  });
+
   it("會帶入上一筆四診其他內容", () => {
     const seeded = createSeedDb();
     seeded.visit_records.unshift({
@@ -178,6 +246,7 @@ describe("DoctorReturnRecordPage", () => {
     window.localStorage.setItem("tcm-home-care-mvp-db", JSON.stringify(seeded));
 
     renderWithProviders(<DoctorReturnRecordPage />, "/doctor/return-records?patientId=pat-001");
+    fireEvent.click(screen.getByRole("button", { name: "載入本機前次" }));
 
     const inspectionFieldset = screen.getByText("望").closest("fieldset");
     const listeningFieldset = screen.getByText("聞").closest("fieldset");
@@ -194,11 +263,82 @@ describe("DoctorReturnRecordPage", () => {
     expect(screen.getByLabelText("其他", { selector: 'input[value="其他"][name="medical_history_tags"]' })).toBeChecked();
     expect(screen.getByLabelText("病史其他內容")).toHaveValue("延續上次病史");
     expect(screen.getByDisplayValue(/主訴：翻身不適/)).toBeInTheDocument();
-    expect(screen.getByText("已自動帶入此個案上一筆登打的主訴、四診、病史與病歷草稿內容，可直接修改後送出。")).toBeInTheDocument();
+    expect(screen.getByText("已載入此個案前次病歷內容，可再依本次狀況修改。")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("checkbox", { name: "加入通知中心，讓醫師與行政後續追蹤" }));
 
     expect(screen.getByLabelText("提醒內容")).toHaveValue("請持續追蹤翻身與夜間痰聲變化");
+  });
+
+  it("可從 Google Drive 歷史病歷檔選擇日期並載入目前個案內容", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          files: [
+            {
+              id: "drive-file-1",
+              name: "20260507_王醫師_上午_居家個案病例紀錄.html",
+              modifiedTime: "2026-05-07T08:00:00.000Z",
+              webViewLink: "https://drive.google.com/file/d/drive-file-1/view"
+            }
+          ]
+        })
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          file: {
+            id: "drive-file-1",
+            name: "20260507_王醫師_上午_居家個案病例紀錄.html"
+          },
+          html: `<!doctype html>
+            <article class="record-card">
+              <h2>王麗珠 <span>A0001</span></h2>
+              <dl class="meta-grid">
+                <div><dt>主訴</dt><dd>翻身不適</dd></div>
+                <div><dt>異常個案</dt><dd>是</dd></div>
+              </dl>
+              <section><h3>四診摘要</h3><p>四診：望 少神、其他：眼神反應較慢；聞 其他：夜間痰聲明顯；問 疲倦乏力；切 脈細</p></section>
+              <section><h3>病史</h3><p>中風、其他：延續上次病史</p></section>
+              <section><h3>提醒內容</h3><p>請持續追蹤翻身與夜間痰聲變化</p></section>
+              <section><h3>病歷全文</h3><pre>四診：望 少神、其他：眼神反應較慢；聞 其他：夜間痰聲明顯；問 疲倦乏力；切 脈細
+主訴：翻身不適
+病史：中風、其他：延續上次病史
+處置：中藥：補陽還五湯 7 日份
+提醒：請持續追蹤翻身與夜間痰聲變化</pre></section>
+            </article>`
+        })
+      });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderWithProviders(<DoctorReturnRecordPage />, "/doctor/return-records?patientId=pat-001");
+
+    fireEvent.click(screen.getByRole("button", { name: "讀取 Google Drive 檔案清單" }));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("選擇歷史病歷檔案")).toBeInTheDocument();
+    });
+    expect(screen.getByLabelText("選擇歷史病歷檔案")).toHaveValue("drive-file-1");
+
+    fireEvent.click(screen.getByRole("button", { name: "載入選定檔案" }));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("主訴")).toHaveValue("其他");
+    });
+    expect(screen.getByLabelText("主訴其他內容")).toHaveValue("翻身不適");
+    expect(screen.getByLabelText("望 其他")).toHaveValue("眼神反應較慢");
+    expect(screen.getByLabelText("聞 其他")).toHaveValue("夜間痰聲明顯");
+    expect(screen.getByRole("checkbox", { name: "中藥" })).toBeChecked();
+    expect(screen.getByLabelText("中藥處置內容")).toHaveValue("補陽還五湯 7 日份");
+    expect(screen.getByText(/已從 Google Drive 載入/)).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith("/api/admin/google-drive/records");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/admin/google-drive/records?fileId=drive-file-1"
+    );
   });
 
   it("會對應剛完成的居家訪視時間作為回院病歷設定時間", () => {
@@ -846,7 +986,7 @@ describe("DoctorReturnRecordPage", () => {
         abnormalNotifications.map((item: { role: string }) => item.role).sort()
       ).toEqual(["admin", "doctor"]);
       expect(window.alert).toHaveBeenCalledWith(
-        "回院病歷已建立，異常個案訊息已同步新增到醫師與行政通知中心。"
+        "回院病歷已建立，異常個案訊息已同步新增到醫師與行政通知中心，此個案暫存也已保留。"
       );
     });
   });
@@ -883,7 +1023,7 @@ describe("DoctorReturnRecordPage", () => {
       ]);
       expect(reminders[0].detail).toContain("請於下次回診前追蹤睡眠與吞嚥變化");
       expect(window.alert).toHaveBeenCalledWith(
-        "回院病歷已建立，提醒內容已同步新增到醫師與行政通知中心。"
+        "回院病歷已建立，提醒內容已同步新增到醫師與行政通知中心，此個案暫存也已保留。"
       );
     });
   });

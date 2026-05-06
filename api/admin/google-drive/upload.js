@@ -1,3 +1,8 @@
+import {
+  formatGoogleDriveApiError,
+  resolveGoogleDriveAccessToken
+} from "./auth.js";
+
 function setJson(response, statusCode, payload) {
   response.status(statusCode).setHeader("Content-Type", "application/json");
   response.send(JSON.stringify(payload));
@@ -19,12 +24,20 @@ export default async function handler(request, response) {
     return;
   }
 
-  const accessToken = String(process.env.GOOGLE_DRIVE_ACCESS_TOKEN ?? "").trim();
   const folderId = String(process.env.GOOGLE_DRIVE_FOLDER_ID ?? "").trim();
-  if (!isRequiredString(accessToken) || !isRequiredString(folderId)) {
+  if (!isRequiredString(folderId)) {
     setJson(response, 503, {
       reason: "GOOGLE_DRIVE_ENV_MISSING",
-      error: "尚未設定 GOOGLE_DRIVE_ACCESS_TOKEN 或 GOOGLE_DRIVE_FOLDER_ID，無法上傳到 Google Drive。"
+      error: "尚未設定 GOOGLE_DRIVE_FOLDER_ID，無法上傳到 Google Drive。"
+    });
+    return;
+  }
+
+  const auth = await resolveGoogleDriveAccessToken();
+  if (!auth.ok) {
+    setJson(response, auth.statusCode, {
+      reason: auth.reason,
+      error: auth.error
     });
     return;
   }
@@ -63,7 +76,7 @@ export default async function handler(request, response) {
       {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${accessToken}`,
+          Authorization: `Bearer ${auth.accessToken}`,
           "Content-Type": `multipart/related; boundary=${delimiter}`
         },
         body
@@ -71,10 +84,15 @@ export default async function handler(request, response) {
     );
     const payload = await driveResponse.json().catch(() => ({}));
     if (!driveResponse.ok) {
-      setJson(response, 502, {
-        reason: payload.error?.status ?? `HTTP_${driveResponse.status}`,
-        error: payload.error?.message ?? `Google Drive 上傳失敗：HTTP ${driveResponse.status}`
-      });
+      setJson(
+        response,
+        driveResponse.status === 401 ? 401 : 502,
+        formatGoogleDriveApiError(
+          payload,
+          `Google Drive 上傳失敗：HTTP ${driveResponse.status}`,
+          driveResponse.status
+        )
+      );
       return;
     }
 

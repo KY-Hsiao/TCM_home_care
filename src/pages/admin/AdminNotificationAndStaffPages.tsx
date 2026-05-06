@@ -30,15 +30,21 @@ type StaffListItem = {
 type EnvVariableName =
   | "LINE_CHANNEL_ACCESS_TOKEN"
   | "LINE_CHANNEL_SECRET"
+  | "OPENAI_API_KEY"
   | "GOOGLE_MAPS_API_KEY"
   | "GOOGLE_CALENDAR_ID"
   | "GOOGLE_DRIVE_ACCESS_TOKEN"
+  | "GOOGLE_DRIVE_REFRESH_TOKEN"
+  | "GOOGLE_DRIVE_CLIENT_ID"
+  | "GOOGLE_DRIVE_CLIENT_SECRET"
   | "GOOGLE_DRIVE_FOLDER_ID";
 
 type EnvStatus = {
   ok: boolean;
   variables: Record<EnvVariableName, boolean>;
 };
+
+type ConnectionTestService = "google-maps" | "gpt" | "google-drive";
 
 const envVariableLabels: Array<{ key: EnvVariableName; label: string; usage: string }> = [
   {
@@ -50,6 +56,11 @@ const envVariableLabels: Array<{ key: EnvVariableName; label: string; usage: str
     key: "LINE_CHANNEL_SECRET",
     label: "LINE Channel Secret",
     usage: "LINE webhook 驗證"
+  },
+  {
+    key: "OPENAI_API_KEY",
+    label: "OpenAI API Key",
+    usage: "GPT 連線與後續 AI 功能"
   },
   {
     key: "GOOGLE_MAPS_API_KEY",
@@ -64,7 +75,22 @@ const envVariableLabels: Array<{ key: EnvVariableName; label: string; usage: str
   {
     key: "GOOGLE_DRIVE_ACCESS_TOKEN",
     label: "Google Drive Access Token",
-    usage: "回院病歷 HTML 上傳"
+    usage: "回院病歷 HTML 上傳；短效備援，建議改用 Refresh Token"
+  },
+  {
+    key: "GOOGLE_DRIVE_REFRESH_TOKEN",
+    label: "Google Drive Refresh Token",
+    usage: "回院病歷 Drive 授權自動更新"
+  },
+  {
+    key: "GOOGLE_DRIVE_CLIENT_ID",
+    label: "Google Drive Client ID",
+    usage: "Refresh Token 換取 Drive Access Token"
+  },
+  {
+    key: "GOOGLE_DRIVE_CLIENT_SECRET",
+    label: "Google Drive Client Secret",
+    usage: "Refresh Token 換取 Drive Access Token"
   },
   {
     key: "GOOGLE_DRIVE_FOLDER_ID",
@@ -211,7 +237,8 @@ export function AdminStaffPage() {
   const [activeServiceDay, setActiveServiceDay] = useState<ServiceDay>(serviceDayOptions[0]);
   const [recentAction, setRecentAction] = useState<string | null>(null);
   const [isSecretManagementOpen, setIsSecretManagementOpen] = useState(false);
-  const [isTestingGoogleMapsConnection, setIsTestingGoogleMapsConnection] = useState(false);
+  const [testingConnectionService, setTestingConnectionService] =
+    useState<ConnectionTestService | null>(null);
   const [isLoadingEnvStatus, setIsLoadingEnvStatus] = useState(false);
   const [envStatus, setEnvStatus] = useState<EnvStatus | null>(null);
   const [secretManagementMessage, setSecretManagementMessage] = useState<{
@@ -287,34 +314,54 @@ export function AdminStaffPage() {
     void loadEnvStatus();
   }, [envStatus, isSecretManagementOpen]);
 
-  const testGoogleMapsConnection = async () => {
-    setIsTestingGoogleMapsConnection(true);
+  const testConnection = async (service: ConnectionTestService) => {
+    setTestingConnectionService(service);
     setSecretManagementMessage(null);
     try {
-      const response = await fetch("/api/maps/geocode", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          address: "旗山醫院"
-        })
-      });
+      const response =
+        service === "google-maps"
+          ? await fetch("/api/maps/geocode", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json"
+              },
+              body: JSON.stringify({
+                address: "旗山醫院"
+              })
+            })
+          : await fetch(`/api/admin/connection-test?service=${service}`, {
+              cache: "no-store"
+            });
       const payload = (await response.json().catch(() => ({}))) as {
         latitude?: number;
         longitude?: number;
         formattedAddress?: string;
+        service?: string;
+        message?: string;
         reason?: string;
         error?: string;
       };
       if (!response.ok) {
+        const serviceLabel =
+          service === "google-maps"
+            ? "Google Maps"
+            : service === "gpt"
+              ? "GPT"
+              : "Google Drive";
         setSecretManagementMessage({
           tone: "error",
           message:
             payload.error ??
             (payload.reason
-              ? `Google Maps 連線失敗：${payload.reason}`
-              : `Google Maps 連線失敗：HTTP ${response.status}`)
+              ? `${serviceLabel} 連線失敗：${payload.reason}`
+              : `${serviceLabel} 連線失敗：HTTP ${response.status}`)
+        });
+        return;
+      }
+      if (service !== "google-maps") {
+        setSecretManagementMessage({
+          tone: "success",
+          message: payload.message ?? (service === "gpt" ? "GPT 連線正常。" : "Google Drive 連線正常。")
         });
         return;
       }
@@ -323,12 +370,18 @@ export function AdminStaffPage() {
         message: `Google Maps Geocoding 連線正常，測試座標：${payload.latitude}, ${payload.longitude}（${payload.formattedAddress ?? "旗山醫院"}）`
       });
     } catch {
+      const serviceLabel =
+        service === "google-maps"
+          ? "Google Maps"
+          : service === "gpt"
+            ? "GPT"
+            : "Google Drive";
       setSecretManagementMessage({
         tone: "error",
-        message: "無法連線到 Google Maps 測試端點，請確認部署與網路狀態。"
+        message: `無法連線到 ${serviceLabel} 測試端點，請確認部署與網路狀態。`
       });
     } finally {
-      setIsTestingGoogleMapsConnection(false);
+      setTestingConnectionService(null);
     }
   };
 
@@ -541,7 +594,7 @@ export function AdminStaffPage() {
               <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
                 <p className="font-semibold text-brand-ink">Vercel 環境變數設定狀態</p>
                 <p className="mt-1">
-                  API Token 不再由瀏覽器輸入或保存。請在 Vercel 專案的 Environment Variables 設定下列變數，前端只會檢查是否已設定，不會顯示任何 token 值。
+                  API Token 不再由瀏覽器輸入或保存。請在 Vercel 專案的 Environment Variables 設定下列變數，前端只會檢查是否已設定，不會顯示任何 token 值。Google Drive 建議使用 Refresh Token，避免 Access Token 到期後上傳失敗。
                 </p>
               </div>
               <div className="mt-4 grid gap-3 text-sm lg:grid-cols-2 xl:grid-cols-3">
@@ -578,11 +631,27 @@ export function AdminStaffPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => void testGoogleMapsConnection()}
-                  disabled={isTestingGoogleMapsConnection}
+                  onClick={() => void testConnection("google-maps")}
+                  disabled={testingConnectionService !== null}
                   className="rounded-full border border-emerald-200 bg-white px-4 py-2 text-xs font-semibold text-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {isTestingGoogleMapsConnection ? "測試中" : "測試 Google Maps 連線"}
+                  {testingConnectionService === "google-maps" ? "測試中" : "測試 Google Maps 連線"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void testConnection("gpt")}
+                  disabled={testingConnectionService !== null}
+                  className="rounded-full border border-sky-200 bg-white px-4 py-2 text-xs font-semibold text-sky-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {testingConnectionService === "gpt" ? "測試中" : "測試 GPT 連線"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void testConnection("google-drive")}
+                  disabled={testingConnectionService !== null}
+                  className="rounded-full border border-amber-200 bg-white px-4 py-2 text-xs font-semibold text-amber-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {testingConnectionService === "google-drive" ? "測試中" : "測試 Google Drive 連線"}
                 </button>
                 {secretManagementMessage ? (
                   <span

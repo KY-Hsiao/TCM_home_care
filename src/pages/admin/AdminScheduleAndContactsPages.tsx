@@ -899,6 +899,10 @@ function calculateStraightLineDistanceKilometers(start: RouteCoordinate, end: Ro
   return earthRadiusKm * arc;
 }
 
+function estimateTravelMinutesFromDistance(distanceKilometers: number) {
+  return Math.max(5, Math.round((distanceKilometers / 28) * 60));
+}
+
 function resolveRouteCoordinate(
   address: string,
   fallback: { address: string; latitude: number; longitude: number }
@@ -921,13 +925,36 @@ function getPlannerRowCoordinate(row: PlannerRow) {
   };
 }
 
-function calculateRouteDistance(input: {
+function resolveRouteEndpoints(input: {
+  rows: PlannerRow[];
+  startAddress: string;
+  endAddress: string;
+}) {
+  const coordinateRows = input.rows.filter((row) => Boolean(getPlannerRowCoordinate(row)));
+  const startCoordinate =
+    resolveRouteCoordinate(input.startAddress, routeStartLocation) ??
+    getPlannerRowCoordinate(coordinateRows[0]);
+  const endCoordinate =
+    resolveRouteCoordinate(input.endAddress, routeEndLocation) ?? startCoordinate;
+
+  return {
+    coordinateRows,
+    unresolvedCoordinateRows: input.rows.filter((row) => !getPlannerRowCoordinate(row)),
+    startCoordinate,
+    endCoordinate
+  };
+}
+
+function calculateRouteScore(input: {
   rows: PlannerRow[];
   startCoordinate: RouteCoordinate;
   endCoordinate: RouteCoordinate | null;
 }) {
   if (input.rows.length === 0) {
-    return 0;
+    return {
+      totalDistanceKilometers: 0,
+      totalTravelMinutes: 0
+    };
   }
 
   const routeCoordinates = input.rows
@@ -935,38 +962,104 @@ function calculateRouteDistance(input: {
     .filter((coordinate): coordinate is RouteCoordinate => Boolean(coordinate));
 
   if (routeCoordinates.length === 0) {
-    return 0;
+    return {
+      totalDistanceKilometers: 0,
+      totalTravelMinutes: 0
+    };
   }
 
-  let totalDistance = calculateStraightLineDistanceKilometers(
-    input.startCoordinate,
-    routeCoordinates[0]
-  );
+  let totalDistanceKilometers = 0;
+  let totalTravelMinutes = 0;
+  const addLeg = (start: RouteCoordinate, end: RouteCoordinate) => {
+    const distanceKilometers = calculateStraightLineDistanceKilometers(start, end);
+    totalDistanceKilometers += distanceKilometers;
+    totalTravelMinutes += estimateTravelMinutesFromDistance(distanceKilometers);
+  };
+
+  addLeg(input.startCoordinate, routeCoordinates[0]);
 
   for (let index = 0; index < routeCoordinates.length - 1; index += 1) {
-    totalDistance += calculateStraightLineDistanceKilometers(
-      routeCoordinates[index],
-      routeCoordinates[index + 1]
-    );
+    addLeg(routeCoordinates[index], routeCoordinates[index + 1]);
   }
 
   if (input.endCoordinate) {
-    totalDistance += calculateStraightLineDistanceKilometers(
-      routeCoordinates[routeCoordinates.length - 1],
-      input.endCoordinate
-    );
+    addLeg(routeCoordinates[routeCoordinates.length - 1], input.endCoordinate);
   }
 
-  return totalDistance;
+  return {
+    totalDistanceKilometers,
+    totalTravelMinutes
+  };
 }
 
-type RouteOptimizationStrategy = "nearest_neighbor" | "unchanged";
+function buildRouteLegEstimates(input: {
+  rows: PlannerRow[];
+  startAddress: string;
+  endAddress: string;
+}): RouteLegEstimate[] {
+  const orderedRows = sortPlannerRows(input.rows).filter((row) => row.checked);
+  const { startCoordinate } = resolveRouteEndpoints({
+    rows: orderedRows,
+    startAddress: input.startAddress,
+    endAddress: input.endAddress
+  });
+  if (!startCoordinate) {
+    return orderedRows.map((row) => ({
+      patientId: row.patientId,
+      distanceKilometers: null,
+      travelMinutes: null
+    }));
+  }
+
+  let currentCoordinate = startCoordinate;
+  return orderedRows.map((row) => {
+    const coordinate = getPlannerRowCoordinate(row);
+    if (!coordinate) {
+      return {
+        patientId: row.patientId,
+        distanceKilometers: null,
+        travelMinutes: null
+      };
+    }
+    const distanceKilometers = calculateStraightLineDistanceKilometers(
+      currentCoordinate,
+      coordinate
+    );
+    currentCoordinate = coordinate;
+    return {
+      patientId: row.patientId,
+      distanceKilometers,
+      travelMinutes: estimateTravelMinutesFromDistance(distanceKilometers)
+    };
+  });
+}
+
+type RouteOptimizationStrategy = "exhaustive" | "nearest_neighbor" | "unchanged";
+type RouteLegEstimate = {
+  patientId: string;
+  distanceKilometers: number | null;
+  travelMinutes: number | null;
+};
+type RouteOptimizationResult = {
+  reorderedRows: PlannerRow[];
+  unresolvedCoordinateCount: number;
+  strategy: RouteOptimizationStrategy;
+  totalDistanceKilometers?: number;
+  totalTravelMinutes?: number;
+  permutationCount?: number;
+};
+
+const exhaustiveRoutePermutationLimit = 8;
 
 function findNearestNeighborPlannerRows(input: {
   rows: PlannerRow[];
   startCoordinate: RouteCoordinate;
   endCoordinate: RouteCoordinate | null;
-}) {
+}): {
+  rows: PlannerRow[];
+  totalDistanceKilometers: number;
+  totalTravelMinutes: number;
+} {
   const remainingRows = [...input.rows];
   const nearestNeighborRows: PlannerRow[] = [];
   let currentCoordinate = input.startCoordinate;
@@ -994,7 +1087,7 @@ function findNearestNeighborPlannerRows(input: {
 
   return {
     rows: nearestNeighborRows,
-    totalDistanceKilometers: calculateRouteDistance({
+    ...calculateRouteScore({
       rows: nearestNeighborRows,
       startCoordinate: input.startCoordinate,
       endCoordinate: input.endCoordinate
@@ -1002,13 +1095,67 @@ function findNearestNeighborPlannerRows(input: {
   };
 }
 
-// 依「目前點到下一站距離最短」逐站排序；這是最近鄰原則，
-// 重點是每一步都選最近的下一個停留點，而不是枚舉全路線總距離最佳解。
+function findShortestPermutationPlannerRows(input: {
+  rows: PlannerRow[];
+  startCoordinate: RouteCoordinate;
+  endCoordinate: RouteCoordinate | null;
+}): {
+  rows: PlannerRow[];
+  permutationCount: number;
+  totalDistanceKilometers: number;
+  totalTravelMinutes: number;
+} {
+  let bestRows = input.rows;
+  let bestScore = calculateRouteScore({
+    rows: input.rows,
+    startCoordinate: input.startCoordinate,
+    endCoordinate: input.endCoordinate
+  });
+  let permutationCount = 0;
+
+  const visit = (prefix: PlannerRow[], remaining: PlannerRow[]) => {
+    if (remaining.length === 0) {
+      permutationCount += 1;
+      const score = calculateRouteScore({
+        rows: prefix,
+        startCoordinate: input.startCoordinate,
+        endCoordinate: input.endCoordinate
+      });
+      if (
+        score.totalTravelMinutes < bestScore.totalTravelMinutes ||
+        (score.totalTravelMinutes === bestScore.totalTravelMinutes &&
+          score.totalDistanceKilometers < bestScore.totalDistanceKilometers)
+      ) {
+        bestRows = prefix;
+        bestScore = score;
+      }
+      return;
+    }
+
+    remaining.forEach((row, index) => {
+      visit(
+        [...prefix, row],
+        remaining.filter((_, remainingIndex) => remainingIndex !== index)
+      );
+    });
+  };
+
+  visit([], input.rows);
+
+  return {
+    rows: bestRows,
+    permutationCount,
+    ...bestScore
+  };
+}
+
+// 8 站以內完整比較所有排列的總預估交通時間；站數更大時退回最近鄰法，
+// 避免 factorial 排列數造成前端卡住。
 function optimizePlannerRowsByDistance(input: {
   checkedRows: PlannerRow[];
   startAddress: string;
   endAddress: string;
-}) {
+}): RouteOptimizationResult {
   if (input.checkedRows.length < 2) {
     return {
       reorderedRows: input.checkedRows,
@@ -1028,8 +1175,12 @@ function optimizePlannerRowsByDistance(input: {
     };
   }
 
-  const startCoordinate =
-    resolveRouteCoordinate(input.startAddress, routeStartLocation) ?? getPlannerRowCoordinate(coordinateRows[0]);
+  const routeEndpoints = resolveRouteEndpoints({
+    rows: coordinateRows,
+    startAddress: input.startAddress,
+    endAddress: input.endAddress
+  });
+  const startCoordinate = routeEndpoints.startCoordinate;
   if (!startCoordinate) {
     return {
       reorderedRows: input.checkedRows,
@@ -1038,21 +1189,33 @@ function optimizePlannerRowsByDistance(input: {
     };
   }
 
-  const endCoordinate =
-    resolveRouteCoordinate(input.endAddress, routeEndLocation) ?? startCoordinate;
+  const endCoordinate = routeEndpoints.endCoordinate;
 
-  const strategy: RouteOptimizationStrategy = "nearest_neighbor";
-  const optimizationResult = findNearestNeighborPlannerRows({
-    rows: coordinateRows,
-    startCoordinate,
-    endCoordinate
-  });
+  const useExhaustive = coordinateRows.length <= exhaustiveRoutePermutationLimit;
+  const strategy: RouteOptimizationStrategy = useExhaustive ? "exhaustive" : "nearest_neighbor";
+  const optimizationResult = useExhaustive
+    ? findShortestPermutationPlannerRows({
+        rows: coordinateRows,
+        startCoordinate,
+        endCoordinate
+      })
+    : findNearestNeighborPlannerRows({
+        rows: coordinateRows,
+        startCoordinate,
+        endCoordinate
+      });
 
   return {
     reorderedRows: [...optimizationResult.rows, ...unresolvedCoordinateRows],
     unresolvedCoordinateCount: unresolvedCoordinateRows.length,
     strategy,
-    totalDistanceKilometers: optimizationResult.totalDistanceKilometers
+    totalDistanceKilometers: optimizationResult.totalDistanceKilometers,
+    totalTravelMinutes: optimizationResult.totalTravelMinutes,
+    permutationCount:
+      "permutationCount" in optimizationResult &&
+      typeof optimizationResult.permutationCount === "number"
+        ? optimizationResult.permutationCount
+        : undefined
   };
 }
 
@@ -1190,6 +1353,17 @@ export function AdminSchedulesPage() {
   const missingCheckedCoordinateCount = useMemo(
     () => checkedRows.filter((row) => !getPlannerRowCoordinate(row)).length,
     [checkedRows]
+  );
+  const routeLegEstimatesByPatientId = useMemo<Map<string, RouteLegEstimate>>(
+    () =>
+      new Map<string, RouteLegEstimate>(
+        buildRouteLegEstimates({
+          rows: sortedPlannerRows,
+          startAddress: routeStartAddress,
+          endAddress: routeEndAddress
+        }).map((leg) => [leg.patientId, leg])
+      ),
+    [routeEndAddress, routeStartAddress, sortedPlannerRows]
   );
   const routePreview = useMemo(
     () =>
@@ -1741,8 +1915,14 @@ export function AdminSchedulesPage() {
 
     const geocodingResult = await resolveMissingPlannerCoordinates(plannerRows);
     const nextCheckedRows = sortPlannerRows(geocodingResult.rows).filter((row) => row.checked);
-    const { reorderedRows, unresolvedCoordinateCount, strategy, totalDistanceKilometers } =
-      optimizePlannerRowsByDistance({
+    const {
+      reorderedRows,
+      unresolvedCoordinateCount,
+      strategy,
+      totalDistanceKilometers,
+      totalTravelMinutes,
+      permutationCount
+    } = optimizePlannerRowsByDistance({
       checkedRows: nextCheckedRows,
       startAddress: routeStartAddress,
       endAddress: routeEndAddress
@@ -1754,9 +1934,15 @@ export function AdminSchedulesPage() {
         ? `目前直線總距離約 ${totalDistanceKilometers.toFixed(1)} 公里。`
         : "";
     const strategyText =
-      strategy === "nearest_neighbor"
-        ? "已依目前點到下一個停留點距離最短的原則完成自動排序。"
-        : "目前路線未重新排序。";
+      strategy === "exhaustive"
+        ? `已比較 ${permutationCount ?? 0} 種排列，選出預估交通時間最短的自動排序。`
+        : strategy === "nearest_neighbor"
+          ? "站點數較多，已改用最近下一站原則完成自動排序。"
+          : "目前路線未重新排序。";
+    const travelTimeText =
+      typeof totalTravelMinutes === "number" && Number.isFinite(totalTravelMinutes)
+        ? `預估總交通時間約 ${totalTravelMinutes} 分鐘。`
+        : "";
     const unresolvedText =
       unresolvedCoordinateCount > 0
         ? `另有 ${unresolvedCoordinateCount} 站缺少座標，已排到最後順位；請補座標後重新排程。`
@@ -1768,7 +1954,9 @@ export function AdminSchedulesPage() {
           }。`
         : "";
     setRecentAction(
-      [geocodingText, strategyText, distanceText, unresolvedText].filter(Boolean).join(" ")
+      [geocodingText, strategyText, travelTimeText, distanceText, unresolvedText]
+        .filter(Boolean)
+        .join(" ")
     );
   };
 
@@ -1838,16 +2026,38 @@ export function AdminSchedulesPage() {
       setRecentAction("目前沒有可加入路線的服務中個案。");
       return null;
     }
-    const routeItems: SavedRoutePlan["route_items"] = activePlannerRows.map((row) => ({
-      patient_id: row.patientId,
-      schedule_id: row.scheduleId,
-      checked: row.checked,
-      route_order: row.checked ? row.routeOrder : null,
-      status: row.status,
-      patient_name: row.name,
-      address: row.address
-    }));
+    const routeLegsByPatientId = new Map(
+      buildRouteLegEstimates({
+        rows: activePlannerRows,
+        startAddress: normalizedStartAddress,
+        endAddress: normalizedEndAddress
+      }).map((leg) => [leg.patientId, leg])
+    );
+    const routeItems: SavedRoutePlan["route_items"] = activePlannerRows.map((row) => {
+      const leg = routeLegsByPatientId.get(row.patientId);
+      return {
+        patient_id: row.patientId,
+        schedule_id: row.scheduleId,
+        checked: row.checked,
+        route_order: row.checked ? row.routeOrder : null,
+        status: row.status,
+        patient_name: row.name,
+        address: row.address,
+        travel_minutes_from_previous: row.checked ? leg?.travelMinutes ?? null : null,
+        travel_distance_kilometers_from_previous: row.checked
+          ? leg?.distanceKilometers ?? null
+          : null
+      };
+    });
     const checkedRouteItems = routeItems.filter((item) => item.checked);
+    const totalTravelMinutes = checkedRouteItems.reduce(
+      (total, item) => total + (item.travel_minutes_from_previous ?? 0),
+      0
+    );
+    const totalDistanceKilometers = checkedRouteItems.reduce(
+      (total, item) => total + (item.travel_distance_kilometers_from_previous ?? 0),
+      0
+    );
 
     return {
       id: routePlanId,
@@ -1870,8 +2080,8 @@ export function AdminSchedulesPage() {
       end_address: normalizedEndAddress,
       end_latitude: endLatitude,
       end_longitude: endLongitude,
-      total_minutes: checkedRouteItems.length * 60,
-      total_distance_kilometers: checkedRouteItems.length * 2,
+      total_minutes: checkedRouteItems.length * 60 + totalTravelMinutes,
+      total_distance_kilometers: totalDistanceKilometers,
       saved_at: new Date().toISOString(),
       created_at: selectedSavedRoutePlan?.created_at ?? new Date().toISOString(),
       updated_at: new Date().toISOString()
@@ -2496,7 +2706,7 @@ export function AdminSchedulesPage() {
                 <div>
                   <p className="text-sm font-semibold text-brand-ink">本次路線排序</p>
                   <p className="mt-1 text-xs text-slate-500">
-                    自動排序會從起點開始，每一步都選距離目前點最近的下一個停留點；仍可拖曳微調站序。
+                    自動排序會比較可行排列的總預估交通時間，選擇花費最短的站序；仍可拖曳微調站序。
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center justify-end gap-2">
@@ -2515,43 +2725,45 @@ export function AdminSchedulesPage() {
               </div>
 
               <div className="mt-4 space-y-2">
-                {checkedRows.map((row, index) => (
-                  <div
-                    key={row.patientId}
-                    draggable
-                    onDragStart={(event) => {
-                      if (event.dataTransfer) {
-                        event.dataTransfer.effectAllowed = "move";
-                        event.dataTransfer.setData("text/plain", row.patientId);
-                      }
-                      handlePlannerRowDragStart(row.patientId);
-                    }}
-                    onDragEnter={() => {
-                      if (!draggingPlannerPatientId || draggingPlannerPatientId === row.patientId) {
-                        return;
-                      }
-                      setDragTargetPlannerPatientId(row.patientId);
-                    }}
-                    onDragOver={(event) => {
-                      event.preventDefault();
-                      if (!draggingPlannerPatientId || draggingPlannerPatientId === row.patientId) {
-                        return;
-                      }
-                      if (dragTargetPlannerPatientId !== row.patientId) {
+                {checkedRows.map((row, index) => {
+                  const routeLeg = routeLegEstimatesByPatientId.get(row.patientId);
+                  return (
+                    <div
+                      key={row.patientId}
+                      draggable
+                      onDragStart={(event) => {
+                        if (event.dataTransfer) {
+                          event.dataTransfer.effectAllowed = "move";
+                          event.dataTransfer.setData("text/plain", row.patientId);
+                        }
+                        handlePlannerRowDragStart(row.patientId);
+                      }}
+                      onDragEnter={() => {
+                        if (!draggingPlannerPatientId || draggingPlannerPatientId === row.patientId) {
+                          return;
+                        }
                         setDragTargetPlannerPatientId(row.patientId);
-                      }
-                    }}
-                    onDrop={(event) => {
-                      event.preventDefault();
-                      handlePlannerRowDrop(row.patientId);
-                    }}
-                    onDragEnd={resetPlannerRowDragging}
-                    className={`rounded-2xl border px-4 py-3 transition ${
-                      dragTargetPlannerPatientId === row.patientId && draggingPlannerPatientId !== row.patientId
-                        ? "border-brand-forest bg-brand-sand/70 shadow-sm"
-                        : "border-slate-200 bg-slate-50"
-                    }`}
-                  >
+                      }}
+                      onDragOver={(event) => {
+                        event.preventDefault();
+                        if (!draggingPlannerPatientId || draggingPlannerPatientId === row.patientId) {
+                          return;
+                        }
+                        if (dragTargetPlannerPatientId !== row.patientId) {
+                          setDragTargetPlannerPatientId(row.patientId);
+                        }
+                      }}
+                      onDrop={(event) => {
+                        event.preventDefault();
+                        handlePlannerRowDrop(row.patientId);
+                      }}
+                      onDragEnd={resetPlannerRowDragging}
+                      className={`rounded-2xl border px-4 py-3 transition ${
+                        dragTargetPlannerPatientId === row.patientId && draggingPlannerPatientId !== row.patientId
+                          ? "border-brand-forest bg-brand-sand/70 shadow-sm"
+                          : "border-slate-200 bg-slate-50"
+                      }`}
+                    >
                     <div className="flex items-center justify-between gap-3">
                       <div className="min-w-0">
                         <p className="text-xs font-semibold text-brand-coral">
@@ -2561,6 +2773,16 @@ export function AdminSchedulesPage() {
                           第 {row.routeOrder} 站 {maskPatientName(row.name)}
                         </p>
                         <p className="mt-1 text-xs text-slate-500">{row.address}</p>
+                        <p className="mt-1 text-xs font-semibold text-slate-600">
+                          上一點到此站：
+                          {routeLeg?.travelMinutes !== null && routeLeg?.travelMinutes !== undefined
+                            ? `約 ${routeLeg.travelMinutes} 分鐘`
+                            : "待座標補齊"}
+                          {routeLeg?.distanceKilometers !== null &&
+                          routeLeg?.distanceKilometers !== undefined
+                            ? `｜直線約 ${routeLeg.distanceKilometers.toFixed(1)} 公里`
+                            : ""}
+                        </p>
                         {row.geocodingStatus === "pending" ? (
                           <p className="mt-1 text-xs font-semibold text-amber-700">Google Map 座標查詢中</p>
                         ) : row.geocodingStatus === "resolved" ? (
@@ -2601,7 +2823,8 @@ export function AdminSchedulesPage() {
                       </div>
                     </div>
                   </div>
-                ))}
+                  );
+                })}
                 {checkedRows.length === 0 ? (
                   <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
                     目前沒有已勾選的個案，因此不會產生路線排序。

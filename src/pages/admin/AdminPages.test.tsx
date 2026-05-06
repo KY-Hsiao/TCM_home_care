@@ -618,7 +618,7 @@ describe("AdminPages", () => {
     expectRouteStopLabel("第 3 站 王○珠");
   });
 
-  it("AdminSchedulesPage 可依下一個停留點最短距離自動排序本次路線", async () => {
+  it("AdminSchedulesPage 可比較排列後依預估交通時間最短自動排序本次路線", async () => {
     renderWithProviders(<AdminSchedulesPage />);
 
     selectScheduleFilters();
@@ -632,9 +632,10 @@ describe("AdminPages", () => {
 
     await waitFor(() =>
       expect(screen.getByRole("status")).toHaveTextContent(
-        "已依目前點到下一個停留點距離最短的原則完成自動排序。"
+        "選出預估交通時間最短的自動排序。"
       )
     );
+    expect(screen.getAllByText(/上一點到此站：約 \d+ 分鐘/).length).toBeGreaterThan(0);
     expect(routeLink.getAttribute("href")).not.toBe(initialHref);
   });
 

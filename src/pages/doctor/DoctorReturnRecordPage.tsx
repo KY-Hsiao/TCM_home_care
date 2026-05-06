@@ -105,6 +105,21 @@ type ReturnRecordCsvDraftOverride = {
   generatedRecordText: string;
 };
 
+type ReturnRecordDraftStorage = Record<string, ReturnRecordFormValues>;
+
+type DriveReturnRecordFile = {
+  id: string;
+  name: string;
+  modifiedTime?: string | null;
+  webViewLink?: string | null;
+};
+
+type DriveHistoryState = {
+  status: "idle" | "loading" | "ready" | "error";
+  message: string;
+  files: DriveReturnRecordFile[];
+};
+
 type RouteOption = {
   key: string;
   routeName: string;
@@ -156,6 +171,54 @@ const chiefComplaintOptions = [
   "其他"
 ] as const;
 
+const returnRecordDraftStorageKey = "tcm-return-record-drafts";
+
+function normalizeReturnRecordFormValues(values: ReturnRecordFormValues): ReturnRecordFormValues {
+  return {
+    ...values,
+    mark_as_exception: Boolean(values.mark_as_exception),
+    add_to_reminders: Boolean(values.add_to_reminders),
+    inspection_tags: Array.isArray(values.inspection_tags) ? values.inspection_tags : [],
+    listening_tags: Array.isArray(values.listening_tags) ? values.listening_tags : [],
+    inquiry_tags: Array.isArray(values.inquiry_tags) ? values.inquiry_tags : [],
+    palpation_tags: Array.isArray(values.palpation_tags) ? values.palpation_tags : [],
+    medical_history_tags: Array.isArray(values.medical_history_tags) ? values.medical_history_tags : [],
+    treatment_chinese_medicine_checked: Boolean(values.treatment_chinese_medicine_checked),
+    treatment_acupuncture_checked: Boolean(values.treatment_acupuncture_checked),
+    treatment_topical_medication_checked: Boolean(values.treatment_topical_medication_checked)
+  };
+}
+
+function loadReturnRecordDraftStorage(): ReturnRecordDraftStorage {
+  if (typeof window === "undefined") {
+    return {};
+  }
+  try {
+    const raw = window.localStorage.getItem(returnRecordDraftStorageKey);
+    const parsed = raw ? JSON.parse(raw) : {};
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as ReturnRecordDraftStorage)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function persistReturnRecordDraftStorage(storage: ReturnRecordDraftStorage) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.localStorage.setItem(returnRecordDraftStorageKey, JSON.stringify(storage));
+}
+
+function buildReturnRecordDraftStorageKey(input: {
+  doctorId: string;
+  routeKey: string;
+  patientId: string;
+}) {
+  return `${input.doctorId}::${input.routeKey}::${input.patientId}`;
+}
+
 function resolvePreviousChiefComplaintFields(chiefComplaint: string | undefined) {
   const trimmedChiefComplaint = chiefComplaint?.trim() ?? "";
   if (!trimmedChiefComplaint) {
@@ -194,6 +257,339 @@ function buildFallbackTimeDefaults(): ReturnRecordTimeDefaults {
     treatmentEndTime: buildInitialEndTime(),
     hint: "尚未找到剛完成的居家訪視，先帶入目前時間。"
   };
+}
+
+function buildReturnRecordFormValues(input: {
+  routeKey: string;
+  patientId: string;
+  timeDefaults: ReturnRecordTimeDefaults;
+  previousRecord?: VisitRecord;
+  selectedPatientMedicalHistory: string;
+  loadPrevious: boolean;
+}): ReturnRecordFormValues {
+  if (!input.loadPrevious) {
+    return {
+      route_key: input.routeKey,
+      patient_id: input.patientId,
+      mark_as_exception: false,
+      add_to_reminders: false,
+      reminder_note: "",
+      chief_complaint_option: "",
+      chief_complaint_other: "",
+      treatment_start_time: input.timeDefaults.treatmentStartTime,
+      treatment_end_time: input.timeDefaults.treatmentEndTime,
+      inspection_tags: [],
+      inspection_other: "",
+      listening_tags: [],
+      listening_other: "",
+      inquiry_tags: [],
+      inquiry_other: "",
+      palpation_tags: [],
+      palpation_other: "",
+      medical_history_tags: [],
+      medical_history_other: "",
+      treatment_chinese_medicine_checked: false,
+      treatment_chinese_medicine_note: "",
+      treatment_acupuncture_checked: false,
+      treatment_acupuncture_note: "",
+      treatment_topical_medication_checked: false,
+      treatment_topical_medication_note: "",
+      generated_record_text: ""
+    };
+  }
+
+  const previousSelections = buildPreviousFourDiagnosisSelections(input.previousRecord);
+  const previousMedicalHistorySelections = buildPreviousMedicalHistorySelections(
+    input.previousRecord,
+    input.selectedPatientMedicalHistory
+  );
+  const previousTreatmentProvidedSelections =
+    buildPreviousTreatmentProvidedSelections(input.previousRecord);
+  const previousChiefComplaintFields = resolvePreviousChiefComplaintFields(
+    input.previousRecord?.chief_complaint
+  );
+
+  return {
+    route_key: input.routeKey,
+    patient_id: input.patientId,
+    mark_as_exception: false,
+    add_to_reminders: false,
+    reminder_note: extractReminderNoteFromRecord(input.previousRecord),
+    chief_complaint_option: previousChiefComplaintFields.chiefComplaintOption,
+    chief_complaint_other: previousChiefComplaintFields.chiefComplaintOther,
+    treatment_start_time: input.timeDefaults.treatmentStartTime,
+    treatment_end_time: input.timeDefaults.treatmentEndTime,
+    ...previousSelections,
+    ...previousMedicalHistorySelections,
+    ...previousTreatmentProvidedSelections,
+    generated_record_text: ""
+  };
+}
+
+function buildInitialGeneratedRecordText(values: ReturnRecordFormValues) {
+  const chiefComplaint =
+    values.chief_complaint_option === "其他"
+      ? values.chief_complaint_other
+      : values.chief_complaint_option;
+  return buildReturnRecordDraft({
+    chiefComplaint,
+    treatmentStartTime: values.treatment_start_time,
+    treatmentEndTime: values.treatment_end_time,
+    inspection_tags: values.inspection_tags,
+    inspection_other: values.inspection_other,
+    listening_tags: values.listening_tags,
+    listening_other: values.listening_other,
+    inquiry_tags: values.inquiry_tags,
+    inquiry_other: values.inquiry_other,
+    palpation_tags: values.palpation_tags,
+    palpation_other: values.palpation_other,
+    medicalHistory: joinMedicalHistory(
+      values.medical_history_tags,
+      values.medical_history_other
+    ),
+    treatmentProvidedSummary: buildTreatmentProvidedSummary(values),
+    reminderNote: values.add_to_reminders ? values.reminder_note : ""
+  });
+}
+
+function splitKnownTags(value: string, options: readonly string[]) {
+  const parts = value
+    .split("、")
+    .map((item) => item.trim())
+    .filter((item) => item && item !== "未勾選" && item !== "未填寫");
+  const knownTags = options.filter((option) => option !== "其他" && parts.includes(option));
+  const otherParts = parts
+    .filter((item) => item.startsWith("其他："))
+    .map((item) => item.replace(/^其他：/, "").trim())
+    .filter(Boolean);
+  const unmatchedParts = parts.filter(
+    (item) =>
+      item !== "其他" &&
+      !item.startsWith("其他：") &&
+      !knownTags.includes(item)
+  );
+  const hasOther =
+    parts.includes("其他") || otherParts.length > 0 || unmatchedParts.length > 0;
+
+  return {
+    tags: hasOther ? [...knownTags, "其他"] : knownTags,
+    other: [...otherParts, ...unmatchedParts].join("、")
+  };
+}
+
+function parseFourDiagnosisSummary(summary: string) {
+  const sections = {
+    inspection: "",
+    listening: "",
+    inquiry: "",
+    palpation: ""
+  };
+  summary
+    .replace(/^四診：/, "")
+    .split("；")
+    .map((item) => item.trim())
+    .forEach((item) => {
+      if (item.startsWith("望")) {
+        sections.inspection = item.replace(/^望\s*/, "");
+      } else if (item.startsWith("聞")) {
+        sections.listening = item.replace(/^聞\s*/, "");
+      } else if (item.startsWith("問")) {
+        sections.inquiry = item.replace(/^問\s*/, "");
+      } else if (item.startsWith("切")) {
+        sections.palpation = item.replace(/^切\s*/, "");
+      }
+    });
+
+  const inspection = splitKnownTags(sections.inspection, fourDiagnosisOptions.inspection);
+  const listening = splitKnownTags(sections.listening, fourDiagnosisOptions.listening);
+  const inquiry = splitKnownTags(sections.inquiry, fourDiagnosisOptions.inquiry);
+  const palpation = splitKnownTags(sections.palpation, fourDiagnosisOptions.palpation);
+
+  return {
+    inspection_tags: inspection.tags,
+    inspection_other: inspection.other,
+    listening_tags: listening.tags,
+    listening_other: listening.other,
+    inquiry_tags: inquiry.tags,
+    inquiry_other: inquiry.other,
+    palpation_tags: palpation.tags,
+    palpation_other: palpation.other
+  };
+}
+
+function buildMedicalHistorySelectionsFromText(value: string) {
+  const parsed = splitKnownTags(value, medicalHistoryOptions);
+  return {
+    medical_history_tags: parsed.tags,
+    medical_history_other: parsed.other
+  };
+}
+
+function extractGeneratedRecordLine(text: string, label: string) {
+  const matchedLine = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => line.startsWith(`${label}：`));
+  return matchedLine?.replace(`${label}：`, "").trim() ?? "";
+}
+
+function parseTreatmentProvidedSummary(value: string) {
+  const parts = value
+    .split("；")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const findNote = (label: string) =>
+    parts
+      .find((item) => item === label || item.startsWith(`${label}：`))
+      ?.replace(`${label}：`, "")
+      .trim() ?? "";
+  const hasTreatment = (label: string) =>
+    parts.some((item) => item === label || item.startsWith(`${label}：`));
+
+  return {
+    treatment_chinese_medicine_checked: hasTreatment("中藥"),
+    treatment_chinese_medicine_note: findNote("中藥"),
+    treatment_acupuncture_checked: hasTreatment("針灸"),
+    treatment_acupuncture_note: findNote("針灸"),
+    treatment_topical_medication_checked: hasTreatment("外用藥"),
+    treatment_topical_medication_note: findNote("外用藥")
+  };
+}
+
+function textOfSection(card: Element, title: string, selector = "p") {
+  const section = Array.from(card.querySelectorAll("section")).find(
+    (candidate) => candidate.querySelector("h3")?.textContent?.trim() === title
+  );
+  return section?.querySelector(selector)?.textContent?.trim() ?? "";
+}
+
+function textOfMeta(card: Element, title: string) {
+  const groups = Array.from(card.querySelectorAll(".meta-grid > div"));
+  const matchedGroup = groups.find(
+    (group) => group.querySelector("dt")?.textContent?.trim() === title
+  );
+  return matchedGroup?.querySelector("dd")?.textContent?.trim() ?? "";
+}
+
+function buildDriveReturnRecordFormValues(input: {
+  html: string;
+  chartNumber: string;
+  patientName: string;
+  routeKey: string;
+  patientId: string;
+  timeDefaults: ReturnRecordTimeDefaults;
+}) {
+  if (typeof DOMParser === "undefined") {
+    return null;
+  }
+
+  const document = new DOMParser().parseFromString(input.html, "text/html");
+  const cards = Array.from(document.querySelectorAll(".record-card"));
+  const matchedCard = cards.find((card) => {
+    const cardChartNumber = card.querySelector("h2 span")?.textContent?.trim();
+    const heading = card.querySelector("h2")?.textContent?.trim() ?? "";
+    return (
+      cardChartNumber === input.chartNumber ||
+      heading.includes(input.chartNumber) ||
+      heading.includes(input.patientName)
+    );
+  });
+
+  if (!matchedCard) {
+    return null;
+  }
+
+  const chiefComplaintText = textOfMeta(matchedCard, "主訴");
+  const fourDiagnosisSummary = textOfSection(matchedCard, "四診摘要");
+  const medicalHistoryText = textOfSection(matchedCard, "病史");
+  const reminderNote = textOfSection(matchedCard, "提醒內容");
+  const generatedRecordText = textOfSection(matchedCard, "病歷全文", "pre");
+  const previousChiefComplaintFields = resolvePreviousChiefComplaintFields(
+    chiefComplaintText === "未填寫" ? "" : chiefComplaintText
+  );
+  const treatmentProvidedSummary =
+    extractGeneratedRecordLine(generatedRecordText, "處置");
+
+  const values: ReturnRecordFormValues = {
+    route_key: input.routeKey,
+    patient_id: input.patientId,
+    mark_as_exception: textOfMeta(matchedCard, "異常個案") === "是",
+    add_to_reminders: Boolean(reminderNote),
+    reminder_note: reminderNote,
+    chief_complaint_option: previousChiefComplaintFields.chiefComplaintOption,
+    chief_complaint_other: previousChiefComplaintFields.chiefComplaintOther,
+    treatment_start_time: input.timeDefaults.treatmentStartTime,
+    treatment_end_time: input.timeDefaults.treatmentEndTime,
+    ...parseFourDiagnosisSummary(fourDiagnosisSummary),
+    ...buildMedicalHistorySelectionsFromText(medicalHistoryText === "未填寫" ? "" : medicalHistoryText),
+    ...parseTreatmentProvidedSummary(treatmentProvidedSummary),
+    generated_record_text: generatedRecordText === "未填寫" ? "" : generatedRecordText
+  };
+
+  return normalizeReturnRecordFormValues(values);
+}
+
+function buildCsvDraftOverrideFromValues(
+  values: ReturnRecordFormValues,
+  patientId: string
+): ReturnRecordCsvDraftOverride {
+  const resolvedChiefComplaint =
+    values.chief_complaint_option === "其他"
+      ? values.chief_complaint_other
+      : values.chief_complaint_option;
+  const medicalHistory = joinMedicalHistory(
+    values.medical_history_tags,
+    values.medical_history_other
+  );
+  return {
+    patientId,
+    returnRecordStartTime:
+      fromDateTimeLocalValue(values.treatment_start_time) ?? null,
+    returnRecordEndTime:
+      fromDateTimeLocalValue(values.treatment_end_time) ?? null,
+    chiefComplaint: resolvedChiefComplaint,
+    fourDiagnosisSummary: buildFourDiagnosisSummary({
+      inspection_tags: values.inspection_tags,
+      inspection_other: values.inspection_other,
+      listening_tags: values.listening_tags,
+      listening_other: values.listening_other,
+      inquiry_tags: values.inquiry_tags,
+      inquiry_other: values.inquiry_other,
+      palpation_tags: values.palpation_tags,
+      palpation_other: values.palpation_other
+    }),
+    medicalHistory,
+    isException: values.mark_as_exception,
+    reminderNote: values.add_to_reminders ? values.reminder_note.trim() : "",
+    generatedRecordText: values.generated_record_text
+  };
+}
+
+function hasReturnRecordDraftContent(values: ReturnRecordFormValues) {
+  return Boolean(
+    values.mark_as_exception ||
+      values.add_to_reminders ||
+      values.reminder_note.trim() ||
+      values.chief_complaint_option ||
+      values.chief_complaint_other.trim() ||
+      values.inspection_tags.length ||
+      values.inspection_other.trim() ||
+      values.listening_tags.length ||
+      values.listening_other.trim() ||
+      values.inquiry_tags.length ||
+      values.inquiry_other.trim() ||
+      values.palpation_tags.length ||
+      values.palpation_other.trim() ||
+      values.medical_history_tags.length ||
+      values.medical_history_other.trim() ||
+      values.treatment_chinese_medicine_checked ||
+      values.treatment_chinese_medicine_note.trim() ||
+      values.treatment_acupuncture_checked ||
+      values.treatment_acupuncture_note.trim() ||
+      values.treatment_topical_medication_checked ||
+      values.treatment_topical_medication_note.trim() ||
+      values.generated_record_text.trim()
+  );
 }
 
 function resolveVisitTreatmentWindow(detail: VisitDetail, record: VisitRecord | undefined): VisitTreatmentWindow {
@@ -466,6 +862,52 @@ async function uploadHtmlToGoogleDrive(input: {
   };
 }
 
+async function fetchGoogleDriveRecordFiles() {
+  const response = await fetch("/api/admin/google-drive/records");
+  const payload = (await response.json().catch(() => ({}))) as {
+    files?: DriveReturnRecordFile[];
+    error?: string;
+  };
+  if (!response.ok) {
+    throw new Error(payload.error ?? `Google Drive 病歷檔清單讀取失敗：HTTP ${response.status}`);
+  }
+  return Array.isArray(payload.files) ? payload.files : [];
+}
+
+async function fetchGoogleDriveRecordHtml(fileId: string) {
+  const response = await fetch(
+    `/api/admin/google-drive/records?fileId=${encodeURIComponent(fileId)}`
+  );
+  const payload = (await response.json().catch(() => ({}))) as {
+    file?: DriveReturnRecordFile;
+    html?: string;
+    error?: string;
+  };
+  if (!response.ok) {
+    throw new Error(payload.error ?? `Google Drive 病歷檔讀取失敗：HTTP ${response.status}`);
+  }
+  return {
+    file: payload.file,
+    html: payload.html ?? ""
+  };
+}
+
+function parseDriveRecordDateFromName(name: string) {
+  const matchedDate = name.match(/^(\d{4})(\d{2})(\d{2})/);
+  if (!matchedDate) {
+    return "";
+  }
+  return `${matchedDate[1]}-${matchedDate[2]}-${matchedDate[3]}`;
+}
+
+function formatDriveRecordFileLabel(file: DriveReturnRecordFile) {
+  const dateText = parseDriveRecordDateFromName(file.name);
+  const modifiedText = file.modifiedTime
+    ? `，更新 ${formatDateTimeFull(file.modifiedTime)}`
+    : "";
+  return `${dateText ? `${dateText}｜` : ""}${file.name}${modifiedText}`;
+}
+
 type DoctorReturnRecordPageProps = {
   embeddedWindow?: boolean;
   onCloseWindow?: () => void;
@@ -480,6 +922,17 @@ export function DoctorReturnRecordPage({
   const [isReturnRecordModalOpen, setIsReturnRecordModalOpen] = useState(true);
   const [googleDriveStatus, setGoogleDriveStatus] = useState<string | null>(null);
   const [copiedPatientId, setCopiedPatientId] = useState<string | null>(null);
+  const [savedDrafts, setSavedDrafts] = useState<ReturnRecordDraftStorage>(() =>
+    loadReturnRecordDraftStorage()
+  );
+  const [draftSaveMessage, setDraftSaveMessage] = useState<string | null>(null);
+  const [driveHistory, setDriveHistory] = useState<DriveHistoryState>({
+    status: "idle",
+    message: "",
+    files: []
+  });
+  const [selectedDriveFileId, setSelectedDriveFileId] = useState("");
+  const [isLoadingDriveRecord, setIsLoadingDriveRecord] = useState(false);
   const activeDoctor = useMemo(
     () =>
       repositories.patientRepository
@@ -797,6 +1250,162 @@ export function DoctorReturnRecordPage({
   const previousAutoDraftRef = useRef("");
   const previousRecordUpdatedAt = previousRecord?.updated_at ?? "";
   const selectedPatientMedicalHistory = selectedProfile?.patient.important_medical_history ?? "";
+  const selectedDraftKey = useMemo(
+    () =>
+      selectedRoute?.key && selectedPatientId
+        ? buildReturnRecordDraftStorageKey({
+            doctorId: session.activeDoctorId,
+            routeKey: selectedRoute.key,
+            patientId: selectedPatientId
+          })
+        : "",
+    [selectedPatientId, selectedRoute?.key, session.activeDoctorId]
+  );
+  const selectedSavedDraft = selectedDraftKey ? savedDrafts[selectedDraftKey] : undefined;
+
+  const saveDraftValues = (values: ReturnRecordFormValues, options?: { silent?: boolean }) => {
+    const draftKey =
+      values.route_key && values.patient_id
+        ? buildReturnRecordDraftStorageKey({
+            doctorId: session.activeDoctorId,
+            routeKey: values.route_key,
+            patientId: values.patient_id
+          })
+        : selectedDraftKey;
+    if (!draftKey) {
+      return;
+    }
+    const normalizedValues = normalizeReturnRecordFormValues(values);
+    setSavedDrafts((current) => {
+      const next = {
+        ...current,
+        [draftKey]: normalizedValues
+      };
+      persistReturnRecordDraftStorage(next);
+      return next;
+    });
+    if (!options?.silent) {
+      setDraftSaveMessage("已儲存此個案暫存，切換個案或匯出此次巡診時會保留這份內容。");
+    }
+  };
+
+  const saveCurrentFormDraftSilently = () => {
+    const values = normalizeReturnRecordFormValues(getValues());
+    if (!values.patient_id || !values.route_key || !hasReturnRecordDraftContent(values)) {
+      return;
+    }
+    saveDraftValues(values, { silent: true });
+  };
+
+  const loadPreviousRecordIntoForm = () => {
+    if (!selectedPatientId) {
+      return;
+    }
+    const nextValues = buildReturnRecordFormValues({
+      routeKey: selectedRoute?.key ?? "",
+      patientId: selectedPatientId,
+      timeDefaults: returnRecordTimeDefaults,
+      previousRecord,
+      selectedPatientMedicalHistory,
+      loadPrevious: true
+    });
+    const initialDraft = buildInitialGeneratedRecordText(nextValues);
+    previousAutoDraftRef.current = initialDraft;
+    reset({
+      ...nextValues,
+      generated_record_text: initialDraft
+    });
+    setDraftSaveMessage("已載入此個案前次病歷內容，可再依本次狀況修改。");
+  };
+
+  const loadDriveHistoryFiles = async () => {
+    setDriveHistory((current) => ({
+      ...current,
+      status: "loading",
+      message: "正在讀取 Google Drive 歷史病歷檔。"
+    }));
+    try {
+      const files = await fetchGoogleDriveRecordFiles();
+      setDriveHistory({
+        status: "ready",
+        files,
+        message: files.length
+          ? `已讀取 ${files.length} 個 Google Drive 歷史病歷檔，請選擇要載入的日期或檔案。`
+          : "Google Drive 病歷資料夾內目前沒有可載入的 HTML 病歷檔。"
+      });
+      setSelectedDriveFileId((currentFileId) =>
+        files.some((file) => file.id === currentFileId) ? currentFileId : files[0]?.id ?? ""
+      );
+    } catch (error) {
+      setDriveHistory({
+        status: "error",
+        files: [],
+        message:
+          error instanceof Error
+            ? error.message
+            : "Google Drive 歷史病歷檔讀取失敗。"
+      });
+      setSelectedDriveFileId("");
+    }
+  };
+
+  const loadSelectedDriveRecordIntoForm = async () => {
+    if (!selectedProfile || !selectedPatientId || !selectedDriveFileId) {
+      return;
+    }
+
+    setIsLoadingDriveRecord(true);
+    setDriveHistory((current) => ({
+      ...current,
+      message: "正在載入選定的 Google Drive 病歷檔。"
+    }));
+    try {
+      const result = await fetchGoogleDriveRecordHtml(selectedDriveFileId);
+      const nextValues = buildDriveReturnRecordFormValues({
+        html: result.html,
+        chartNumber: selectedProfile.patient.chart_number,
+        patientName: selectedProfile.patient.name,
+        routeKey: selectedRoute?.key ?? "",
+        patientId: selectedPatientId,
+        timeDefaults: returnRecordTimeDefaults
+      });
+      if (!nextValues) {
+        setDriveHistory((current) => ({
+          ...current,
+          status: "error",
+          message: "選定的 Google Drive 病歷檔內找不到目前個案，請改選其他日期或檔案。"
+        }));
+        return;
+      }
+
+      const initialDraft =
+        nextValues.generated_record_text || buildInitialGeneratedRecordText(nextValues);
+      previousAutoDraftRef.current = initialDraft;
+      reset({
+        ...nextValues,
+        generated_record_text: initialDraft
+      });
+      setDraftSaveMessage(
+        `已從 Google Drive 載入「${result.file?.name ?? "選定病歷檔"}」中的此個案內容，可再依本次狀況修改。`
+      );
+      setDriveHistory((current) => ({
+        ...current,
+        status: "ready",
+        message: "已載入選定的 Google Drive 病歷檔。"
+      }));
+    } catch (error) {
+      setDriveHistory((current) => ({
+        ...current,
+        status: "error",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Google Drive 病歷檔載入失敗。"
+      }));
+    } finally {
+      setIsLoadingDriveRecord(false);
+    }
+  };
 
   useEffect(() => {
     if (!selectedRoute) {
@@ -825,54 +1434,22 @@ export function DoctorReturnRecordPage({
       return;
     }
 
-    const previousSelections = buildPreviousFourDiagnosisSelections(previousRecord);
-    const previousMedicalHistorySelections = buildPreviousMedicalHistorySelections(
-      previousRecord,
-      selectedPatientMedicalHistory
-    );
-    const previousTreatmentProvidedSelections =
-      buildPreviousTreatmentProvidedSelections(previousRecord);
-    const previousChiefComplaintFields = resolvePreviousChiefComplaintFields(
-      previousRecord?.chief_complaint
-    );
-    const previousReminderNote = extractReminderNoteFromRecord(previousRecord);
-    const nextValues: ReturnRecordFormValues = {
-      route_key: selectedRoute?.key ?? "",
-      patient_id: selectedPatientId,
-      mark_as_exception: false,
-      add_to_reminders: false,
-      reminder_note: previousReminderNote,
-      chief_complaint_option: previousChiefComplaintFields.chiefComplaintOption,
-      chief_complaint_other: previousChiefComplaintFields.chiefComplaintOther,
-      treatment_start_time: returnRecordTimeDefaults.treatmentStartTime,
-      treatment_end_time: returnRecordTimeDefaults.treatmentEndTime,
-      ...previousSelections,
-      ...previousMedicalHistorySelections,
-      ...previousTreatmentProvidedSelections,
-      generated_record_text: ""
-    };
-
-    const initialDraft = buildReturnRecordDraft({
-      chiefComplaint:
-        previousChiefComplaintFields.chiefComplaintOption === "其他"
-          ? previousChiefComplaintFields.chiefComplaintOther
-          : previousChiefComplaintFields.chiefComplaintOption,
-      treatmentStartTime: nextValues.treatment_start_time,
-      treatmentEndTime: nextValues.treatment_end_time,
-      inspection_tags: nextValues.inspection_tags,
-      inspection_other: nextValues.inspection_other,
-      listening_tags: nextValues.listening_tags,
-      listening_other: nextValues.listening_other,
-      inquiry_tags: nextValues.inquiry_tags,
-      inquiry_other: nextValues.inquiry_other,
-      palpation_tags: nextValues.palpation_tags,
-      palpation_other: nextValues.palpation_other,
-      medicalHistory: joinMedicalHistory(
-        nextValues.medical_history_tags,
-        nextValues.medical_history_other
-      ),
-      treatmentProvidedSummary: buildTreatmentProvidedSummary(nextValues)
-    });
+    const nextValues = selectedSavedDraft
+      ? normalizeReturnRecordFormValues({
+          ...selectedSavedDraft,
+          route_key: selectedRoute?.key ?? selectedSavedDraft.route_key,
+          patient_id: selectedPatientId
+        })
+      : buildReturnRecordFormValues({
+          routeKey: selectedRoute?.key ?? "",
+          patientId: selectedPatientId,
+          timeDefaults: returnRecordTimeDefaults,
+          previousRecord,
+          selectedPatientMedicalHistory,
+          loadPrevious: false
+        });
+    const initialDraft =
+      nextValues.generated_record_text || buildInitialGeneratedRecordText(nextValues);
     previousAutoDraftRef.current = initialDraft;
     reset({
       ...nextValues,
@@ -891,6 +1468,7 @@ export function DoctorReturnRecordPage({
     reset,
     returnRecordTimeDefaults.treatmentEndTime,
     returnRecordTimeDefaults.treatmentStartTime,
+    selectedSavedDraft,
     selectedPatientId,
     selectedRoute,
     selectedPatientMedicalHistory,
@@ -969,34 +1547,11 @@ export function DoctorReturnRecordPage({
       return null;
     }
 
-    const medicalHistory = joinMedicalHistory(
-      draftValues.medical_history_tags ?? [],
-      draftValues.medical_history_other ?? ""
+    return buildCsvDraftOverrideFromValues(
+      normalizeReturnRecordFormValues(draftValues as ReturnRecordFormValues),
+      selectedPatientId
     );
-
-    return {
-      patientId: selectedPatientId,
-      returnRecordStartTime:
-        fromDateTimeLocalValue(draftValues.treatment_start_time ?? "") ?? null,
-      returnRecordEndTime:
-        fromDateTimeLocalValue(draftValues.treatment_end_time ?? "") ?? null,
-      chiefComplaint: resolvedChiefComplaint,
-      fourDiagnosisSummary: buildFourDiagnosisSummary({
-        inspection_tags: draftValues.inspection_tags ?? [],
-        inspection_other: draftValues.inspection_other ?? "",
-        listening_tags: draftValues.listening_tags ?? [],
-        listening_other: draftValues.listening_other ?? "",
-        inquiry_tags: draftValues.inquiry_tags ?? [],
-        inquiry_other: draftValues.inquiry_other ?? "",
-        palpation_tags: draftValues.palpation_tags ?? [],
-        palpation_other: draftValues.palpation_other ?? ""
-      }),
-      medicalHistory,
-      isException: draftValues.mark_as_exception ?? false,
-      reminderNote: draftValues.add_to_reminders ? draftValues.reminder_note?.trim() ?? "" : "",
-      generatedRecordText: draftValues.generated_record_text ?? ""
-    } satisfies ReturnRecordCsvDraftOverride;
-  }, [getValues, resolvedChiefComplaint, selectedPatientId, watchedValues]);
+  }, [getValues, selectedPatientId, watchedValues]);
 
   const exportRows = useMemo(() => {
     if (!selectedRoute || !activeDoctor) {
@@ -1027,12 +1582,31 @@ export function DoctorReturnRecordPage({
           ? repositories.visitRepository.getVisitRecordByScheduleId(linkedReturnSchedule.id)
           : undefined;
         const referenceRecord = linkedReturnRecord ?? detail.record;
+        const savedDraftKey =
+          selectedRoute?.key
+            ? buildReturnRecordDraftStorageKey({
+                doctorId: session.activeDoctorId,
+                routeKey: selectedRoute.key,
+                patientId: detail.patient.id
+              })
+            : "";
+        const savedDraftOverride =
+          savedDraftKey && savedDrafts[savedDraftKey]
+            ? (() => {
+                const normalizedSavedDraft = normalizeReturnRecordFormValues(
+                  savedDrafts[savedDraftKey]
+                );
+                return hasReturnRecordDraftContent(normalizedSavedDraft)
+                  ? buildCsvDraftOverrideFromValues(normalizedSavedDraft, detail.patient.id)
+                  : null;
+              })()
+            : null;
         const currentDraftOverride =
           currentDraftCsvOverride &&
-          schedule.id === matchedCompletedVisit?.detail.schedule.id &&
+          currentDraftCsvOverride.generatedRecordText.trim() &&
           currentDraftCsvOverride.patientId === detail.patient.id
             ? currentDraftCsvOverride
-            : null;
+            : savedDraftOverride;
 
         return {
           routeDate: selectedRoute.routeDate,
@@ -1084,8 +1658,8 @@ export function DoctorReturnRecordPage({
   }, [
     activeDoctor,
     currentDraftCsvOverride,
-    matchedCompletedVisit,
     repositories,
+    savedDrafts,
     selectedRoute,
     session.activeDoctorId
   ]);
@@ -1180,14 +1754,21 @@ export function DoctorReturnRecordPage({
     window.setTimeout(() => setCopiedPatientId(null), 1600);
   };
 
+  const handleSaveCurrentDraft = () => {
+    const values = normalizeReturnRecordFormValues(getValues());
+    saveDraftValues(values);
+  };
+
   const onSubmit = (values: ReturnRecordFormValues) => {
+    const normalizedValues = normalizeReturnRecordFormValues(values);
+    saveDraftValues(normalizedValues, { silent: true });
     if (!selectedProfile) {
       window.alert("請先選擇個案。");
       return;
     }
 
-    const treatmentStartTime = fromDateTimeLocalValue(values.treatment_start_time);
-    const treatmentEndTime = fromDateTimeLocalValue(values.treatment_end_time);
+    const treatmentStartTime = fromDateTimeLocalValue(normalizedValues.treatment_start_time);
+    const treatmentEndTime = fromDateTimeLocalValue(normalizedValues.treatment_end_time);
     if (!treatmentStartTime || !treatmentEndTime) {
       window.alert("請完整填寫開始與結束治療時間。");
       return;
@@ -1199,34 +1780,34 @@ export function DoctorReturnRecordPage({
     }
 
     const chiefComplaint =
-      values.chief_complaint_option === "其他"
-        ? values.chief_complaint_other.trim()
-        : values.chief_complaint_option;
+      normalizedValues.chief_complaint_option === "其他"
+        ? normalizedValues.chief_complaint_other.trim()
+        : normalizedValues.chief_complaint_option;
     const medicalHistory = joinMedicalHistory(
-      values.medical_history_tags,
-      values.medical_history_other
+      normalizedValues.medical_history_tags,
+      normalizedValues.medical_history_other
     );
-    const treatmentProvidedSummary = buildTreatmentProvidedSummary(values);
-    const baseTreatmentProvided = values.mark_as_exception
+    const treatmentProvidedSummary = buildTreatmentProvidedSummary(normalizedValues);
+    const baseTreatmentProvided = normalizedValues.mark_as_exception
       ? "已由醫師回院病歷頁建立病歷，並勾選異常個案。"
       : "已由醫師回院病歷頁建立病歷。";
-    const reminderNote = values.reminder_note.trim();
+    const reminderNote = normalizedValues.reminder_note.trim();
 
-    if (values.chief_complaint_option === "其他" && !chiefComplaint) {
+    if (normalizedValues.chief_complaint_option === "其他" && !chiefComplaint) {
       window.alert("若主訴選擇其他，請補充主訴內容。");
       return;
     }
-    if (values.add_to_reminders && !reminderNote) {
+    if (normalizedValues.add_to_reminders && !reminderNote) {
       window.alert("若要加入通知中心，請補充提醒內容。");
       return;
     }
 
     const estimatedMinutes = calculateTreatmentDurationMinutes(
-      values.treatment_start_time,
-      values.treatment_end_time
+      normalizedValues.treatment_start_time,
+      normalizedValues.treatment_end_time
     );
     const noteTitle = `回院病歷｜${chiefComplaint || "未填主訴"}${
-      values.mark_as_exception ? "｜異常個案" : ""
+      normalizedValues.mark_as_exception ? "｜異常個案" : ""
     }`;
     const schedule = buildScheduleFromRecord(
       selectedProfile.patient.id,
@@ -1262,29 +1843,29 @@ export function DoctorReturnRecordPage({
       bowel_movement_status: "",
       pain_status: "",
       energy_status: "",
-      inspection_tags: values.inspection_tags,
-      inspection_other: values.inspection_other,
-      listening_tags: values.listening_tags,
-      listening_other: values.listening_other,
-      inquiry_tags: values.inquiry_tags,
-      inquiry_other: values.inquiry_other,
-      palpation_tags: values.palpation_tags,
-      palpation_other: values.palpation_other,
-      physician_assessment: values.generated_record_text,
+      inspection_tags: normalizedValues.inspection_tags,
+      inspection_other: normalizedValues.inspection_other,
+      listening_tags: normalizedValues.listening_tags,
+      listening_other: normalizedValues.listening_other,
+      inquiry_tags: normalizedValues.inquiry_tags,
+      inquiry_other: normalizedValues.inquiry_other,
+      palpation_tags: normalizedValues.palpation_tags,
+      palpation_other: normalizedValues.palpation_other,
+      physician_assessment: normalizedValues.generated_record_text,
       treatment_provided: treatmentProvidedSummary
         ? `${baseTreatmentProvided} 處置：${treatmentProvidedSummary}`
         : baseTreatmentProvided,
-      treatment_chinese_medicine_checked: values.treatment_chinese_medicine_checked,
-      treatment_chinese_medicine_note: values.treatment_chinese_medicine_note.trim(),
-      treatment_acupuncture_checked: values.treatment_acupuncture_checked,
-      treatment_acupuncture_note: values.treatment_acupuncture_note.trim(),
-      treatment_topical_medication_checked: values.treatment_topical_medication_checked,
-      treatment_topical_medication_note: values.treatment_topical_medication_note.trim(),
-      doctor_note: values.generated_record_text,
+      treatment_chinese_medicine_checked: normalizedValues.treatment_chinese_medicine_checked,
+      treatment_chinese_medicine_note: normalizedValues.treatment_chinese_medicine_note.trim(),
+      treatment_acupuncture_checked: normalizedValues.treatment_acupuncture_checked,
+      treatment_acupuncture_note: normalizedValues.treatment_acupuncture_note.trim(),
+      treatment_topical_medication_checked: normalizedValues.treatment_topical_medication_checked,
+      treatment_topical_medication_note: normalizedValues.treatment_topical_medication_note.trim(),
+      doctor_note: normalizedValues.generated_record_text,
       caregiver_feedback: "",
       follow_up_note: medicalHistory,
       medical_history_note: medicalHistory,
-      generated_record_text: values.generated_record_text,
+      generated_record_text: normalizedValues.generated_record_text,
       next_visit_suggestion_date: null,
       visit_feedback_code: null,
       visit_feedback_at: null,
@@ -1296,7 +1877,7 @@ export function DoctorReturnRecordPage({
 
     repositories.visitRepository.upsertSchedule(schedule);
     repositories.visitRepository.upsertVisitRecord(nextRecord);
-    if (values.mark_as_exception) {
+    if (normalizedValues.mark_as_exception) {
       buildAbnormalCaseReminders(
         selectedProfile.patient.name,
         chiefComplaint,
@@ -1305,7 +1886,7 @@ export function DoctorReturnRecordPage({
         repositories.visitRepository.createReminder(reminder);
       });
     }
-    if (values.add_to_reminders) {
+    if (normalizedValues.add_to_reminders) {
       buildReturnRecordReminders(
         selectedProfile.patient.name,
         reminderNote,
@@ -1315,13 +1896,13 @@ export function DoctorReturnRecordPage({
       });
     }
     window.alert(
-      values.mark_as_exception && values.add_to_reminders
-        ? "回院病歷已建立，異常個案與提醒內容已同步新增到醫師與行政通知中心。"
-        : values.mark_as_exception
-          ? "回院病歷已建立，異常個案訊息已同步新增到醫師與行政通知中心。"
-          : values.add_to_reminders
-            ? "回院病歷已建立，提醒內容已同步新增到醫師與行政通知中心。"
-            : "回院病歷已建立，病史與病歷內容會作為下次自動帶入基礎。"
+      normalizedValues.mark_as_exception && normalizedValues.add_to_reminders
+        ? "回院病歷已建立，異常個案與提醒內容已同步新增到醫師與行政通知中心，此個案暫存也已保留。"
+        : normalizedValues.mark_as_exception
+          ? "回院病歷已建立，異常個案訊息已同步新增到醫師與行政通知中心，此個案暫存也已保留。"
+          : normalizedValues.add_to_reminders
+            ? "回院病歷已建立，提醒內容已同步新增到醫師與行政通知中心，此個案暫存也已保留。"
+            : "回院病歷已建立，此個案暫存已保留，匯出此次巡診時會一起整併。"
     );
   };
 
@@ -1337,6 +1918,13 @@ export function DoctorReturnRecordPage({
                 <span className="mb-1 block font-medium text-brand-ink">選擇路線</span>
                 <select
                   {...register("route_key")}
+                  onChange={(event) => {
+                    saveCurrentFormDraftSilently();
+                    setValue("route_key", event.target.value, {
+                      shouldDirty: true,
+                      shouldTouch: true
+                    });
+                  }}
                   className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
                 >
                   {routeOptions.map((routeOption) => (
@@ -1350,6 +1938,13 @@ export function DoctorReturnRecordPage({
                 <span className="mb-1 block font-medium text-brand-ink">選擇個案</span>
                 <select
                   {...register("patient_id")}
+                  onChange={(event) => {
+                    saveCurrentFormDraftSilently();
+                    setValue("patient_id", event.target.value, {
+                      shouldDirty: true,
+                      shouldTouch: true
+                    });
+                  }}
                   className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
                 >
                   {routePatients.map((patient) => (
@@ -1379,9 +1974,63 @@ export function DoctorReturnRecordPage({
                 <p className="break-words">重要病史：{selectedProfile.patient.important_medical_history}</p>
               </div>
             ) : null}
-            {previousRecord ? (
+            {selectedProfile ? (
               <div className="mt-4 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600">
-                已自動帶入此個案上一筆登打的主訴、四診、病史與病歷草稿內容，可直接修改後送出。
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <p>從 Google Drive 歷史病歷檔選擇日期或檔案，再載入目前個案的主訴、四診、病史與病歷草稿內容。</p>
+                  <button
+                    type="button"
+                    onClick={loadDriveHistoryFiles}
+                    disabled={driveHistory.status === "loading"}
+                    className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-brand-forest disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {driveHistory.status === "loading" ? "讀取中" : "讀取 Google Drive 檔案清單"}
+                  </button>
+                </div>
+                {driveHistory.message ? (
+                  <p className="mt-2 text-xs text-slate-500">{driveHistory.message}</p>
+                ) : null}
+                {driveHistory.files.length ? (
+                  <div className="mt-3 grid gap-3 lg:grid-cols-[1fr_auto]">
+                    <label className="block text-xs font-semibold text-brand-ink">
+                      選擇歷史病歷檔案
+                      <select
+                        aria-label="選擇歷史病歷檔案"
+                        value={selectedDriveFileId}
+                        onChange={(event) => setSelectedDriveFileId(event.target.value)}
+                        className="mt-1 w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-normal text-slate-700"
+                      >
+                        {driveHistory.files.map((file) => (
+                          <option key={file.id} value={file.id}>
+                            {formatDriveRecordFileLabel(file)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={loadSelectedDriveRecordIntoForm}
+                      disabled={!selectedDriveFileId || isLoadingDriveRecord}
+                      className="self-end rounded-full bg-brand-forest px-4 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {isLoadingDriveRecord ? "載入中" : "載入選定檔案"}
+                    </button>
+                  </div>
+                ) : null}
+                {previousRecord ? (
+                  <button
+                    type="button"
+                    onClick={loadPreviousRecordIntoForm}
+                    className="mt-3 rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-brand-forest"
+                  >
+                    載入本機前次
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+            {selectedSavedDraft ? (
+              <div className="mt-4 rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
+                已載入此個案暫存內容。切換個案或關閉視窗後，再回到同一路線仍會保留。
               </div>
             ) : null}
             {matchedCompletedVisit ? (
@@ -1625,6 +2274,13 @@ export function DoctorReturnRecordPage({
           <div className="flex flex-wrap gap-3">
             <button
               type="button"
+              onClick={handleSaveCurrentDraft}
+              className="w-full rounded-full border border-sky-200 bg-sky-50 px-5 py-3 text-sm font-semibold text-sky-800 lg:w-auto"
+            >
+              儲存此個案暫存
+            </button>
+            <button
+              type="button"
               onClick={handleExportCsv}
               disabled={!exportRows.length}
               className="w-full rounded-full border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-brand-ink disabled:cursor-not-allowed disabled:opacity-50 lg:w-auto"
@@ -1654,6 +2310,9 @@ export function DoctorReturnRecordPage({
               儲存到 Google Drive
             </button>
           </div>
+          {draftSaveMessage ? (
+            <p className="text-xs text-sky-700">{draftSaveMessage}</p>
+          ) : null}
           {googleDriveStatus ? (
             <p className="text-xs text-slate-500">{googleDriveStatus}</p>
           ) : null}

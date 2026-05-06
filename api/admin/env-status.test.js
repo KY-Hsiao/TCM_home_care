@@ -47,9 +47,13 @@ describe("/api/admin/env-status", () => {
     expect(result.body.variables).toMatchObject({
       LINE_CHANNEL_ACCESS_TOKEN: true,
       LINE_CHANNEL_SECRET: false,
+      OPENAI_API_KEY: false,
       GOOGLE_MAPS_API_KEY: true,
       GOOGLE_CALENDAR_ID: false,
       GOOGLE_DRIVE_ACCESS_TOKEN: false,
+      GOOGLE_DRIVE_REFRESH_TOKEN: false,
+      GOOGLE_DRIVE_CLIENT_ID: false,
+      GOOGLE_DRIVE_CLIENT_SECRET: false,
       GOOGLE_DRIVE_FOLDER_ID: true
     });
   });

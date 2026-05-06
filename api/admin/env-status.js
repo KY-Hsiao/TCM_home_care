@@ -19,11 +19,15 @@ export default function handler(request, response) {
     variables: {
       LINE_CHANNEL_ACCESS_TOKEN: isConfigured(process.env.LINE_CHANNEL_ACCESS_TOKEN),
       LINE_CHANNEL_SECRET: isConfigured(process.env.LINE_CHANNEL_SECRET),
+      OPENAI_API_KEY: isConfigured(process.env.OPENAI_API_KEY),
       GOOGLE_MAPS_API_KEY:
         isConfigured(process.env.GOOGLE_MAPS_API_KEY) ||
         isConfigured(process.env.VITE_GOOGLE_MAPS_API_KEY),
       GOOGLE_CALENDAR_ID: isConfigured(process.env.GOOGLE_CALENDAR_ID),
       GOOGLE_DRIVE_ACCESS_TOKEN: isConfigured(process.env.GOOGLE_DRIVE_ACCESS_TOKEN),
+      GOOGLE_DRIVE_REFRESH_TOKEN: isConfigured(process.env.GOOGLE_DRIVE_REFRESH_TOKEN),
+      GOOGLE_DRIVE_CLIENT_ID: isConfigured(process.env.GOOGLE_DRIVE_CLIENT_ID),
+      GOOGLE_DRIVE_CLIENT_SECRET: isConfigured(process.env.GOOGLE_DRIVE_CLIENT_SECRET),
       GOOGLE_DRIVE_FOLDER_ID: isConfigured(process.env.GOOGLE_DRIVE_FOLDER_ID)
     }
   });
