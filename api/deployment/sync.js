@@ -273,6 +273,14 @@ async function handleGoogleCalendarEvents(request, response) {
     const calendarResponse = await fetch(url.toString());
     const payload = await calendarResponse.json();
     if (!calendarResponse.ok) {
+      if (calendarResponse.status === 404) {
+        setJson(response, 502, {
+          reason: "CALENDAR_NOT_FOUND_OR_PRIVATE",
+          error:
+            "Google Calendar 找不到這個日曆，或目前日曆未公開給 API Key 讀取。請確認 GOOGLE_CALENDAR_ID 是否正確，並將該日曆設為公開可讀，或改用 OAuth / Service Account 授權。"
+        });
+        return;
+      }
       setJson(response, 502, {
         reason: payload.error?.status ?? `HTTP_${calendarResponse.status}`,
         error: payload.error?.message ?? "Google Calendar API 讀取失敗。"

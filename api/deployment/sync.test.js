@@ -235,4 +235,31 @@ describe("/api/deployment/sync?resource=app-db", () => {
     expect(result.statusCode).toBe(400);
     expect(result.body.reason).toBe("GOOGLE_API_KEY_MISSING");
   });
+
+  it("Google Calendar 回 404 時會提示日曆不存在或未公開", async () => {
+    vi.stubEnv("GOOGLE_CALENDAR_ID", "private-calendar@example.com");
+    vi.stubEnv("GOOGLE_MAPS_API_KEY", "google-key");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 404,
+        json: async () => ({
+          error: {
+            status: "NOT_FOUND",
+            message: "Not Found"
+          }
+        })
+      })
+    );
+    const handler = await importHandlerWithQuery(vi.fn());
+
+    const result = await callCalendarEvents(handler, {
+      date: "2026-05-06"
+    });
+
+    expect(result.statusCode).toBe(502);
+    expect(result.body.reason).toBe("CALENDAR_NOT_FOUND_OR_PRIVATE");
+    expect(result.body.error).toContain("日曆未公開給 API Key 讀取");
+  });
 });
