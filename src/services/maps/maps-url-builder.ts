@@ -56,7 +56,9 @@ function buildInternalNavigationUrl(input: {
 }) {
   const params = new URLSearchParams({
     destination: input.destination,
-    key: input.mapsApiKey
+    key: input.mapsApiKey,
+    v: "nav-fixed-small-20260506",
+    navZoom: "17"
   });
   if (input.destinationLatitude !== null) {
     params.set("dlat", String(input.destinationLatitude));
