@@ -57,7 +57,7 @@ type ManagedFamilyLineContactSnapshot = {
   displayName: string;
   lineUserId?: string;
   linkedPatientIds: string[];
-  linkedAdminUserIds?: string[];
+  contactRole?: "family" | "admin";
   note?: string;
   source?: "webhook" | "official_friend";
   updatedAt?: string;
@@ -75,8 +75,6 @@ type AdminLineRecipient = {
   id: string;
   displayName: string;
   lineUserId: string;
-  adminUserId: string;
-  adminUserName: string;
 };
 
 type GoogleCalendarEventPreview = {
@@ -516,10 +514,14 @@ function loadFamilyLineArray<T>(key: string): T[] {
   }
 }
 
-function normalizeManagedFamilyLineContacts(contacts: ManagedFamilyLineContactSnapshot[]) {
+function normalizeManagedFamilyLineContacts(
+  contacts: ManagedFamilyLineContactSnapshot[]
+): ManagedFamilyLineContactSnapshot[] {
   return contacts
     .map((contact) => {
       const lineUserId = String(contact.lineUserId ?? contact.userId ?? "").trim();
+      const contactRole: ManagedFamilyLineContactSnapshot["contactRole"] =
+        contact.contactRole === "admin" ? "admin" : "family";
       return {
         ...contact,
         id: contact.id || `line-contact-${lineUserId}`,
@@ -528,9 +530,7 @@ function normalizeManagedFamilyLineContacts(contacts: ManagedFamilyLineContactSn
         linkedPatientIds: Array.isArray(contact.linkedPatientIds)
           ? contact.linkedPatientIds.map((patientId) => String(patientId ?? "").trim()).filter(Boolean)
           : [],
-        linkedAdminUserIds: Array.isArray(contact.linkedAdminUserIds)
-          ? contact.linkedAdminUserIds.map((adminUserId) => String(adminUserId ?? "").trim()).filter(Boolean)
-          : []
+        contactRole
       };
     })
     .filter((contact) => contact.lineUserId);
@@ -828,28 +828,17 @@ function buildPlannerRowsFromRoutePlan(
   );
 }
 
-function buildAdminLineRecipients(input: {
-  contacts: ManagedFamilyLineContactSnapshot[];
-  adminNameById: Map<string, string>;
-}) {
+function buildAdminLineRecipients(contacts: ManagedFamilyLineContactSnapshot[]) {
   const recipientByLineUserId = new Map<string, AdminLineRecipient>();
-  input.contacts.forEach((contact) => {
+  contacts.forEach((contact) => {
     const lineUserId = String(contact.lineUserId ?? contact.userId ?? "").trim();
-    if (!lineUserId) {
+    if (!lineUserId || contact.contactRole !== "admin" || recipientByLineUserId.has(lineUserId)) {
       return;
     }
-    const linkedAdminUserIds = Array.isArray(contact.linkedAdminUserIds) ? contact.linkedAdminUserIds : [];
-    linkedAdminUserIds.forEach((adminUserId) => {
-      if (!input.adminNameById.has(adminUserId) || recipientByLineUserId.has(lineUserId)) {
-        return;
-      }
-      recipientByLineUserId.set(lineUserId, {
-        id: contact.id,
-        displayName: contact.displayName,
-        lineUserId,
-        adminUserId,
-        adminUserName: input.adminNameById.get(adminUserId) ?? adminUserId
-      });
+    recipientByLineUserId.set(lineUserId, {
+      id: contact.id,
+      displayName: contact.displayName,
+      lineUserId
     });
   });
   return Array.from(recipientByLineUserId.values()).sort((left, right) =>
@@ -3340,17 +3329,9 @@ export function AdminRemindersPage() {
     loadManagedFamilyLineContacts()
   );
 
-  const adminNameById = useMemo(
-    () => new Map(db.admin_users.map((adminUser) => [adminUser.id, adminUser.name])),
-    [db.admin_users]
-  );
   const adminLineRecipients = useMemo(
-    () =>
-      buildAdminLineRecipients({
-        contacts: managedLineContacts,
-        adminNameById
-      }),
-    [adminNameById, managedLineContacts]
+    () => buildAdminLineRecipients(managedLineContacts),
+    [managedLineContacts]
   );
 
   useEffect(() => {
@@ -3471,9 +3452,7 @@ export function AdminRemindersPage() {
               patientName: "",
               doctorId: "",
               doctorName: "",
-              lineUserId: recipient.lineUserId,
-              adminUserId: recipient.adminUserId,
-              adminUserName: recipient.adminUserName
+              lineUserId: recipient.lineUserId
             }))
           })
         });

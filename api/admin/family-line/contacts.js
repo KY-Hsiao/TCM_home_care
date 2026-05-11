@@ -43,7 +43,7 @@ export default async function handler(request, response) {
     const updatedContact = await updateFamilyLineContact({
       lineUserId: body.lineUserId ?? body.userId,
       linkedPatientIds: body.linkedPatientIds,
-      linkedAdminUserIds: body.linkedAdminUserIds,
+      contactRole: body.contactRole,
       note: body.note
     });
 

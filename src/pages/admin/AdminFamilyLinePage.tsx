@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useAppContext } from "../../app/use-app-context";
-import type { AdminUser, Doctor, Patient, VisitSchedule } from "../../domain/models";
+import type { Doctor, Patient, VisitSchedule } from "../../domain/models";
 import { Badge } from "../../shared/ui/Badge";
 import { Panel } from "../../shared/ui/Panel";
 import { formatDateTimeFull } from "../../shared/utils/format";
@@ -25,7 +25,6 @@ type FamilyLineRecipient = {
   relationshipLabel: string;
   patient: Patient | null;
   linkedPatients: Patient[];
-  linkedAdmins: AdminUser[];
   schedules: VisitSchedule[];
   schedule: VisitSchedule | null;
   doctor: Doctor | null;
@@ -38,7 +37,7 @@ type ManagedFamilyLineContact = {
   displayName: string;
   lineUserId: string;
   linkedPatientIds: string[];
-  linkedAdminUserIds: string[];
+  contactRole: "family" | "admin";
   note: string;
   source: "webhook" | "official_friend";
   updatedAt: string;
@@ -50,7 +49,7 @@ type LineFriendProfile = {
   note?: string;
   source?: "webhook" | "official_friend";
   linkedPatientIds?: string[];
-  linkedAdminUserIds?: string[];
+  contactRole?: "family" | "admin";
   updatedAt?: string;
 };
 
@@ -131,9 +130,7 @@ function normalizeManagedLineContacts(
       linkedPatientIds: Array.isArray(contact.linkedPatientIds)
         ? contact.linkedPatientIds.map((patientId) => String(patientId ?? "").trim()).filter(Boolean)
         : [],
-      linkedAdminUserIds: Array.isArray(contact.linkedAdminUserIds)
-        ? contact.linkedAdminUserIds.map((adminUserId) => String(adminUserId ?? "").trim()).filter(Boolean)
-        : [],
+      contactRole: contact.contactRole === "admin" ? "admin" : "family",
       source: contact.source === "official_friend" ? "official_friend" : "webhook"
     }));
 }
@@ -180,7 +177,6 @@ export function AdminFamilyLinePage() {
   );
   const [selectedManagedContactIds, setSelectedManagedContactIds] = useState<string[]>([]);
   const [bulkLinkPatientId, setBulkLinkPatientId] = useState("");
-  const [bulkLinkAdminUserId, setBulkLinkAdminUserId] = useState("");
   const [selectedTemplate, setSelectedTemplate] = useState<FamilyLineTemplateKey>("custom_notice");
   const [selectedSendTypes, setSelectedSendTypes] = useState<FamilyLineTemplateKey[]>(["custom_notice"]);
   const [selectedDoctorId, setSelectedDoctorId] = useState("all");
@@ -229,9 +225,6 @@ export function AdminFamilyLinePage() {
       const linkedPatients = contact.linkedPatientIds
         .map((patientId) => repositories.patientRepository.getPatientById(patientId))
         .filter((patient): patient is Patient => Boolean(patient));
-      const linkedAdmins = contact.linkedAdminUserIds
-        .map((adminUserId) => db.admin_users.find((adminUser) => adminUser.id === adminUserId))
-        .filter((adminUser): adminUser is AdminUser => Boolean(adminUser));
       const primaryPatient = linkedPatients[0] ?? null;
       const schedules = linkedPatients.flatMap((patient) =>
         repositories.visitRepository.getSchedules({ patientId: patient.id })
@@ -257,10 +250,9 @@ export function AdminFamilyLinePage() {
       nextRecipients.push({
         id: `line-contact:${contact.id}`,
         displayName: contact.displayName,
-        relationshipLabel: contact.note || (linkedAdmins.length ? "行政人員" : "LINE 名單"),
+        relationshipLabel: contact.note || (contact.contactRole === "admin" ? "行政人員" : "LINE 名單"),
         patient: primaryPatient,
         linkedPatients,
-        linkedAdmins,
         schedules,
         schedule,
         doctor,
@@ -269,7 +261,7 @@ export function AdminFamilyLinePage() {
       });
     });
     return nextRecipients;
-  }, [db.admin_users, db.doctors, managedLineContacts, repositories]);
+  }, [db.doctors, managedLineContacts, repositories]);
 
   const filteredRecipients = useMemo(() => {
     const doctorFilteredRecipients =
@@ -532,7 +524,7 @@ export function AdminFamilyLinePage() {
         body: JSON.stringify({
           lineUserId: contact.lineUserId,
           linkedPatientIds: contact.linkedPatientIds,
-          linkedAdminUserIds: contact.linkedAdminUserIds,
+          contactRole: contact.contactRole,
           note: contact.note
         })
       });
@@ -669,21 +661,18 @@ export function AdminFamilyLinePage() {
     });
   };
 
-  const linkSelectedContactsToAdminUser = async () => {
-    if (!selectedManagedContactIds.length || !bulkLinkAdminUserId) {
-      setSendFeedback({ tone: "error", message: "請先選擇 LINE 好友名單與要關聯的行政人員。" });
+  const updateSelectedContactsRole = async (contactRole: ManagedFamilyLineContact["contactRole"]) => {
+    if (!selectedManagedContactIds.length) {
+      setSendFeedback({ tone: "error", message: "請先選擇要調整角色的 LINE 好友名單。" });
       return;
     }
 
-    const targetAdmin = db.admin_users.find((adminUser) => adminUser.id === bulkLinkAdminUserId);
     const now = new Date().toISOString();
     const contactsToPersist = managedLineContacts
       .filter((contact) => selectedManagedContactIds.includes(contact.id))
       .map((contact) => ({
         ...contact,
-        linkedAdminUserIds: contact.linkedAdminUserIds.includes(bulkLinkAdminUserId)
-          ? contact.linkedAdminUserIds
-          : [...contact.linkedAdminUserIds, bulkLinkAdminUserId],
+        contactRole,
         updatedAt: now
       }));
     const contactToPersistById = new Map(contactsToPersist.map((contact) => [contact.id, contact]));
@@ -698,60 +687,13 @@ export function AdminFamilyLinePage() {
     const failedPersistCount = persistedResults.filter((isPersisted) => !isPersisted).length;
     setSendFeedback({
       tone: failedPersistCount > 0 ? "error" : "success",
-      message: `已將 ${selectedManagedContactIds.length} 位 LINE 好友關聯到 ${
-        targetAdmin ? targetAdmin.name : "指定行政人員"
-      }，新公告建立時會推播給已關聯行政人員。${
+      message: `已將 ${selectedManagedContactIds.length} 位 LINE 好友設為${
+        contactRole === "admin" ? "行政人員" : "家屬聯繫"
+      }角色。${
+        contactRole === "admin" ? "新公告建立時會推播給行政人員角色的 LINE 帳號。" : ""
+      }${
         failedPersistCount > 0
-          ? ` 其中 ${failedPersistCount} 位暫時只保存在本機，後端名單同步失敗時請稍後再按一次關聯。`
-          : " 已同步保存到 LINE 名單資料庫。"
-      }`
-    });
-  };
-
-  const unlinkSelectedContactsFromAdminUser = async () => {
-    if (!selectedManagedContactIds.length || !bulkLinkAdminUserId) {
-      setSendFeedback({ tone: "error", message: "請先選擇 LINE 好友名單與要取消關聯的行政人員。" });
-      return;
-    }
-
-    const targetAdmin = db.admin_users.find((adminUser) => adminUser.id === bulkLinkAdminUserId);
-    const now = new Date().toISOString();
-    const contactsToPersist = managedLineContacts
-      .filter(
-        (contact) =>
-          selectedManagedContactIds.includes(contact.id) &&
-          contact.linkedAdminUserIds.includes(bulkLinkAdminUserId)
-      )
-      .map((contact) => ({
-        ...contact,
-        linkedAdminUserIds: contact.linkedAdminUserIds.filter((adminUserId) => adminUserId !== bulkLinkAdminUserId),
-        updatedAt: now
-      }));
-    if (contactsToPersist.length === 0) {
-      setSendFeedback({
-        tone: "error",
-        message: `所選 LINE 好友目前沒有關聯到 ${targetAdmin ? targetAdmin.name : "指定行政人員"}。`
-      });
-      return;
-    }
-
-    const contactToPersistById = new Map(contactsToPersist.map((contact) => [contact.id, contact]));
-    setManagedLineContacts((current) =>
-      current.map((contact) => {
-        return contactToPersistById.get(contact.id) ?? contact;
-      })
-    );
-    const persistedResults = await Promise.all(
-      contactsToPersist.map((contact) => persistManagedLineContact(contact))
-    );
-    const failedPersistCount = persistedResults.filter((isPersisted) => !isPersisted).length;
-    setSendFeedback({
-      tone: failedPersistCount > 0 ? "error" : "success",
-      message: `已將 ${contactsToPersist.length} 位 LINE 好友取消與 ${
-        targetAdmin ? targetAdmin.name : "指定行政人員"
-      } 的關聯。${
-        failedPersistCount > 0
-          ? ` 其中 ${failedPersistCount} 位暫時只保存在本機，後端名單同步失敗時請稍後再按一次取消關聯。`
+          ? ` 其中 ${failedPersistCount} 位暫時只保存在本機，後端名單同步失敗時請稍後再按一次角色設定。`
           : " 已同步保存到 LINE 名單資料庫。"
       }`
     });
@@ -803,7 +745,7 @@ export function AdminFamilyLinePage() {
             displayName: friend.displayName || existing?.displayName || friend.userId,
             lineUserId: friend.userId,
             linkedPatientIds: friend.linkedPatientIds ?? existing?.linkedPatientIds ?? [],
-            linkedAdminUserIds: friend.linkedAdminUserIds ?? existing?.linkedAdminUserIds ?? [],
+            contactRole: friend.contactRole === "admin" ? "admin" : existing?.contactRole ?? "family",
             note: friend.note ?? existing?.note ?? "",
             source: friend.source === "official_friend" ? "official_friend" : "webhook",
             updatedAt: friend.updatedAt ?? now
@@ -1587,56 +1529,24 @@ export function AdminFamilyLinePage() {
                   取消所選關聯
                 </button>
               </div>
-              <div className="space-y-2">
-                <p className="font-medium text-brand-ink">批次關聯到行政人員</p>
-                <div className="grid gap-2 sm:grid-cols-2">
-                  {db.admin_users.map((adminUser) => {
-                    const linkedContactCount = managedLineContacts.filter((contact) =>
-                      contact.linkedAdminUserIds.includes(adminUser.id)
-                    ).length;
-                    return (
-                      <button
-                        key={adminUser.id}
-                        type="button"
-                        aria-pressed={bulkLinkAdminUserId === adminUser.id}
-                        onClick={() =>
-                          setBulkLinkAdminUserId((current) =>
-                            current === adminUser.id ? "" : adminUser.id
-                          )
-                        }
-                        className={`rounded-2xl border px-4 py-3 text-left transition ${
-                          bulkLinkAdminUserId === adminUser.id
-                            ? "border-brand-forest bg-emerald-50 text-brand-ink"
-                            : "border-slate-200 bg-white text-slate-600 hover:border-brand-moss"
-                        }`}
-                      >
-                        <span className="block text-sm font-semibold">{adminUser.name}</span>
-                        <span className="mt-1 block text-xs">
-                          已關聯 {linkedContactCount} 位 LINE 好友
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
               <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
-                  onClick={() => void linkSelectedContactsToAdminUser()}
+                  onClick={() => void updateSelectedContactsRole("admin")}
                   className="rounded-full bg-brand-forest px-4 py-2 text-xs font-semibold text-white"
                 >
-                  關聯所選行政人員
+                  設為行政人員
                 </button>
                 <button
                   type="button"
-                  onClick={() => void unlinkSelectedContactsFromAdminUser()}
-                  className="rounded-full border border-rose-200 bg-white px-4 py-2 text-xs font-semibold text-rose-700"
+                  onClick={() => void updateSelectedContactsRole("family")}
+                  className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-brand-ink"
                 >
-                  取消行政關聯
+                  設為家屬聯繫
                 </button>
               </div>
               <p className="text-xs text-slate-500">
-                先在下方名單按「顯示詳細」勾選好友，再於此處關聯或取消關聯個案、行政人員。
+                先在下方名單按「顯示詳細」勾選好友，再於此處關聯個案或設定 LINE 角色。行政人員角色不綁定個別行政帳號。
               </p>
             </div>
           </Panel>
@@ -1727,10 +1637,6 @@ export function AdminFamilyLinePage() {
                       .map((patientId) => db.patients.find((patient) => patient.id === patientId))
                       .filter((patient): patient is Patient => Boolean(patient))
                       .map((patient) => maskPatientName(patient.name));
-                    const linkedAdminNames = contact.linkedAdminUserIds
-                      .map((adminUserId) => db.admin_users.find((adminUser) => adminUser.id === adminUserId))
-                      .filter((adminUser): adminUser is AdminUser => Boolean(adminUser))
-                      .map((adminUser) => adminUser.name);
                     return (
                       <div
                         key={contact.id}
@@ -1745,7 +1651,7 @@ export function AdminFamilyLinePage() {
                               關聯個案：{linkedNames.length ? linkedNames.join("、") : "尚未關聯"}
                             </p>
                             <p className="mt-1 break-words text-sm text-slate-600">
-                              關聯行政：{linkedAdminNames.length ? linkedAdminNames.join("、") : "尚未關聯"}
+                              LINE 角色：{contact.contactRole === "admin" ? "行政人員" : "家屬聯繫"}
                             </p>
                           </div>
                           <button
@@ -1769,6 +1675,10 @@ export function AdminFamilyLinePage() {
                                 <span className="text-xs text-slate-500">
                                   發送對象：{recipient ? resolveRecipientLineStatus(recipient.lineUserId) : "不符合目前醫師篩選"}
                                 </span>
+                                <Badge
+                                  value={contact.contactRole === "admin" ? "行政人員" : "家屬聯繫"}
+                                  compact
+                                />
                               </div>
 
                               <div className="grid gap-3 md:grid-cols-2">

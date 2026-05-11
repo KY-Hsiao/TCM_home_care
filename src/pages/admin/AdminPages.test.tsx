@@ -2210,7 +2210,7 @@ describe("AdminPages", () => {
         body: JSON.stringify({
           lineUserId: "Uaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           linkedPatientIds: ["pat-001"],
-          linkedAdminUserIds: [],
+          contactRole: "family",
           note: ""
         })
       })
@@ -2239,7 +2239,7 @@ describe("AdminPages", () => {
         body: JSON.stringify({
           lineUserId: "Uaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           linkedPatientIds: [],
-          linkedAdminUserIds: [],
+          contactRole: "family",
           note: ""
         })
       })
@@ -2247,7 +2247,7 @@ describe("AdminPages", () => {
     expect(window.localStorage.getItem("tcm-family-line-managed-contacts")).not.toContain("pat-001");
   });
 
-  it("AdminFamilyLinePage 可將 LINE 好友關聯到行政人員", async () => {
+  it("AdminFamilyLinePage 可將 LINE 好友角色設為行政人員", async () => {
     window.localStorage.setItem(
       "tcm-family-line-managed-contacts",
       JSON.stringify([
@@ -2256,7 +2256,7 @@ describe("AdminPages", () => {
           displayName: "行政 LINE",
           lineUserId: "Uadmin1234567890abcdef1234567890",
           linkedPatientIds: [],
-          linkedAdminUserIds: [],
+          contactRole: "family",
           note: "",
           source: "official_friend",
           updatedAt: "2026-05-01T00:00:00.000Z"
@@ -2273,14 +2273,13 @@ describe("AdminPages", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "顯示詳細" }));
     fireEvent.click(screen.getByLabelText("行政 LINE 批次關聯勾選"));
-    fireEvent.click(screen.getByRole("button", { name: /吳佳芸/ }));
-    fireEvent.click(screen.getByRole("button", { name: "關聯所選行政人員" }));
+    fireEvent.click(screen.getByRole("button", { name: "設為行政人員" }));
 
     await waitFor(() => {
-      expect(screen.getByRole("status")).toHaveTextContent("已將 1 位 LINE 好友關聯到 吳佳芸");
-      expect(screen.getByRole("status")).toHaveTextContent("新公告建立時會推播給已關聯行政人員");
+      expect(screen.getByRole("status")).toHaveTextContent("已將 1 位 LINE 好友設為行政人員角色");
+      expect(screen.getByRole("status")).toHaveTextContent("新公告建立時會推播給行政人員角色的 LINE 帳號");
     });
-    expect(window.localStorage.getItem("tcm-family-line-managed-contacts")).toContain("admin-001");
+    expect(window.localStorage.getItem("tcm-family-line-managed-contacts")).toContain("\"contactRole\":\"admin\"");
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/admin/family-line/contacts",
       expect.objectContaining({
@@ -2288,12 +2287,12 @@ describe("AdminPages", () => {
         body: JSON.stringify({
           lineUserId: "Uadmin1234567890abcdef1234567890",
           linkedPatientIds: [],
-          linkedAdminUserIds: ["admin-001"],
+          contactRole: "admin",
           note: ""
         })
       })
     );
-    expect(screen.getByText("關聯行政：吳佳芸")).toBeInTheDocument();
+    expect(screen.getByText("LINE 角色：行政人員")).toBeInTheDocument();
   });
 
   it("AdminFamilyLinePage 可勾選抵達前提醒與結束後關心並編輯範本後確認送出", async () => {
@@ -2619,7 +2618,7 @@ describe("AdminPages", () => {
           displayName: "行政 LINE",
           lineUserId: "Uadminnotice1234567890abcdef",
           linkedPatientIds: [],
-          linkedAdminUserIds: ["admin-001"],
+          contactRole: "admin",
           note: "",
           source: "webhook",
           updatedAt: "2026-05-01T00:00:00.000Z"
@@ -2658,9 +2657,7 @@ describe("AdminPages", () => {
       expect.objectContaining({
         caregiverId: "line-contact-admin-notice",
         caregiverName: "行政 LINE",
-        lineUserId: "Uadminnotice1234567890abcdef",
-        adminUserId: "admin-001",
-        adminUserName: "吳佳芸"
+        lineUserId: "Uadminnotice1234567890abcdef"
       })
     ]);
   });

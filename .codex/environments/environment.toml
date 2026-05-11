@@ -32,4 +32,4 @@ platform = "win32"
 [[actions]]
 name = "更新網頁"
 icon = "tool"
-command = "npm run publish:web"
+command = "powershell -ExecutionPolicy Bypass -File .\\tools\\publish_github_and_vercel.ps1 -CommitPendingChanges"

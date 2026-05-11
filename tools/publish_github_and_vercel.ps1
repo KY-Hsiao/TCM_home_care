@@ -3,6 +3,8 @@ param(
   [string]$ProductionBranch = "main",
   [switch]$AllowNonProductionBranch,
   [switch]$SkipVercel,
+  [switch]$CommitPendingChanges,
+  [string]$CommitMessage = "",
   [bool]$WaitForGitHubActions = $true
 )
 
@@ -24,7 +26,30 @@ if ([string]::IsNullOrWhiteSpace($currentHead)) {
 
 $pendingChanges = (git status --porcelain)
 if ($pendingChanges) {
-  Write-Warning "There are uncommitted changes. This publish only includes committed content."
+  if ($CommitPendingChanges) {
+    if ([string]::IsNullOrWhiteSpace($CommitMessage)) {
+      $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm"
+      $CommitMessage = "Update project from Codex action $timestamp"
+    }
+
+    Write-Host "Committing pending changes before publish..." -ForegroundColor Cyan
+    git add -A
+    if ($LASTEXITCODE -ne 0) {
+      throw "git add failed. Publish aborted."
+    }
+
+    git commit -m $CommitMessage
+    if ($LASTEXITCODE -ne 0) {
+      throw "git commit failed. Check git user.name/user.email and the pending changes."
+    }
+
+    $currentHead = (git rev-parse HEAD).Trim()
+    if ([string]::IsNullOrWhiteSpace($currentHead)) {
+      throw "Cannot resolve git HEAD after commit. Publish aborted."
+    }
+  } else {
+    Write-Warning "There are uncommitted changes. This publish only includes committed content."
+  }
 }
 
 Write-Host "Pushing current branch to GitHub: $currentBranch" -ForegroundColor Cyan
@@ -34,6 +59,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $githubActionSucceeded = $false
+$workflowDispatched = $false
 if ($WaitForGitHubActions) {
   $ghCommand = Get-Command gh -ErrorAction SilentlyContinue
   if ($null -eq $ghCommand) {
@@ -56,7 +82,29 @@ if ($WaitForGitHubActions) {
     }
 
     if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($runJson) -or $runJson -eq "[]") {
-      Write-Warning "No Deploy to Vercel workflow run was found for this commit. If no new commit was pushed, GitHub may not create a new run."
+      Write-Warning "No Deploy to Vercel workflow run was found for this commit. Triggering workflow_dispatch instead."
+      gh workflow run deploy-vercel.yml --ref $currentBranch
+      if ($LASTEXITCODE -ne 0) {
+        Write-Warning "Could not dispatch Deploy to Vercel workflow. GitHub push completed, but deployment was not confirmed."
+      } else {
+        $workflowDispatched = $true
+        for ($attempt = 1; $attempt -le 12; $attempt += 1) {
+          Start-Sleep -Seconds 5
+          $runJson = gh run list `
+            --workflow deploy-vercel.yml `
+            --branch $currentBranch `
+            --limit 1 `
+            --json databaseId,status,conclusion,displayTitle 2>$null
+          if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($runJson) -and $runJson -ne "[]") {
+            break
+          }
+          Write-Host "Dispatched deploy workflow is not visible yet. Retry $attempt/12..." -ForegroundColor DarkYellow
+        }
+      }
+    }
+
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($runJson) -or $runJson -eq "[]") {
+      Write-Warning "Deploy to Vercel workflow run could not be found."
     } else {
       $runs = $runJson | ConvertFrom-Json
       $run = @($runs)[0]
@@ -69,7 +117,11 @@ if ($WaitForGitHubActions) {
           throw "GitHub Actions Deploy to Vercel failed. Check run #$($run.databaseId)."
         }
         $githubActionSucceeded = $true
-        Write-Host "GitHub Actions Deploy to Vercel completed successfully." -ForegroundColor Green
+        if ($workflowDispatched) {
+          Write-Host "GitHub Actions Deploy to Vercel completed successfully after workflow_dispatch." -ForegroundColor Green
+        } else {
+          Write-Host "GitHub Actions Deploy to Vercel completed successfully." -ForegroundColor Green
+        }
       }
     }
   }

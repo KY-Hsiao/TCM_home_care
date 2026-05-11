@@ -165,6 +165,8 @@ $env:VITE_TEAM_COMM_SYNC_MODE = "http"
 
 - 它只能重新部署 **已經在 GitHub 遠端上的版本**
 - 不能把你本機尚未 `git push` 的程式碼直接送上線
+- Codex 動作列的 `推送 GitHub` 與 `更新網頁` 是本機發布按鈕；若工作區有未提交修改，會先自動建立一筆發布 commit，再推送到 GitHub。
+- Codex 動作列的 `更新網頁` 會在 push 後等待 `deploy-vercel.yml`；若沒有新的 push workflow run，會改用 GitHub `workflow_dispatch` 主動觸發一次 Vercel 部署。
 
 ### 本機一鍵推送 GitHub 並同步觸發 Vercel
 
@@ -183,7 +185,9 @@ npm run publish:web
 這個腳本會：
 
 - 將目前 branch `git push` 到 GitHub
-- 成功後立刻呼叫 Vercel deploy hook
+- 等待 GitHub Actions 的 `deploy-vercel.yml`
+- 若 push 沒有產生新的 workflow run，會改用 `workflow_dispatch` 主動觸發
+- 若本機有設定 `VERCEL_DEPLOY_HOOK_URL`，成功後會再額外呼叫 Vercel deploy hook
 
 預設只允許在 `main` 觸發這個流程，避免把非正式 branch 誤送到線上。  
 若你確定要從其他 branch 觸發，可加上：
@@ -196,6 +200,12 @@ powershell -ExecutionPolicy Bypass -File .\tools\publish_github_and_vercel.ps1 -
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\tools\publish_github_and_vercel.ps1 -SkipVercel
+```
+
+若希望命令列也像 Codex 動作列一樣先提交目前工作區修改，可加上：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\publish_github_and_vercel.ps1 -CommitPendingChanges
 ```
 
 ## 路徑注意事項
