@@ -9,41 +9,27 @@ export function createStaffingRepository(
   getDb: () => AppDb,
   updateDb: (updater: (db: AppDb) => AppDb) => void
 ): StaffingRepository {
-  const trackingStatuses = ["on_the_way", "tracking", "proximity_pending", "arrived", "in_treatment"];
-
-  const buildMonthRange = (date = new Date()) => {
+  const formatDateInputValue = (date = new Date()) => {
     const year = date.getFullYear();
-    const month = date.getMonth();
-    const start = new Date(year, month - 1, 1);
-    const end = new Date(year, month, 1);
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  };
+
+  const normalizeReferenceDate = (value?: string) =>
+    value && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : formatDateInputValue();
+
+  const buildMonthRange = (referenceDate: string, monthOffset: number) => {
+    const date = new Date(`${referenceDate}T00:00:00`);
+    const year = date.getFullYear();
+    const month = date.getMonth() + monthOffset;
+    const start = new Date(year, month, 1);
+    const end = new Date(year, month + 1, 1);
     return {
       start,
       end,
       label: `${start.getFullYear()}年${start.getMonth() + 1}月`
     };
-  };
-
-  const resolveDashboardDate = (db: AppDb) => {
-    const today = new Date();
-    const completedRoutePlans = db.saved_route_plans.filter(
-      (routePlan) =>
-        routePlan.execution_status === "completed" &&
-        routePlan.route_items.length > 0
-    );
-    const todayRoutePlan = completedRoutePlans.find(
-      (routePlan) => routePlan.route_date === today.toISOString().slice(0, 10)
-    );
-    if (todayRoutePlan) {
-      return todayRoutePlan.route_date;
-    }
-
-    const nearestRoutePlan = [...completedRoutePlans].sort((left, right) => {
-      const leftDistance = Math.abs(new Date(`${left.route_date}T00:00:00`).getTime() - today.getTime());
-      const rightDistance = Math.abs(new Date(`${right.route_date}T00:00:00`).getTime() - today.getTime());
-      return leftDistance - rightDistance;
-    })[0];
-
-    return nearestRoutePlan?.route_date ?? null;
   };
 
   const resolveUrgentScheduleIds = (
@@ -112,10 +98,27 @@ export function createStaffingRepository(
     return db.visit_schedules.filter((schedule) => scheduleIds.has(schedule.id));
   };
 
+  const buildRoutePlanStats = (
+    db: AppDb,
+    routePlans: AppDb["saved_route_plans"],
+    patientExceptionItems: AppDb["notification_center_items"],
+    label: string
+  ) => {
+    const routeSchedules = getSchedulesFromRoutePlans(db, routePlans);
+    const urgentScheduleIds = resolveUrgentScheduleIds(routeSchedules, patientExceptionItems);
+
+    return {
+      label,
+      executedVisitCount: countExecutedRouteItems(routePlans),
+      pausedCount: countPausedRouteItems(routePlans),
+      urgentCount: urgentScheduleIds.size
+    };
+  };
+
   return {
-    getAdminDashboard() {
+    getAdminDashboard(options) {
       const db = getDb();
-      const dashboardDate = resolveDashboardDate(db);
+      const referenceDate = normalizeReferenceDate(options?.referenceDate);
       const pendingLeaveRequests = db.leave_requests.filter((leave) => leave.status === "pending");
       const pendingRescheduleActions = db.reschedule_actions.filter((item) =>
         ["pending", "draft"].includes(item.status)
@@ -124,10 +127,8 @@ export function createStaffingRepository(
         (routePlan) => routePlan.execution_status === "draft"
       );
       const completedRoutePlans = db.saved_route_plans.filter(isCompletedRoutePlan);
-      const dashboardRoutePlans = dashboardDate
-        ? completedRoutePlans.filter((routePlan) => routePlan.route_date === dashboardDate)
-        : [];
-      const dashboardRouteSchedules = getSchedulesFromRoutePlans(db, dashboardRoutePlans);
+      const dailyRoutePlans = completedRoutePlans.filter((routePlan) => routePlan.route_date === referenceDate);
+      const dailyRouteSchedules = getSchedulesFromRoutePlans(db, dailyRoutePlans);
       const patientExceptionItems = db.notification_center_items.filter(
         (item) => item.role === "admin" && item.source_type === "patient_exception"
       );
@@ -139,12 +140,12 @@ export function createStaffingRepository(
           .map((item) => item.linked_visit_schedule_id)
           .filter((scheduleId): scheduleId is string => Boolean(scheduleId))
       );
-      const exceptionSchedulesByStatus = dashboardRouteSchedules.filter(
+      const exceptionSchedulesByStatus = dailyRouteSchedules.filter(
         (schedule) =>
           ["paused", "issue_pending", "followup_pending", "rescheduled", "cancelled"].includes(schedule.status) ||
           exceptionScheduleIds.has(schedule.id)
       );
-      const dashboardRouteScheduleIds = new Set(dashboardRouteSchedules.map((schedule) => schedule.id));
+      const dailyRouteScheduleIds = new Set(dailyRouteSchedules.map((schedule) => schedule.id));
       const exceptionSchedulesFromNotifications = pendingPatientExceptionItems
         .map((item) =>
           item.linked_visit_schedule_id
@@ -153,7 +154,7 @@ export function createStaffingRepository(
         )
         .filter(
           (schedule): schedule is AppDb["visit_schedules"][number] =>
-            schedule !== undefined && dashboardRouteScheduleIds.has(schedule.id)
+            schedule !== undefined && dailyRouteScheduleIds.has(schedule.id)
         );
       const exceptionSchedules = [
         ...exceptionSchedulesByStatus,
@@ -161,37 +162,37 @@ export function createStaffingRepository(
           (schedule) => !exceptionSchedulesByStatus.some((item) => item.id === schedule.id)
         )
       ];
-      const urgentScheduleIds = resolveUrgentScheduleIds(dashboardRouteSchedules, patientExceptionItems);
-      const dashboardReferenceDate = dashboardDate ? new Date(`${dashboardDate}T00:00:00`) : new Date();
-      const previousMonthRange = buildMonthRange(dashboardReferenceDate);
+      const currentMonthRange = buildMonthRange(referenceDate, 0);
+      const currentMonthRoutePlans = completedRoutePlans.filter((routePlan) => {
+        const routeDate = new Date(`${routePlan.route_date}T00:00:00`);
+        return routeDate >= currentMonthRange.start && routeDate < currentMonthRange.end;
+      });
+      const previousMonthRange = buildMonthRange(referenceDate, -1);
       const previousMonthRoutePlans = completedRoutePlans.filter((routePlan) => {
         const routeDate = new Date(`${routePlan.route_date}T00:00:00`);
         return routeDate >= previousMonthRange.start && routeDate < previousMonthRange.end;
       });
-      const previousMonthRouteSchedules = getSchedulesFromRoutePlans(db, previousMonthRoutePlans);
-      const previousMonthUrgentScheduleIds = resolveUrgentScheduleIds(
-        previousMonthRouteSchedules,
-        patientExceptionItems
-      );
-      const routeExecutedVisitCount = countExecutedRouteItems(dashboardRoutePlans);
-      const routePausedCount = countPausedRouteItems(dashboardRoutePlans);
-      const previousMonthRouteExecutedVisitCount = countExecutedRouteItems(previousMonthRoutePlans);
-      const previousMonthRoutePausedCount = countPausedRouteItems(previousMonthRoutePlans);
 
       return {
-        todayVisitTotal: dashboardRouteSchedules.length,
-        draftRouteCount: draftRoutePlans.length,
-        executedVisitCount: routeExecutedVisitCount,
-        trackingCount: dashboardRouteSchedules.filter((schedule) => trackingStatuses.includes(schedule.status)).length,
-        pausedCount: routePausedCount,
-        urgentCount: urgentScheduleIds.size,
-        previousMonth: {
-          label: previousMonthRange.label,
-          executedVisitCount: previousMonthRouteExecutedVisitCount,
-          pausedCount: previousMonthRoutePausedCount,
-          urgentCount: previousMonthUrgentScheduleIds.size
+        referenceDate,
+        daily: {
+          ...buildRoutePlanStats(db, dailyRoutePlans, patientExceptionItems, referenceDate),
+          date: referenceDate
         },
-        unrecordedCount: dashboardRouteSchedules.filter(
+        currentMonth: buildRoutePlanStats(
+          db,
+          currentMonthRoutePlans,
+          patientExceptionItems,
+          currentMonthRange.label
+        ),
+        previousMonth: buildRoutePlanStats(
+          db,
+          previousMonthRoutePlans,
+          patientExceptionItems,
+          previousMonthRange.label
+        ),
+        draftRouteCount: draftRoutePlans.length,
+        unrecordedCount: dailyRouteSchedules.filter(
           (schedule) =>
             schedule.status === "completed" &&
             !db.visit_records.some((record) => record.visit_schedule_id === schedule.id)

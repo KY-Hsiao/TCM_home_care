@@ -1205,7 +1205,11 @@ describe("AdminPages", () => {
     expect(screen.getAllByText("執行人次").length).toBeGreaterThan(0);
     expect(screen.getAllByText("暫停人次").length).toBeGreaterThan(0);
     expect(screen.getAllByText("緊急處置人次").length).toBeGreaterThan(0);
-    expect(screen.getByText("上月總計")).toBeInTheDocument();
+    expect(screen.getByText("今日統計")).toBeInTheDocument();
+    expect(screen.getByText("本月統計")).toBeInTheDocument();
+    expect(screen.getByText("上個月統計")).toBeInTheDocument();
+    expect(screen.getByLabelText("今日統計日期")).toBeInTheDocument();
+    expect(screen.queryByText("上月總計")).not.toBeInTheDocument();
     expect(screen.queryByText("待實行路線")).not.toBeInTheDocument();
     expect(screen.getByText("待重排案件")).toBeInTheDocument();
     expect(screen.getByText("待補紀錄")).toBeInTheDocument();
@@ -1220,8 +1224,13 @@ describe("AdminPages", () => {
   });
 
   it("AdminDashboardPage 的總覽數字會連接實際排程與異常通知資料", () => {
+    vi.useFakeTimers();
     const seededDb = createSeedDb();
     const dashboardDate = seededDb.visit_schedules.find((schedule) => schedule.id === "vs-002")?.scheduled_start_at.slice(0, 10);
+    if (!dashboardDate) {
+      throw new Error("缺少 dashboard 測試日期。");
+    }
+    vi.setSystemTime(new Date(`${dashboardDate}T08:00:00+08:00`));
     const completedRoutePlans = seededDb.saved_route_plans.map((routePlan) =>
       routePlan.route_date === dashboardDate ? { ...routePlan, execution_status: "completed" as const } : routePlan
     );
@@ -1265,25 +1274,28 @@ describe("AdminPages", () => {
 
     renderWithProviders(<AdminDashboardPage />);
 
-    const executedCard = screen.getAllByText("執行人次")[0].closest("div");
-    expect(executedCard).not.toBeNull();
-    expect(within(executedCard!).getByText("6")).toBeInTheDocument();
+    const dailyStats = screen.getByRole("heading", { name: "今日統計" }).closest("section");
+    expect(dailyStats).not.toBeNull();
+    expect(within(dailyStats!).getByText("6")).toBeInTheDocument();
 
-    const previousMonthCard = screen.getByText("上月總計").closest("div");
-    expect(previousMonthCard).not.toBeNull();
-    expect(previousMonthCard?.textContent).toContain("2026年4月");
+    const currentMonthStats = screen.getByRole("heading", { name: "本月統計" }).closest("section");
+    expect(currentMonthStats).not.toBeNull();
+    const dashboardMonthLabel = `${new Date(`${dashboardDate}T00:00:00`).getFullYear()}年${new Date(`${dashboardDate}T00:00:00`).getMonth() + 1}月`;
+    expect(currentMonthStats?.textContent).toContain(dashboardMonthLabel);
 
     expect(screen.getAllByText("緊急處置人次").length).toBeGreaterThan(0);
     expect(screen.getByRole("link", { name: new RegExp(maskPatientName(dashboardPatient.name)) })).toBeInTheDocument();
   });
 
   it("AdminDashboardPage 的紀錄統計只納入已完成路線", () => {
+    vi.useFakeTimers();
     const seededDb = createSeedDb();
     const activeDate = seededDb.visit_schedules[0]?.scheduled_start_at.slice(0, 10);
     const outOfRouteSchedule = seededDb.visit_schedules[1];
     if (!activeDate || !outOfRouteSchedule) {
       throw new Error("缺少測試用排程。");
     }
+    vi.setSystemTime(new Date(`${activeDate}T08:00:00+08:00`));
     window.localStorage.setItem(
       MOCK_DB_STORAGE_KEY,
       JSON.stringify({
@@ -1352,13 +1364,14 @@ describe("AdminPages", () => {
 
     renderWithProviders(<AdminDashboardPage />);
 
-    expect(within(screen.getAllByText("執行人次")[0].closest("div")!).getByText("1")).toBeInTheDocument();
-    expect(within(screen.getAllByText("暫停人次")[0].closest("div")!).getByText("0")).toBeInTheDocument();
-    expect(within(screen.getAllByText("緊急處置人次")[0].closest("div")!).getByText("0")).toBeInTheDocument();
+    const dailyStats = screen.getByRole("heading", { name: "今日統計" }).closest("section");
+    expect(dailyStats).not.toBeNull();
+    expect(within(dailyStats!).getByText("1")).toBeInTheDocument();
+    expect(within(dailyStats!).getAllByText("0")).toHaveLength(2);
     expect(screen.queryByText("緊急個案｜未完成路線")).not.toBeInTheDocument();
   });
 
-  it("AdminDashboardPage 的上月總計會跟隨資料基準日，不會因系統日期不同而歸零", () => {
+  it("AdminDashboardPage 的本月與上個月統計會跟隨日期選擇器基準", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-16T08:00:00+08:00"));
     const seededDb = createSeedDb();
@@ -1438,13 +1451,123 @@ describe("AdminPages", () => {
 
     renderWithProviders(<AdminDashboardPage />);
 
-    const previousMonthCard = screen.getByText("上月總計").closest("div");
-    expect(previousMonthCard).not.toBeNull();
-    expect(previousMonthCard?.textContent).toContain("1/0/0");
-    expect(previousMonthCard?.textContent).toContain("2026年3月");
+    const currentMonthStats = screen.getByRole("heading", { name: "本月統計" }).closest("section");
+    const previousMonthStats = screen.getByRole("heading", { name: "上個月統計" }).closest("section");
+    expect(currentMonthStats).not.toBeNull();
+    expect(previousMonthStats).not.toBeNull();
+    expect(currentMonthStats?.textContent).toContain("2026年4月");
+    expect(within(currentMonthStats!).getByText("2")).toBeInTheDocument();
+    expect(previousMonthStats?.textContent).toContain("2026年3月");
+    expect(within(previousMonthStats!).getByText("1")).toBeInTheDocument();
+  });
+
+  it("AdminDashboardPage 切換今日統計日期後會同步更新統計與異常清單", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-10T08:00:00+08:00"));
+    const seededDb = createSeedDb();
+    const baseSchedule = seededDb.visit_schedules[0];
+    if (!baseSchedule) {
+      throw new Error("缺少測試用排程。");
+    }
+    const buildSchedule = (id: string, patientId: string, scheduledStartAt: string, status: typeof baseSchedule.status) => ({
+      ...baseSchedule,
+      id,
+      patient_id: patientId,
+      scheduled_start_at: scheduledStartAt,
+      scheduled_end_at: scheduledStartAt.replace("09:00:00", "10:00:00"),
+      status,
+      note: id === "vs-dashboard-switch-002" ? "切換日期後顯示的異常" : "今日統計測試"
+    });
+
+    window.localStorage.setItem(
+      MOCK_DB_STORAGE_KEY,
+      JSON.stringify({
+        ...seededDb,
+        visit_schedules: [
+          buildSchedule("vs-dashboard-switch-001", "pat-001", "2026-05-10T09:00:00+08:00", "completed"),
+          buildSchedule("vs-dashboard-switch-002", "pat-002", "2026-05-11T09:00:00+08:00", "paused")
+        ],
+        saved_route_plans: [
+          {
+            ...seededDb.saved_route_plans[0],
+            id: "route-dashboard-switch-today",
+            route_date: "2026-05-10",
+            route_items: [
+              {
+                ...seededDb.saved_route_plans[0].route_items[0],
+                patient_id: "pat-001",
+                schedule_id: "vs-dashboard-switch-001",
+                checked: true,
+                status: "completed"
+              }
+            ],
+            schedule_ids: ["vs-dashboard-switch-001"],
+            execution_status: "completed",
+            executed_at: "2026-05-10T08:00:00+08:00"
+          },
+          {
+            ...seededDb.saved_route_plans[0],
+            id: "route-dashboard-switch-next",
+            route_date: "2026-05-11",
+            route_items: [
+              {
+                ...seededDb.saved_route_plans[0].route_items[0],
+                patient_id: "pat-002",
+                schedule_id: "vs-dashboard-switch-002",
+                checked: false,
+                status: "paused"
+              }
+            ],
+            schedule_ids: ["vs-dashboard-switch-002"],
+            execution_status: "completed",
+            executed_at: "2026-05-11T08:00:00+08:00"
+          }
+        ],
+        notification_center_items: [
+          {
+            id: "nc-dashboard-switch-urgent",
+            role: "admin",
+            owner_user_id: "admin-001",
+            source_type: "patient_exception",
+            title: "緊急個案｜切換日期",
+            content: "緊急處置後續追蹤",
+            linked_patient_id: "pat-002",
+            linked_visit_schedule_id: "vs-dashboard-switch-002",
+            linked_doctor_id: baseSchedule.assigned_doctor_id,
+            linked_leave_request_id: null,
+            status: "pending",
+            is_unread: true,
+            reply_text: null,
+            reply_updated_at: null,
+            reply_updated_by_role: null,
+            created_at: "2026-05-11T09:00:00+08:00",
+            updated_at: "2026-05-11T09:00:00+08:00"
+          }
+        ]
+      })
+    );
+
+    renderWithProviders(<AdminDashboardPage />);
+
+    let dailyStats = screen.getByRole("heading", { name: "今日統計" }).closest("section");
+    expect(dailyStats).not.toBeNull();
+    expect(within(dailyStats!).getByText("2026-05-10")).toBeInTheDocument();
+    expect(within(dailyStats!).getByText("1")).toBeInTheDocument();
+    expect(screen.queryByText("緊急個案｜切換日期")).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("今日統計日期"), {
+      target: { value: "2026-05-11" }
+    });
+
+    dailyStats = screen.getByRole("heading", { name: "今日統計" }).closest("section");
+    expect(within(dailyStats!).getByText("2026-05-11")).toBeInTheDocument();
+    expect(within(dailyStats!).getAllByText("1")).toHaveLength(2);
+    expect(screen.getByRole("link", { name: /切換日期/ })).toBeInTheDocument();
   });
 
   it("AdminDashboardPage 會顯示回院病歷勾選異常後建立的通知中心案件", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-18T08:00:00+08:00"));
     const seededDb = createSeedDb();
     const baseSchedule = seededDb.visit_schedules.find((schedule) => schedule.patient_id === "pat-001");
     if (!baseSchedule) {
@@ -1520,7 +1643,7 @@ describe("AdminPages", () => {
     const exceptionPanel = screen.getByText("個案異常儀表板").closest("section");
     expect(exceptionPanel).not.toBeNull();
     expect(within(exceptionPanel!).getByRole("link", { name: /王○珠/ })).toBeInTheDocument();
-    expect(within(exceptionPanel!).queryByText("今日沒有需要特別關注的異常案件。")).not.toBeInTheDocument();
+    expect(within(exceptionPanel!).queryByText("這個日期沒有需要特別關注的異常案件。")).not.toBeInTheDocument();
   });
 
   it("AdminDoctorTrackingPage 會集中顯示多醫師總覽圖與個別站點進度", () => {

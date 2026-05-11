@@ -95,19 +95,21 @@ export type DoctorDashboard = {
   pendingFamilyNotifications: number;
 };
 
-export type AdminDashboard = {
-  todayVisitTotal: number;
-  draftRouteCount: number;
+export type AdminDashboardStats = {
+  label: string;
   executedVisitCount: number;
-  trackingCount: number;
   pausedCount: number;
   urgentCount: number;
-  previousMonth: {
-    label: string;
-    executedVisitCount: number;
-    pausedCount: number;
-    urgentCount: number;
+};
+
+export type AdminDashboard = {
+  referenceDate: string;
+  daily: AdminDashboardStats & {
+    date: string;
   };
+  currentMonth: AdminDashboardStats;
+  previousMonth: AdminDashboardStats;
+  draftRouteCount: number;
   unrecordedCount: number;
   rescheduleCount: number;
   pendingLeaveRequests: LeaveRequest[];
@@ -315,7 +317,7 @@ export interface NotificationRepository {
 }
 
 export interface StaffingRepository {
-  getAdminDashboard(): AdminDashboard;
+  getAdminDashboard(options?: { referenceDate?: string }): AdminDashboard;
   getLeaveRequests(): LeaveRequest[];
   getRescheduleActions(): RescheduleAction[];
   createLeaveRequest(input: {

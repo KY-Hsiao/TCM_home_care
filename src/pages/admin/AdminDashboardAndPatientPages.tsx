@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 import * as XLSX from "xlsx";
 import { Link, useParams } from "react-router-dom";
 import { useAppContext } from "../../app/use-app-context";
 import type { DoctorLocationLog, Patient, VisitSchedule } from "../../domain/models";
+import type { AdminDashboardStats } from "../../domain/repository";
 import type { RouteMapInput } from "../../services/types";
 import { Badge } from "../../shared/ui/Badge";
 import { Panel } from "../../shared/ui/Panel";
@@ -18,6 +19,13 @@ import {
 
 function mapsLink(address: string, locationKeyword = sameAddressLocationKeyword) {
   return buildGoogleMapsSearchUrl(locationKeyword, address);
+}
+
+function formatDateInputValue(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 const patientServiceNeedOptions = ["中藥", "針灸"] as const;
@@ -72,6 +80,33 @@ type TrackingRouteDistributionOption = {
   timeSlot: RouteTimeSlot;
   schedules: VisitSchedule[];
 };
+
+function DashboardStatsBlock({
+  title,
+  stats,
+  action
+}: {
+  title: string;
+  stats: AdminDashboardStats;
+  action?: ReactNode;
+}) {
+  return (
+    <section className="rounded-2xl border border-slate-200 bg-white p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="text-base font-semibold text-brand-ink">{title}</h2>
+          <p className="mt-1 text-sm text-slate-500">{stats.label}</p>
+        </div>
+        {action}
+      </div>
+      <div className="mt-4 grid gap-3 sm:grid-cols-3">
+        <StatCard label="執行人次" value={stats.executedVisitCount} hint="已完成路線中的執行案件" />
+        <StatCard label="暫停人次" value={stats.pausedCount} hint="已完成路線中的暫停案件" />
+        <StatCard label="緊急處置人次" value={stats.urgentCount} hint="緊急回覆或緊急異常通知" />
+      </div>
+    </section>
+  );
+}
 
 function buildCsvTemplate() {
   return [
@@ -587,19 +622,32 @@ function buildPatientDraft(patient?: Patient): Patient {
 
 export function AdminDashboardPage() {
   const { repositories, db } = useAppContext();
-  const dashboard = repositories.staffingRepository.getAdminDashboard();
+  const [dashboardDate, setDashboardDate] = useState(() => formatDateInputValue());
+  const dashboard = repositories.staffingRepository.getAdminDashboard({
+    referenceDate: dashboardDate
+  });
 
   return (
     <div className="space-y-6">
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="執行人次" value={dashboard.executedVisitCount} hint="已出發、治療中或已完成的案件" />
-        <StatCard label="暫停人次" value={dashboard.pausedCount} hint="目前標記為暫停的案件" />
-        <StatCard label="緊急處置人次" value={dashboard.urgentCount} hint="醫師回覆緊急處置或緊急異常通知" />
-        <StatCard
-          label="上月總計"
-          value={`${dashboard.previousMonth.executedVisitCount}/${dashboard.previousMonth.pausedCount}/${dashboard.previousMonth.urgentCount}`}
-          hint={`${dashboard.previousMonth.label} 執行 / 暫停 / 緊急`}
+      <div className="grid gap-4 xl:grid-cols-3">
+        <DashboardStatsBlock
+          title="今日統計"
+          stats={dashboard.daily}
+          action={
+            <label className="text-sm font-medium text-slate-600">
+              統計日期
+              <input
+                type="date"
+                aria-label="今日統計日期"
+                value={dashboardDate}
+                onChange={(event) => setDashboardDate(event.target.value || formatDateInputValue())}
+                className="ml-2 rounded-full border border-slate-200 bg-white px-3 py-2 text-sm text-brand-ink shadow-sm"
+              />
+            </label>
+          }
         />
+        <DashboardStatsBlock title="本月統計" stats={dashboard.currentMonth} />
+        <DashboardStatsBlock title="上個月統計" stats={dashboard.previousMonth} />
       </div>
 
       <div className="grid gap-6 xl:grid-cols-2">
@@ -617,15 +665,15 @@ export function AdminDashboardPage() {
           <div className="grid gap-3 sm:grid-cols-3">
             <div className="rounded-2xl border border-slate-200 bg-white p-4">
               <p className="text-xs text-slate-500">執行人次</p>
-              <p className="mt-2 text-2xl font-semibold text-brand-ink">{dashboard.executedVisitCount}</p>
+              <p className="mt-2 text-2xl font-semibold text-brand-ink">{dashboard.daily.executedVisitCount}</p>
             </div>
             <div className="rounded-2xl border border-slate-200 bg-white p-4">
               <p className="text-xs text-slate-500">暫停人次</p>
-              <p className="mt-2 text-2xl font-semibold text-brand-ink">{dashboard.pausedCount}</p>
+              <p className="mt-2 text-2xl font-semibold text-brand-ink">{dashboard.daily.pausedCount}</p>
             </div>
             <div className="rounded-2xl border border-slate-200 bg-white p-4">
               <p className="text-xs text-slate-500">緊急處置人次</p>
-              <p className="mt-2 text-2xl font-semibold text-brand-ink">{dashboard.urgentCount}</p>
+              <p className="mt-2 text-2xl font-semibold text-brand-ink">{dashboard.daily.urgentCount}</p>
             </div>
           </div>
           <div className="mt-4 space-y-3">
@@ -648,7 +696,7 @@ export function AdminDashboardPage() {
             })}
             {dashboard.exceptionSchedules.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
-                今日沒有需要特別關注的異常案件。
+                這個日期沒有需要特別關注的異常案件。
               </div>
             ) : null}
           </div>
