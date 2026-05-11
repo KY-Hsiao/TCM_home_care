@@ -948,8 +948,25 @@ export class MockVisitAutomationService implements VisitAutomationService {
     if (!detail) {
       return;
     }
+    const repositories = this.deps.getRepositories();
+    const sessionRoutePlanId = this.deps.getSession().activeRoutePlanId;
+    const routePlan =
+      (sessionRoutePlanId
+        ? repositories.visitRepository.getSavedRoutePlanById(sessionRoutePlanId)
+        : undefined) ??
+      repositories.visitRepository
+        .getSavedRoutePlans()
+        .find(
+          (item) =>
+            item.execution_status === "executing" &&
+            item.route_items.some((routeItem) => routeItem.schedule_id === scheduleId)
+        );
     const runtime = this.getRuntime(detail);
     const recordedAt = new Date().toISOString();
+    if (routePlan?.execution_status === "executing") {
+      repositories.visitRepository.completeRoutePlan(routePlan.id);
+      appendEvent(runtime, `已將路線標示為已完成：${routePlan.route_name}`);
+    }
     appendEvent(runtime, `已由 ${confirmedBy} 確認抵達回程終點：${recordedAt}`);
     void this.sendAfterReturnCareForRoute(detail, runtime, recordedAt);
     this.notify();

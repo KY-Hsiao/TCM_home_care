@@ -43,10 +43,27 @@ function getCurrentAndNextStop() {
   }
 
   const ctx = capturedContext;
-  const activeRoutePlan =
+  const sessionRoutePlan =
     ctx.session.activeRoutePlanId
       ? ctx.repositories.visitRepository.getSavedRoutePlanById(ctx.session.activeRoutePlanId)
       : ctx.repositories.visitRepository.getActiveRoutePlan(ctx.session.activeDoctorId);
+  const routePlanCandidates = [
+    sessionRoutePlan,
+    ...ctx.repositories.visitRepository.getSavedRoutePlans({
+      doctorId: ctx.session.activeDoctorId,
+      executionStatus: "executing"
+    }),
+    ...ctx.repositories.visitRepository
+      .getSavedRoutePlans({ doctorId: ctx.session.activeDoctorId })
+      .filter((routePlan) => routePlan.execution_status !== "executing")
+  ].filter((routePlan): routePlan is NonNullable<typeof sessionRoutePlan> => Boolean(routePlan));
+  const activeRoutePlan = routePlanCandidates.find(
+    (routePlan) =>
+      ctx.repositories.visitRepository.getDoctorRouteSchedules(
+        ctx.session.activeDoctorId,
+        routePlan.id
+      ).length >= 2
+  ) ?? sessionRoutePlan;
   const routeSchedules = ctx.repositories.visitRepository.getDoctorRouteSchedules(
     ctx.session.activeDoctorId,
     activeRoutePlan?.id ?? null
@@ -83,6 +100,12 @@ function resetRouteProgress() {
   }
 
   act(() => {
+    ctx.repositories.visitRepository.upsertSavedRoutePlan({
+      ...activeRoutePlan,
+      execution_status: "executing",
+      executed_at: new Date().toISOString()
+    });
+    ctx.setActiveRoutePlanId(activeRoutePlan.id);
     ctx.repositories.visitRepository.resetRoutePlanProgress(activeRoutePlan.id);
   });
 }

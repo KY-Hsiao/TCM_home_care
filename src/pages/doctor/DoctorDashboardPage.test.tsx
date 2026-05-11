@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SESSION_STORAGE_KEY } from "../../app/auth-storage";
@@ -27,7 +27,7 @@ function renderDashboard() {
     })
   );
 
-  return render(
+  const view = render(
     <MemoryRouter initialEntries={["/doctor/navigation"]}>
       <AppProviders>
         <CaptureAppContext />
@@ -37,6 +37,8 @@ function renderDashboard() {
       </AppProviders>
     </MemoryRouter>
   );
+  activateForwardRouteForTest();
+  return view;
 }
 
 function renderLocationPage() {
@@ -52,7 +54,7 @@ function renderLocationPage() {
     })
   );
 
-  return render(
+  const view = render(
     <MemoryRouter>
       <AppProviders>
         <CaptureAppContext />
@@ -60,6 +62,33 @@ function renderLocationPage() {
       </AppProviders>
     </MemoryRouter>
   );
+  activateForwardRouteForTest();
+  return view;
+}
+
+function activateForwardRouteForTest() {
+  if (!capturedContext) {
+    return;
+  }
+  const ctx = capturedContext;
+  const routePlan = ctx.repositories.visitRepository
+    .getSavedRoutePlans({ doctorId: "doc-001" })
+    .find((plan) => {
+      const routeSchedules = ctx.repositories.visitRepository.getDoctorRouteSchedules("doc-001", plan.id);
+      return routeSchedules.filter((schedule) => schedule.status === "scheduled").length >= 2;
+    });
+  if (!routePlan) {
+    return;
+  }
+  act(() => {
+    ctx.repositories.visitRepository.upsertSavedRoutePlan({
+      ...routePlan,
+      execution_status: "executing",
+      executed_at: new Date().toISOString()
+    });
+    ctx.setActiveRoutePlanId(routePlan.id);
+    ctx.repositories.visitRepository.resetRoutePlanProgress(routePlan.id);
+  });
 }
 
 function openNavigationModal() {
@@ -146,15 +175,15 @@ describe("DoctorDashboardPage", () => {
     expect(screen.queryByText(/上午 \/ 1位/)).not.toBeInTheDocument();
     openNavigationModal();
 
-    const afternoonRouteButton = screen.getAllByRole("button").find((button) =>
-      button.textContent?.includes("下午 /")
+    const routeButton = screen.getAllByRole("button").find((button) =>
+      button.textContent?.includes("點這裡查看受試者名單與單人紀錄")
     );
 
-    if (!afternoonRouteButton) {
-      throw new Error("找不到今日下午路線按鈕。");
+    if (!routeButton) {
+      throw new Error("找不到今日路線按鈕。");
     }
 
-    fireEvent.click(afternoonRouteButton);
+    fireEvent.click(routeButton);
 
     expect(screen.getByText("受試者名單")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "用 Google 地圖開啟完整路線" })).toBeInTheDocument();
@@ -207,7 +236,7 @@ describe("DoctorDashboardPage", () => {
     expect(screen.getByText("查看個案")).toBeInTheDocument();
     expect(screen.getByText("撥打電話")).toBeInTheDocument();
     expect(screen.getByText("填寫紀錄")).toBeInTheDocument();
-    expect(screen.getByText("標記暫停")).toBeInTheDocument();
+    expect(screen.getByText("目前患者暫停")).toBeInTheDocument();
   });
 
   it("受試者名單 modal 會顯示整條路線的頁內預覽與外部 Google 路線按鈕", () => {
@@ -283,6 +312,40 @@ describe("DoctorDashboardPage", () => {
 
     expect(screen.queryByText(`前往 ${maskPatientName(firstPatientName)} 的停留點`)).not.toBeInTheDocument();
     expect(screen.getByText(/即將前往第 1 站/)).toBeInTheDocument();
+  });
+
+  it("導航途中可將目前患者標記暫停並接續下一位", () => {
+    renderDashboard();
+
+    openNavigationModal();
+    resetCurrentRouteFromNavigationModal();
+    const firstPatientName = getFirstRoutePatientName();
+    fireEvent.click(screen.getByRole("button", { name: "開始出發" }));
+
+    const navigationWindow = screen.queryByRole("dialog", { name: "Google 導航視窗" });
+    if (navigationWindow) {
+      fireEvent.click(within(navigationWindow).getByRole("button", { name: "目前患者暫停" }));
+    } else {
+      fireEvent.click(screen.getByRole("button", { name: "目前患者暫停" }));
+    }
+
+    const activeRoutePlan = getActiveRoutePlan();
+    const firstRouteItem = activeRoutePlan.route_items.find(
+      (item) => item.patient_name === firstPatientName
+    );
+    const nextRouteItem = activeRoutePlan.route_items
+      .filter((item) => item.checked && item.status !== "paused")
+      .sort((left, right) => (left.route_order ?? Number.MAX_SAFE_INTEGER) - (right.route_order ?? Number.MAX_SAFE_INTEGER))[0];
+    const pausedSchedule = firstRouteItem?.schedule_id
+      ? capturedContext?.repositories.visitRepository.getScheduleDetail(firstRouteItem.schedule_id)
+      : null;
+
+    expect(firstRouteItem?.status).toBe("paused");
+    expect(pausedSchedule?.schedule.status).toBe("paused");
+    expect(screen.queryByText(`前往 ${maskPatientName(firstPatientName)} 的停留點`)).not.toBeInTheDocument();
+    expect(
+      screen.getByText(new RegExp(`即將前往第 1 站 ${maskPatientName(nextRouteItem?.patient_name ?? "")}`))
+    ).toBeInTheDocument();
   });
 
   it("跑到下一站後，重置路線仍會回到第一位待出發患者", () => {

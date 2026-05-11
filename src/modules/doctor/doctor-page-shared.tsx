@@ -40,10 +40,21 @@ export function DoctorVisitCard({
     detail.record?.departure_from_patient_home_time ?? null
   );
   const runtime = services.visitAutomation.getTrackingState(detail.schedule.id);
-  const orderedSchedules = repositories.visitRepository.getDoctorRouteSchedules(
+  const activeRouteSchedules = repositories.visitRepository.getDoctorRouteSchedules(
     session.activeDoctorId,
     session.activeRoutePlanId
   );
+  const scheduleRoutePlan =
+    activeRouteSchedules.some((schedule) => schedule.id === detail.schedule.id)
+      ? null
+      : repositories.visitRepository
+          .getSavedRoutePlans({ doctorId: session.activeDoctorId })
+          .find((routePlan) =>
+            routePlan.route_items.some((item) => item.schedule_id === detail.schedule.id)
+          );
+  const orderedSchedules = scheduleRoutePlan
+    ? repositories.visitRepository.getDoctorRouteSchedules(session.activeDoctorId, scheduleRoutePlan.id)
+    : activeRouteSchedules;
   const unlocked = isVisitUnlocked(orderedSchedules, detail.schedule.id, detail.record);
   const visitFinished =
     Boolean(detail.record?.departure_from_patient_home_time) ||
@@ -53,7 +64,9 @@ export function DoctorVisitCard({
     if (currentIndex < 0) {
       return undefined;
     }
-    return orderedSchedules[currentIndex + 1];
+    return orderedSchedules
+      .slice(currentIndex + 1)
+      .find((schedule) => !["paused", "cancelled"].includes(schedule.status));
   })();
   const nextScheduleDetail = nextSchedule
     ? repositories.visitRepository.getScheduleDetail(nextSchedule.id)
@@ -130,7 +143,11 @@ export function DoctorVisitCard({
   };
 
   const handlePauseVisit = () => {
-    services.visitAutomation.recordDoctorFeedback(detail.schedule.id, "absent");
+    repositories.visitRepository.pauseVisit(
+      detail.schedule.id,
+      "醫師標記目前患者暫停",
+      "醫師端臨時暫停本次訪視"
+    );
   };
 
   return (
@@ -232,7 +249,7 @@ export function DoctorVisitCard({
               onClick={handlePauseVisit}
               className={doctorActionButtonClass()}
             >
-              標記暫停
+              目前患者暫停
             </button>
           ) : null}
           {!visitFinished && detail.record?.departure_time && !detail.record?.arrival_time ? (

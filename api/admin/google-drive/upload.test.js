@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { generateKeyPairSync } from "node:crypto";
 import handler from "../google-drive.js";
 
 function createResponse() {
@@ -120,6 +121,45 @@ describe("/api/admin/google-drive/upload", () => {
     expect(result.statusCode).toBe(200);
     expect(fetchMock.mock.calls[0][0]).toBe("https://oauth2.googleapis.com/token");
     expect(fetchMock.mock.calls[1][1].headers.Authorization).toBe("Bearer fresh-drive-token");
+  });
+
+  it("有 service account 設定時會先用 JWT 換取 access token 再上傳", async () => {
+    const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+    vi.stubEnv("GOOGLE_DRIVE_SERVICE_ACCOUNT_CLIENT_EMAIL", "drive-writer@example.iam.gserviceaccount.com");
+    vi.stubEnv(
+      "GOOGLE_DRIVE_SERVICE_ACCOUNT_PRIVATE_KEY",
+      privateKey.export({ type: "pkcs8", format: "pem" }).replace(/\n/g, "\\n")
+    );
+    vi.stubEnv("GOOGLE_DRIVE_FOLDER_ID", "folder-id");
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ access_token: "service-account-token" })
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          id: "file-id",
+          name: "record.html",
+          webViewLink: "https://drive.google.com/file/d/file-id/view"
+        })
+      });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await callUpload({
+      filename: "record.html",
+      html: "<html><body>病歷</body></html>"
+    });
+
+    expect(result.statusCode).toBe(200);
+    expect(fetchMock.mock.calls[0][0]).toBe("https://oauth2.googleapis.com/token");
+    expect(fetchMock.mock.calls[0][1].body.get("grant_type")).toBe(
+      "urn:ietf:params:oauth:grant-type:jwt-bearer"
+    );
+    expect(fetchMock.mock.calls[1][1].headers.Authorization).toBe("Bearer service-account-token");
   });
 
   it("Drive 回傳驗證失敗時回傳可處理的中文錯誤", async () => {

@@ -57,6 +57,7 @@ type ManagedFamilyLineContactSnapshot = {
   displayName: string;
   lineUserId?: string;
   linkedPatientIds: string[];
+  linkedAdminUserIds?: string[];
   note?: string;
   source?: "webhook" | "official_friend";
   updatedAt?: string;
@@ -68,6 +69,14 @@ type LeaveLineRecipient = {
   lineUserId: string;
   matchedPatientIds: string[];
   matchedPatientNames: string[];
+};
+
+type AdminLineRecipient = {
+  id: string;
+  displayName: string;
+  lineUserId: string;
+  adminUserId: string;
+  adminUserName: string;
 };
 
 type GoogleCalendarEventPreview = {
@@ -518,6 +527,9 @@ function normalizeManagedFamilyLineContacts(contacts: ManagedFamilyLineContactSn
         lineUserId,
         linkedPatientIds: Array.isArray(contact.linkedPatientIds)
           ? contact.linkedPatientIds.map((patientId) => String(patientId ?? "").trim()).filter(Boolean)
+          : [],
+        linkedAdminUserIds: Array.isArray(contact.linkedAdminUserIds)
+          ? contact.linkedAdminUserIds.map((adminUserId) => String(adminUserId ?? "").trim()).filter(Boolean)
           : []
       };
     })
@@ -814,6 +826,45 @@ function buildPlannerRowsFromRoutePlan(
       })
       .filter((row): row is PlannerRow => Boolean(row))
   );
+}
+
+function buildAdminLineRecipients(input: {
+  contacts: ManagedFamilyLineContactSnapshot[];
+  adminNameById: Map<string, string>;
+}) {
+  const recipientByLineUserId = new Map<string, AdminLineRecipient>();
+  input.contacts.forEach((contact) => {
+    const lineUserId = String(contact.lineUserId ?? contact.userId ?? "").trim();
+    if (!lineUserId) {
+      return;
+    }
+    const linkedAdminUserIds = Array.isArray(contact.linkedAdminUserIds) ? contact.linkedAdminUserIds : [];
+    linkedAdminUserIds.forEach((adminUserId) => {
+      if (!input.adminNameById.has(adminUserId) || recipientByLineUserId.has(lineUserId)) {
+        return;
+      }
+      recipientByLineUserId.set(lineUserId, {
+        id: contact.id,
+        displayName: contact.displayName,
+        lineUserId,
+        adminUserId,
+        adminUserName: input.adminNameById.get(adminUserId) ?? adminUserId
+      });
+    });
+  });
+  return Array.from(recipientByLineUserId.values()).sort((left, right) =>
+    left.displayName.localeCompare(right.displayName, "zh-Hant")
+  );
+}
+
+function routePlanExecutionStatusLabel(status: SavedRoutePlan["execution_status"]) {
+  const labels: Record<SavedRoutePlan["execution_status"], string> = {
+    draft: "草稿",
+    executing: "執行中",
+    archived: "已封存",
+    completed: "已完成"
+  };
+  return labels[status];
 }
 
 function buildPlannerRowsForPreviousRouteDraft(
@@ -1338,23 +1389,37 @@ export function AdminSchedulesPage() {
   const effectiveSelectedWeekday =
     routeDateMode === "ad_hoc" ? derivedRouteWeekday ?? selectedWeekday : selectedWeekday;
   const slotPatients = useMemo(
-    () =>
-      selectedDoctorId && effectiveSelectedWeekday && selectedTimeSlot
-        ? [...db.patients]
-            .filter(
-              (patient) =>
-                patient.status === "active" &&
-                patient.preferred_doctor_id === selectedDoctorId &&
-                patient.preferred_service_slot ===
-                  `${effectiveSelectedWeekday}${selectedTimeSlot}`
-            )
-            .sort((left, right) => left.chart_number.localeCompare(right.chart_number, "zh-Hant"))
-        : [],
-    [db.patients, effectiveSelectedWeekday, selectedDoctorId, selectedTimeSlot]
+    () => {
+      if (!selectedDoctorId || !effectiveSelectedWeekday || !selectedTimeSlot) {
+        return [];
+      }
+
+      return [...db.patients]
+        .filter((patient) => {
+          if (routeDateMode === "ad_hoc") {
+            return patient.status !== "closed";
+          }
+
+          if (patient.status !== "active") {
+            return false;
+          }
+
+          return (
+            patient.preferred_doctor_id === selectedDoctorId &&
+            patient.preferred_service_slot === `${effectiveSelectedWeekday}${selectedTimeSlot}`
+          );
+        })
+        .sort((left, right) => left.chart_number.localeCompare(right.chart_number, "zh-Hant"));
+    },
+    [db.patients, effectiveSelectedWeekday, routeDateMode, selectedDoctorId, selectedTimeSlot]
   );
   const sortedPlannerRows = useMemo(() => sortPlannerRows(plannerRows), [plannerRows]);
   const checkedRows = useMemo(
     () => sortedPlannerRows.filter((row) => row.checked),
+    [sortedPlannerRows]
+  );
+  const pausedPlannerRows = useMemo(
+    () => sortedPlannerRows.filter((row) => !row.checked || row.status === "paused"),
     [sortedPlannerRows]
   );
   const missingCheckedCoordinateCount = useMemo(
@@ -1425,14 +1490,14 @@ export function AdminSchedulesPage() {
     if (!effectiveSelectedWeekday) {
       return [];
     }
+    if (routeDateMode === "ad_hoc") {
+      return routeTimeSlotOptions;
+    }
     const serviceSlots = selectedDoctor?.available_service_slots ?? [];
     const matchedOptions = getDoctorTimeSlotsByWeekday(
       serviceSlots,
       effectiveSelectedWeekday as (typeof weekdayOptions)[number]
     );
-    if (routeDateMode === "ad_hoc") {
-      return matchedOptions.length ? matchedOptions : routeTimeSlotOptions;
-    }
     if (selectedRouteDateOption) {
       return selectedRouteDateOption.timeSlotOptionsByWeekday[
         effectiveSelectedWeekday as (typeof weekdayOptions)[number]
@@ -1694,6 +1759,29 @@ export function AdminSchedulesPage() {
             : row
         )
       )
+    );
+  };
+
+  const pauseCurrentPlannerPatient = (patientId: string) => {
+    setPlannerRows((current) =>
+      reindexPlannerRows(
+        current.map((row) =>
+          row.patientId === patientId
+            ? {
+                ...row,
+                checked: false,
+                routeOrder: null,
+                status: "paused"
+              }
+            : row
+        )
+      )
+    );
+    const patientName = plannerRows.find((row) => row.patientId === patientId)?.name;
+    setRecentAction(
+      patientName
+        ? `已將 ${maskPatientName(patientName)} 設為目前患者暫停；只影響本次路線，不會改成長期暫停。`
+        : "已將目前患者設為暫停；只影響本次路線，不會改成長期暫停。"
     );
   };
 
@@ -2037,7 +2125,7 @@ export function AdminSchedulesPage() {
       normalizedEndAddress === routeEndLocation.address ? routeEndLocation.longitude : null;
     const activePlannerRows = sortPlannerRows(sourcePlannerRows).filter((row) => {
       const patient = patientsById.get(row.patientId);
-      return patient?.status === "active";
+      return routeDateMode === "ad_hoc" ? patient?.status !== "closed" : patient?.status === "active";
     });
     if (activePlannerRows.length === 0) {
       setRecentAction("目前沒有可加入路線的服務中個案。");
@@ -2180,6 +2268,21 @@ export function AdminSchedulesPage() {
     repositories.visitRepository.deleteSavedRoutePlan(selectedSavedRoutePlanId);
     setSelectedSavedRoutePlanId("");
     setRecentAction("已刪除已儲存路線。");
+  };
+
+  const completeRoutePlan = () => {
+    if (!selectedSavedRoutePlanId) {
+      setRecentAction("請先選擇要標示已完成的路線。");
+      return;
+    }
+    const completedRoutePlan = repositories.visitRepository.completeRoutePlan(selectedSavedRoutePlanId);
+    if (!completedRoutePlan) {
+      setRecentAction("找不到可標示已完成的路線。");
+      return;
+    }
+    setSelectedSavedRoutePlanId(completedRoutePlan.id);
+    setPlannerRows(buildPlannerRowsFromRoutePlan(completedRoutePlan, patientsById));
+    setRecentAction(`已將 ${completedRoutePlan.route_name} 標示為已完成，行政總覽會納入這條路線。`);
   };
 
   const toggleSavedRoutePlanSelection = (routePlanId: string, checked: boolean) => {
@@ -2429,16 +2532,10 @@ export function AdminSchedulesPage() {
                     const nextWeekday = resolveWeekdayFromRouteDate(nextRouteDate);
                     setRouteDate(nextRouteDate);
                     setSelectedWeekday(nextWeekday ?? "");
-                    const matchedTimeSlots = nextWeekday
-                      ? getDoctorTimeSlotsByWeekday(
-                          selectedDoctor?.available_service_slots ?? [],
-                          nextWeekday
-                        )
-                      : [];
                     setSelectedTimeSlot(
-                      matchedTimeSlots.includes(selectedTimeSlot as RouteTimeSlot)
+                      routeTimeSlotOptions.includes(selectedTimeSlot as RouteTimeSlot)
                         ? selectedTimeSlot
-                        : matchedTimeSlots[0] ?? routeTimeSlotOptions[0]
+                        : routeTimeSlotOptions[0]
                     );
                   }}
                   className="w-full rounded-2xl border border-slate-200 px-4 py-3"
@@ -2622,7 +2719,7 @@ export function AdminSchedulesPage() {
                   <option value="">請選擇已儲存路線</option>
                   {savedRoutePlans.map((routePlan) => (
                     <option key={routePlan.id} value={routePlan.id}>
-                      {routePlan.route_name}
+                      {routePlan.route_name}｜{routePlanExecutionStatusLabel(routePlan.execution_status)}
                     </option>
                   ))}
                 </select>
@@ -2644,6 +2741,14 @@ export function AdminSchedulesPage() {
                   className="rounded-full bg-brand-coral px-4 py-3 text-sm font-semibold text-white"
                 >
                   {isGeocodingPlannerRows ? "座標查詢中" : "實行路線"}
+                </button>
+                <button
+                  type="button"
+                  onClick={completeRoutePlan}
+                  disabled={!selectedSavedRoutePlanId || selectedSavedRoutePlan?.execution_status === "completed"}
+                  className="rounded-full border border-emerald-200 bg-white px-4 py-3 text-sm font-semibold text-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  標示已完成
                 </button>
                 <button
                   type="button"
@@ -2676,7 +2781,9 @@ export function AdminSchedulesPage() {
           ) : null}
 
           <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-            選完醫師、星期與上午/下午後，系統會自動列出符合該時段的個案。取消勾選者會保留在名單中，但本次路線狀態會設為「暫停」，不會進入路線排序。
+            {routeDateMode === "ad_hoc"
+              ? "突發出巡事件可由任一醫師支援，系統會列出所有服務中個案；取消勾選或按「目前患者暫停」者只暫停本次路線，不會進入路線排序。"
+              : "選完醫師、星期與上午/下午後，系統會自動列出符合該時段的個案。取消勾選或按「目前患者暫停」者會保留在名單中，但只暫停本次路線，不會進入路線排序。"}
           </div>
 
           <div className="grid gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)]">
@@ -2703,7 +2810,7 @@ export function AdminSchedulesPage() {
                       disabled={sortedPlannerRows.length === 0}
                       className="rounded-full border border-brand-forest/20 bg-white px-4 py-2 text-sm font-semibold text-brand-forest disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
                     >
-                      選擇符合時段個案
+                      {routeDateMode === "ad_hoc" ? "選擇突發患者" : "選擇符合時段個案"}
                     </button>
                   </>
                 }
@@ -2727,7 +2834,9 @@ export function AdminSchedulesPage() {
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center justify-end gap-2">
-                  <p className="text-xs text-slate-500">可執行 {checkedRows.length} 站</p>
+                  <p className="text-xs text-slate-500">
+                    目前共有 {sortedPlannerRows.length} 位患者｜可執行 {checkedRows.length} 站｜目前患者暫停 {pausedPlannerRows.length} 位
+                  </p>
                   <button
                     type="button"
                     onClick={() => {
@@ -2994,9 +3103,9 @@ export function AdminSchedulesPage() {
                       type="checkbox"
                       checked={selectedSavedRoutePlanIds.includes(routePlan.id)}
                       onChange={(event) => toggleSavedRoutePlanSelection(routePlan.id, event.target.checked)}
-                      aria-label={`${routePlan.route_name} ${routePlan.id} 批次刪除勾選`}
+                      aria-label={`${routePlan.route_name}｜${routePlanExecutionStatusLabel(routePlan.execution_status)} ${routePlan.id} 批次刪除勾選`}
                     />
-                    <span>{routePlan.route_name}</span>
+                    <span>{routePlan.route_name}｜{routePlanExecutionStatusLabel(routePlan.execution_status)}</span>
                   </label>
                 ))}
               </div>
@@ -3098,15 +3207,21 @@ export function AdminSchedulesPage() {
           <div
             role="dialog"
             aria-modal="true"
-            aria-label="符合時段的個案清單視窗"
+            aria-label={routeDateMode === "ad_hoc" ? "突發患者清單視窗" : "符合時段的個案清單視窗"}
             className="flex max-h-[min(80vh,760px)] w-full max-w-5xl flex-col overflow-hidden rounded-[32px] bg-white shadow-2xl"
           >
             <div className="flex items-center justify-between gap-4 border-b border-slate-200 px-6 py-5">
               <div>
-                <p className="text-sm font-medium text-brand-coral">符合時段的個案清單</p>
-                <h2 className="mt-1 text-2xl font-semibold text-brand-ink">選擇要保留在本次路線的個案</h2>
+                <p className="text-sm font-medium text-brand-coral">
+                  {routeDateMode === "ad_hoc" ? "突發可選患者清單" : "符合時段的個案清單"}
+                </p>
+                <h2 className="mt-1 text-2xl font-semibold text-brand-ink">
+                  {routeDateMode === "ad_hoc" ? "選擇本次突發出巡患者" : "選擇要保留在本次路線的個案"}
+                </h2>
                 <p className="mt-2 text-sm text-slate-500">
-                  每位個案預設已勾選；取消勾選後會標記為暫停，不會進入右側路線排序。
+                  {routeDateMode === "ad_hoc"
+                    ? "突發出巡會列出所有未結案患者；取消勾選或按「目前患者暫停」後只會暫停本次路線，不會改成長期暫停。"
+                    : "每位個案預設已勾選；取消勾選或按「目前患者暫停」後只會暫停本次路線，不會改成長期暫停。"}
                 </p>
               </div>
               <button
@@ -3121,8 +3236,10 @@ export function AdminSchedulesPage() {
             <div className="flex-1 overflow-y-auto px-6 py-5">
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm">
                 <div>
-                  <p className="font-semibold text-brand-ink">目前共有 {sortedPlannerRows.length} 位個案</p>
-                  <p className="mt-1 text-xs text-slate-500">已勾選 {checkedRows.length} 位，可直接結案或取消勾選。</p>
+                  <p className="font-semibold text-brand-ink">目前共有 {sortedPlannerRows.length} 位患者</p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    可執行 {checkedRows.length} 位，目前患者暫停 {pausedPlannerRows.length} 位；可直接結案或臨時暫停本次。
+                  </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <button
@@ -3148,7 +3265,7 @@ export function AdminSchedulesPage() {
                 {sortedPlannerRows.map((row) => (
                   <div
                     key={row.patientId}
-                    className="grid gap-3 rounded-2xl border border-slate-200 px-4 py-3 lg:grid-cols-[auto_minmax(0,180px)_minmax(0,1fr)_auto_auto]"
+                    className="grid gap-3 rounded-2xl border border-slate-200 px-4 py-3 lg:grid-cols-[auto_minmax(0,180px)_minmax(0,1fr)_auto_auto_auto]"
                   >
                     <label className="inline-flex items-center gap-2 text-sm font-medium text-brand-ink">
                       <input
@@ -3162,6 +3279,14 @@ export function AdminSchedulesPage() {
                     <p className="text-sm font-semibold text-brand-ink">{maskPatientName(row.name)}</p>
                     <p className="text-sm text-slate-600">{row.address}</p>
                     <Badge value={row.status} compact />
+                    <button
+                      type="button"
+                      onClick={() => pauseCurrentPlannerPatient(row.patientId)}
+                      disabled={!row.checked && row.status === "paused"}
+                      className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-700 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      目前患者暫停
+                    </button>
                     <button
                       type="button"
                       onClick={() => closePatient(row.patientId)}
@@ -3211,8 +3336,60 @@ export function AdminRemindersPage() {
     tone: "success" | "error";
     message: string;
   } | null>(null);
+  const [managedLineContacts, setManagedLineContacts] = useState<ManagedFamilyLineContactSnapshot[]>(() =>
+    loadManagedFamilyLineContacts()
+  );
 
-  const handleCreateNotice = () => {
+  const adminNameById = useMemo(
+    () => new Map(db.admin_users.map((adminUser) => [adminUser.id, adminUser.name])),
+    [db.admin_users]
+  );
+  const adminLineRecipients = useMemo(
+    () =>
+      buildAdminLineRecipients({
+        contacts: managedLineContacts,
+        adminNameById
+      }),
+    [adminNameById, managedLineContacts]
+  );
+
+  useEffect(() => {
+    if (import.meta.env.MODE === "test") {
+      return;
+    }
+    let cancelled = false;
+    void fetch("/api/admin/family-line/contacts", { cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok) {
+          return;
+        }
+        const payload = (await response.json().catch(() => ({}))) as {
+          contacts?: ManagedFamilyLineContactSnapshot[];
+          friends?: ManagedFamilyLineContactSnapshot[];
+        };
+        const contacts = Array.isArray(payload.contacts)
+          ? payload.contacts
+          : Array.isArray(payload.friends)
+            ? payload.friends
+            : [];
+        const normalizedContacts = normalizeManagedFamilyLineContacts(contacts);
+        if (!cancelled) {
+          setManagedLineContacts(normalizedContacts);
+          window.localStorage.setItem(
+            familyLineManagedContactsStorageKey,
+            JSON.stringify(normalizedContacts)
+          );
+        }
+      })
+      .catch(() => {
+        // 後端名單暫時無法讀取時，保留本機已保存的 LINE 名單供公告通知使用。
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleCreateNotice = async () => {
     const normalizedTitle = noticeTitle.trim();
     const normalizedContent = noticeContent.trim();
     if (!normalizedTitle || !normalizedContent) {
@@ -3275,12 +3452,55 @@ export function AdminRemindersPage() {
         buildManualNoticeItem(`${baseId}-admin-copy`, "admin", null, targetDoctor.id)
       );
     }
+    let lineSendTone: "success" | "error" = "success";
+    let lineSendMessage = "";
+    if (typeof fetch === "function" && adminLineRecipients.length > 0) {
+      try {
+        const lineResponse = await fetch("/api/admin/family-line/send", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            subject: normalizedTitle,
+            content: normalizedContent,
+            recipients: adminLineRecipients.map((recipient) => ({
+              caregiverId: recipient.id,
+              caregiverName: recipient.displayName,
+              patientId: "",
+              patientName: "",
+              doctorId: "",
+              doctorName: "",
+              lineUserId: recipient.lineUserId,
+              adminUserId: recipient.adminUserId,
+              adminUserName: recipient.adminUserName
+            }))
+          })
+        });
+        const payload = (await lineResponse.json().catch(() => ({}))) as {
+          error?: string;
+          sentCount?: number;
+        };
+        if (lineResponse.ok) {
+          lineSendMessage = ` 已發送 LINE 公告給 ${payload.sentCount ?? adminLineRecipients.length} 位行政人員。`;
+        } else {
+          lineSendTone = "error";
+          lineSendMessage = ` 但 LINE 行政公告發送失敗：${payload.error ?? `HTTP ${lineResponse.status}`}。`;
+        }
+      } catch {
+        lineSendTone = "error";
+        lineSendMessage = " 但無法連線到 LINE 發送端點。";
+      }
+    }
     setNoticeTitle("");
     setNoticeContent("");
     setIsNoticeDialogOpen(false);
     setStatusFeedback({
-      tone: "success",
-      message: noticeAudience === "admin" ? "行政公告已建立並送給全部角色。" : "指定醫師通知已建立，行政端已保留副本。"
+      tone: lineSendTone,
+      message:
+        noticeAudience === "admin"
+          ? `行政公告已建立並送給全部角色。${lineSendMessage}`
+          : `指定醫師通知已建立，行政端已保留副本。${lineSendMessage}`
     });
   };
 
@@ -3393,7 +3613,7 @@ export function AdminRemindersPage() {
               </label>
               <button
                 type="button"
-                onClick={handleCreateNotice}
+                onClick={() => void handleCreateNotice()}
                 className="rounded-full bg-brand-forest px-5 py-3 font-semibold text-white"
               >
                 送出站內通知
@@ -3840,7 +4060,7 @@ export function AdminLeaveRequestsPage() {
                       <div>
                         <p className="font-semibold text-brand-ink">LINE 請假通知對象</p>
                         <p className="mt-1 text-xs text-slate-600">
-                          依受影響個案比對「LINE 家屬聯繫」已關聯患者名單；核准請假時只會傳送給已勾選對象。
+                          依受影響個案比對「LINE 聯繫」已關聯患者名單；核准請假時只會傳送給已勾選對象。
                         </p>
                       </div>
                       {leaveLineRecipients.length > 0 ? (
@@ -3896,7 +4116,7 @@ export function AdminLeaveRequestsPage() {
                       </div>
                     ) : (
                       <div className="mt-3 rounded-2xl border border-dashed border-emerald-200 bg-white px-4 py-3 text-xs text-slate-600">
-                        受影響個案尚未關聯任何 LINE 好友。請先到 LINE 家屬聯繫重新整理 webhook 名單，並把好友關聯到患者。
+                        受影響個案尚未關聯任何 LINE 好友。請先到 LINE 聯繫重新整理 webhook 名單，並把好友關聯到患者。
                       </div>
                     )}
                   </div>

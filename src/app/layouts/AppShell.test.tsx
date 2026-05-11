@@ -132,7 +132,7 @@ describe("AppShell", () => {
       "待處理請假",
       "醫師追蹤",
       "團隊通訊",
-      "LINE 家屬聯繫",
+      "LINE 聯繫",
       "排程管理",
       "個案管理",
       "角色設置"
@@ -153,7 +153,7 @@ describe("AppShell", () => {
 
     renderShell("/admin/family-line", <AdminFamilyLinePage />);
 
-    expect(within(screen.getByRole("navigation")).getByRole("link", { name: /LINE 家屬聯繫/ })).toBeInTheDocument();
+    expect(within(screen.getByRole("navigation")).getByRole("link", { name: /LINE 聯繫/ })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "API Token 設定" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("LINE Channel Access Token")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Google Maps API Key")).not.toBeInTheDocument();
@@ -177,30 +177,38 @@ describe("AppShell", () => {
         authenticatedAdminId: "admin-001"
       })
     );
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
+    const fetchMock = vi.fn((url) => {
+      if (String(url).includes("/api/admin/env-status")) {
+        return Promise.resolve({
           ok: true,
-          variables: {
-            LINE_CHANNEL_ACCESS_TOKEN: true,
-            LINE_CHANNEL_SECRET: false,
-            GOOGLE_MAPS_API_KEY: true,
-            GOOGLE_CALENDAR_ID: true,
-            GOOGLE_DRIVE_ACCESS_TOKEN: true,
-            GOOGLE_DRIVE_FOLDER_ID: true
-          }
-        })
-      })
-      .mockResolvedValueOnce({
+          json: async () => ({
+            ok: true,
+            variables: {
+              LINE_CHANNEL_ACCESS_TOKEN: true,
+              LINE_CHANNEL_SECRET: false,
+              GOOGLE_MAPS_API_KEY: true,
+              GOOGLE_CALENDAR_ID: true,
+              GOOGLE_DRIVE_ACCESS_TOKEN: true,
+              GOOGLE_DRIVE_FOLDER_ID: true
+            }
+          })
+        });
+      }
+      if (String(url).includes("/api/maps/geocode")) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            latitude: 22.88794,
+            longitude: 120.48341,
+            formattedAddress: "高雄市旗山區中學路60號"
+          })
+        });
+      }
+      return Promise.resolve({
         ok: true,
-        json: async () => ({
-          latitude: 22.88794,
-          longitude: 120.48341,
-          formattedAddress: "高雄市旗山區中學路60號"
-        })
+        json: async () => ({ events: [] })
       });
+    });
     vi.stubGlobal("fetch", fetchMock);
 
     const { unmount } = renderShell("/admin/staff", <AdminStaffPage />);
@@ -215,7 +223,7 @@ describe("AppShell", () => {
     fireEvent.click(screen.getByRole("button", { name: "顯示機密管理" }));
     expect(screen.getByRole("button", { name: "收起機密管理" })).toHaveAttribute("aria-expanded", "true");
     await waitFor(() => {
-      expect(screen.getByText("Vercel 環境變數設定狀態")).toBeInTheDocument();
+      expect(screen.getByText("外部服務設定狀態")).toBeInTheDocument();
       expect(screen.getByText("LINE_CHANNEL_ACCESS_TOKEN")).toBeInTheDocument();
       expect(screen.getByText("GOOGLE_DRIVE_FOLDER_ID")).toBeInTheDocument();
     });

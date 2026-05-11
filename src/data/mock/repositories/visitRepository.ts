@@ -337,6 +337,32 @@ function deleteSavedRoutePlanList(db: AppDb, routePlanId: string) {
   return db.saved_route_plans.filter((routePlan) => routePlan.id !== routePlanId);
 }
 
+function completeRoutePlanInDb(db: AppDb, routePlanId: string) {
+  const now = new Date().toISOString();
+  let completedRoutePlan: SavedRoutePlan | undefined;
+  const nextSavedRoutePlans = db.saved_route_plans.map((routePlan) => {
+    if (routePlan.id !== routePlanId) {
+      return routePlan;
+    }
+    const nextRoutePlan = {
+      ...routePlan,
+      execution_status: "completed" as const,
+      executed_at: routePlan.executed_at ?? now,
+      updated_at: now
+    };
+    completedRoutePlan = nextRoutePlan;
+    return nextRoutePlan;
+  });
+
+  return {
+    db: {
+      ...db,
+      saved_route_plans: nextSavedRoutePlans
+    },
+    completedRoutePlan
+  };
+}
+
 function buildChangeAction(
   input: Omit<RescheduleAction, "id" | "created_at" | "updated_at">
 ): RescheduleAction {
@@ -983,6 +1009,17 @@ export function createVisitRepository(
       });
 
       return executedRoutePlan;
+    },
+    completeRoutePlan(routePlanId) {
+      let completedRoutePlan: SavedRoutePlan | undefined;
+
+      updateDb((db) => {
+        const result = completeRoutePlanInDb(db, routePlanId);
+        completedRoutePlan = result.completedRoutePlan;
+        return result.db;
+      });
+
+      return completedRoutePlan;
     },
     upsertSavedRoutePlanAndExecute(routePlan) {
       let executedRoutePlan: SavedRoutePlan | undefined;

@@ -99,7 +99,7 @@ export const routeItemStatusValues = [
 ] as const;
 export type RouteItemStatus = (typeof routeItemStatusValues)[number];
 
-export const routeExecutionStatusValues = ["draft", "executing", "archived"] as const;
+export const routeExecutionStatusValues = ["draft", "executing", "archived", "completed"] as const;
 export type RouteExecutionStatus = (typeof routeExecutionStatusValues)[number];
 
 export const confirmationSourceValues = ["doctor", "admin", "system"] as const;

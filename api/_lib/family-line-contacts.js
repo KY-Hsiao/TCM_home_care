@@ -9,6 +9,7 @@ const TABLE_SQL = `
     note TEXT NOT NULL DEFAULT '',
     source TEXT NOT NULL DEFAULT 'webhook',
     linked_patient_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+    linked_admin_user_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
     first_seen_at TIMESTAMPTZ NOT NULL,
     last_seen_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL
@@ -16,6 +17,7 @@ const TABLE_SQL = `
 `;
 
 const INDEX_SQL = [
+  "ALTER TABLE family_line_contacts ADD COLUMN IF NOT EXISTS linked_admin_user_ids JSONB NOT NULL DEFAULT '[]'::jsonb;",
   "CREATE INDEX IF NOT EXISTS family_line_contacts_updated_idx ON family_line_contacts (updated_at DESC);"
 ];
 
@@ -62,6 +64,13 @@ function normalizeLinkedPatientIds(value) {
   return value.map((item) => String(item ?? "").trim()).filter(Boolean);
 }
 
+function normalizeLinkedAdminUserIds(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.map((item) => String(item ?? "").trim()).filter(Boolean);
+}
+
 export function mapFamilyLineContactRow(row) {
   return {
     userId: row.line_user_id,
@@ -71,6 +80,7 @@ export function mapFamilyLineContactRow(row) {
     note: row.note ?? "",
     source: row.source ?? "webhook",
     linkedPatientIds: normalizeLinkedPatientIds(row.linked_patient_ids),
+    linkedAdminUserIds: normalizeLinkedAdminUserIds(row.linked_admin_user_ids),
     firstSeenAt: new Date(row.first_seen_at).toISOString(),
     lastSeenAt: new Date(row.last_seen_at).toISOString(),
     updatedAt: new Date(row.updated_at).toISOString()
@@ -139,6 +149,7 @@ export async function updateFamilyLineContact(contact) {
   }
 
   const linkedPatientIds = normalizeLinkedPatientIds(contact?.linkedPatientIds);
+  const linkedAdminUserIds = normalizeLinkedAdminUserIds(contact?.linkedAdminUserIds);
   const note = String(contact?.note ?? "").trim();
   const now = new Date().toISOString();
 
@@ -146,12 +157,13 @@ export async function updateFamilyLineContact(contact) {
     `
       UPDATE family_line_contacts
       SET linked_patient_ids = $2::jsonb,
-          note = $3,
-          updated_at = $4
+          linked_admin_user_ids = $3::jsonb,
+          note = $4,
+          updated_at = $5
       WHERE line_user_id = $1
       RETURNING *;
     `,
-    [lineUserId, JSON.stringify(linkedPatientIds), note, now]
+    [lineUserId, JSON.stringify(linkedPatientIds), JSON.stringify(linkedAdminUserIds), note, now]
   );
 
   return result.rows[0] ? mapFamilyLineContactRow(result.rows[0]) : null;

@@ -56,12 +56,12 @@ describe("DoctorVisitCard", () => {
     vi.restoreAllMocks();
   });
 
-  it("按下開始行程時會切到即時導航頁，並外接 Google 地圖", () => {
+  it("按下導航操作時會切到即時導航頁，並外接 Google 地圖", () => {
     const openSpy = vi.spyOn(window, "open").mockReturnValue(window);
 
-    renderDoctorVisitCard("vs-021", "doc-001");
+    renderDoctorVisitCard("vs-002", "doc-001");
 
-    fireEvent.click(screen.getByRole("button", { name: "開始行程" }));
+    fireEvent.click(screen.getByRole("button", { name: /開始行程|前往即時導航/ }));
 
     expect(openSpy).toHaveBeenCalled();
     expect(screen.getByText("即時導航頁")).toBeInTheDocument();

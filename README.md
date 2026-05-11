@@ -130,6 +130,32 @@ $env:VITE_TEAM_COMM_SYNC_MODE = "http"
    - 或 Vercel direct deploy：
      - `VERCEL_DEPLOY_HOOK_URL`
 
+### Google Drive 回院病歷開通
+
+醫師端回院病歷會透過 serverless API 上傳 HTML 病歷到 Google Drive，並可讀取同一個資料夾內既有的 HTML 病歷作為歷史紀錄。正式開通時不要把 token 放在瀏覽器端，請到 Vercel 專案的 Settings / Environment Variables 設定。
+
+建議使用 Service Account：
+
+1. 在 Google Cloud Console 啟用 Google Drive API。
+2. 建立 Service Account，新增 JSON key。
+3. 在 Google Drive 建立或選定病歷資料夾，將資料夾分享給 Service Account 的 `client_email`，權限至少需可檢視與編輯。目前指定資料夾為 `1GdsW019wToFO4yOepfZFS9GybSmUtbqp`。
+4. 在 Vercel 設定：
+
+   - `GOOGLE_DRIVE_FOLDER_ID`：Drive 資料夾網址 `/folders/` 後面的 ID
+   - `GOOGLE_DRIVE_SERVICE_ACCOUNT_CLIENT_EMAIL`：JSON key 內的 `client_email`
+   - `GOOGLE_DRIVE_SERVICE_ACCOUNT_PRIVATE_KEY`：JSON key 內的 `private_key`，可保留 `-----BEGIN PRIVATE KEY-----` 與換行；若平台要求單行，也可用 `\n` 表示換行
+
+替代方案是 OAuth Refresh Token：
+
+- `GOOGLE_DRIVE_FOLDER_ID`
+- `GOOGLE_DRIVE_REFRESH_TOKEN`
+- `GOOGLE_DRIVE_CLIENT_ID`
+- `GOOGLE_DRIVE_CLIENT_SECRET`
+
+`GOOGLE_DRIVE_ACCESS_TOKEN` 只建議短期測試，通常約 1 小時會過期。設定完成並重新部署後，可到行政端 `角色設置` > `機密管理區` 按 `重新整理狀態` 與 `測試 Google Drive 連線` 確認是否已開通。
+
+注意：這個 Google Drive 資料夾目前用於回院病歷 HTML 檔案的線上儲存與讀取，不等同於 Neon / Postgres 這類正式結構化資料庫。團隊通訊等正式共享資料仍依 `DATABASE_URL` 或 `POSTGRES_URL` 連線。
+
 ### 行政端頁面內的線上更新按鈕
 
 行政端 `角色設置` 頁現在已新增 `更新到 GitHub / Vercel` 區塊。  

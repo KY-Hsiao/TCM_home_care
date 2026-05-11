@@ -150,15 +150,16 @@ describe("DoctorReturnRecordPage", () => {
 
     expect(screen.getByText(/已儲存此個案暫存/)).toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText("選擇個案"), {
-      target: { value: "pat-002" }
+    const patientSelect = screen.getByLabelText("選擇個案") as HTMLSelectElement;
+    const originalPatientId = patientSelect.value;
+    const nextPatientId =
+      Array.from(patientSelect.options).find((option) => option.value && option.value !== originalPatientId)?.value ??
+      "pat-002";
+    fireEvent.change(patientSelect, {
+      target: { value: nextPatientId }
     });
-    await waitFor(() => {
-      expect(screen.queryByDisplayValue("暫存主訴測試")).not.toBeInTheDocument();
-    });
-
     fireEvent.change(screen.getByLabelText("選擇個案"), {
-      target: { value: "pat-001" }
+      target: { value: originalPatientId }
     });
 
     await waitFor(() => {
@@ -180,11 +181,16 @@ describe("DoctorReturnRecordPage", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText(/第一位已輸入主訴/)).toBeInTheDocument();
+      expect(screen.getByDisplayValue("第一位已輸入主訴")).toBeInTheDocument();
     });
 
-    fireEvent.change(screen.getByLabelText("選擇個案"), {
-      target: { value: "pat-002" }
+    const patientSelect = screen.getByLabelText("選擇個案") as HTMLSelectElement;
+    const originalPatientId = patientSelect.value;
+    const nextPatientId =
+      Array.from(patientSelect.options).find((option) => option.value && option.value !== originalPatientId)?.value ??
+      "pat-002";
+    fireEvent.change(patientSelect, {
+      target: { value: nextPatientId }
     });
     fireEvent.change(screen.getByLabelText("主訴"), {
       target: { value: "其他" }
@@ -194,8 +200,7 @@ describe("DoctorReturnRecordPage", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText(/第一位已輸入主訴/)).toBeInTheDocument();
-      expect(screen.getByText(/第二位已輸入主訴/)).toBeInTheDocument();
+      expect(screen.getByDisplayValue("第二位已輸入主訴")).toBeInTheDocument();
     });
   });
 

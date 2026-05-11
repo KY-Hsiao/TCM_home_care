@@ -7,6 +7,7 @@ import { SESSION_STORAGE_KEY } from "../../app/auth-storage";
 import { AppProviders } from "../../app/providers";
 import { MOCK_DB_STORAGE_KEY } from "../../data/mock/db";
 import { createSeedDb } from "../../data/seed";
+import { maskPatientName } from "../../shared/utils/patient-name";
 import { DoctorLocationPage } from "../doctor/DoctorPages";
 import {
   AdminDashboardPage,
@@ -56,8 +57,14 @@ function selectScheduleFilters(routeDate = "2026-05-06") {
 }
 
 function openSlotPatientDialog() {
-  fireEvent.click(screen.getByRole("button", { name: "選擇符合時段個案" }));
-  return screen.getByRole("dialog", { name: "符合時段的個案清單視窗" });
+  const patientListButton =
+    screen.queryByRole("button", { name: "選擇符合時段個案" }) ??
+    screen.getByRole("button", { name: "選擇突發患者" });
+  fireEvent.click(patientListButton);
+  return (
+    screen.queryByRole("dialog", { name: "符合時段的個案清單視窗" }) ??
+    screen.getByRole("dialog", { name: "突發患者清單視窗" })
+  );
 }
 
 function createXlsxFile(sheets: Array<{ name: string; rows: string[][] }>, filename = "home-care.xlsx") {
@@ -126,7 +133,8 @@ describe("AdminPages", () => {
     selectScheduleFilters();
     const slotPatientDialog = openSlotPatientDialog();
 
-    expect(within(slotPatientDialog).getByText("目前共有 8 位個案")).toBeInTheDocument();
+    expect(within(slotPatientDialog).getByText("目前共有 8 位患者")).toBeInTheDocument();
+    expect(within(slotPatientDialog).getByText(/可執行 8 位，目前患者暫停 0 位/)).toBeInTheDocument();
     expect(within(slotPatientDialog).getByLabelText("王○珠 勾選")).toBeChecked();
     expect(within(slotPatientDialog).getByLabelText("陳○雄 勾選")).toBeChecked();
     expect(within(slotPatientDialog).getAllByText("高雄市旗山區延平一路 128 號").length).toBeGreaterThan(0);
@@ -268,7 +276,7 @@ describe("AdminPages", () => {
     ).toEqual(["請選擇時段", "上午", "下午"]);
   });
 
-  it("AdminSchedulesPage 突發出巡事件也會依醫師時段順序帶入預設時段", () => {
+  it("AdminSchedulesPage 突發出巡事件不受醫師可用時段限制", () => {
     const customDb = createSeedDb();
     customDb.doctors = customDb.doctors.map((doctor) =>
       doctor.id === "doc-001"
@@ -292,8 +300,54 @@ describe("AdminPages", () => {
 
     return waitFor(() => {
       expect(screen.getByRole("combobox", { name: "篩選星期" })).toHaveValue("星期三");
-      expect(screen.getByRole("combobox", { name: "篩選時段" })).toHaveValue("下午");
+      expect(screen.getByRole("combobox", { name: "篩選時段" })).toHaveValue("上午");
+      expect(
+        within(screen.getByRole("combobox", { name: "篩選時段" }))
+          .getAllByRole("option")
+          .map((option) => option.textContent)
+      ).toEqual(["請選擇時段", "上午", "下午"]);
     });
+  });
+
+  it("AdminSchedulesPage 突發出巡事件可由任一醫師選擇所有服務中患者", () => {
+    const customDb = createSeedDb();
+    customDb.doctors = [
+      ...customDb.doctors,
+      {
+        ...customDb.doctors[0],
+        id: "doc-999",
+        name: "臨時支援醫師",
+        available_service_slots: []
+      }
+    ];
+    customDb.patients = customDb.patients.map((patient) =>
+      patient.id === "pat-016"
+        ? {
+            ...patient,
+            preferred_doctor_id: "doc-001",
+            preferred_service_slot: "星期四下午",
+            status: "paused" as const
+          }
+        : patient
+    );
+    window.localStorage.setItem(MOCK_DB_STORAGE_KEY, JSON.stringify(customDb));
+
+    renderWithProviders(<AdminSchedulesPage />);
+
+    fireEvent.click(screen.getByRole("button", { name: "突發出巡事件" }));
+    fireEvent.change(screen.getByRole("combobox", { name: "篩選醫師" }), {
+      target: { value: "doc-999" }
+    });
+    fireEvent.change(screen.getByLabelText("路線日期"), {
+      target: { value: "2026-05-06" }
+    });
+
+    expect(screen.getByRole("button", { name: "選擇突發患者" })).toBeEnabled();
+    const slotPatientDialog = openSlotPatientDialog();
+    expect(within(slotPatientDialog).getByText("突發可選患者清單")).toBeInTheDocument();
+    expect(within(slotPatientDialog).getByText("目前共有 16 位患者")).toBeInTheDocument();
+    expect(within(slotPatientDialog).getByLabelText("王○珠 勾選")).toBeChecked();
+    expect(within(slotPatientDialog).getByLabelText("陳○山 勾選")).toBeChecked();
   });
 
   it("AdminSchedulesPage 選完日期後會自動帶入星期與時段", () => {
@@ -316,17 +370,24 @@ describe("AdminPages", () => {
     expect(screen.getByRole("button", { name: "選擇符合時段個案" })).toBeEnabled();
   });
 
-  it("AdminSchedulesPage 取消勾選後，個案會改成暫停且不進入路線排序", () => {
+  it("AdminSchedulesPage 目前患者暫停後，個案會改成暫停且不進入路線排序", () => {
     renderWithProviders(<AdminSchedulesPage />);
 
     selectScheduleFilters();
     const slotPatientDialog = openSlotPatientDialog();
-    fireEvent.click(within(slotPatientDialog).getByLabelText("王○珠 勾選"));
+    const patientRow = within(slotPatientDialog)
+      .getByLabelText("王○珠 勾選")
+      .closest("div");
+    if (!patientRow) {
+      throw new Error("找不到王○珠列。");
+    }
+    fireEvent.click(within(patientRow).getByRole("button", { name: "目前患者暫停" }));
 
     expect(within(slotPatientDialog).getByLabelText("王○珠 勾選")).not.toBeChecked();
     expect(screen.queryByText("第 1 站 王○珠")).not.toBeInTheDocument();
     expectRouteStopLabel("第 1 站 陳○雄");
-    expect(screen.getByText("可執行 7 站")).toBeInTheDocument();
+    expect(screen.getByText(/目前共有 8 位患者｜可執行 7 站｜目前患者暫停 1 位/)).toBeInTheDocument();
+    expect(within(slotPatientDialog).getByText(/可執行 7 位，目前患者暫停 1 位/)).toBeInTheDocument();
     expect(screen.getAllByText("暫停").length).toBeGreaterThan(0);
   });
 
@@ -340,13 +401,13 @@ describe("AdminPages", () => {
 
     expect(within(slotPatientDialog).getByLabelText("王○珠 勾選")).not.toBeChecked();
     expect(within(slotPatientDialog).getByLabelText("陳○雄 勾選")).not.toBeChecked();
-    expect(screen.getByText("可執行 0 站")).toBeInTheDocument();
+    expect(screen.getByText(/可執行 0 站/)).toBeInTheDocument();
 
     fireEvent.click(within(slotPatientDialog).getByRole("button", { name: "全選" }));
 
     expect(within(slotPatientDialog).getByLabelText("王○珠 勾選")).toBeChecked();
     expect(within(slotPatientDialog).getByLabelText("陳○雄 勾選")).toBeChecked();
-    expect(screen.getByText("可執行 8 站")).toBeInTheDocument();
+    expect(screen.getByText(/可執行 8 站/)).toBeInTheDocument();
   });
 
   it("AdminSchedulesPage 開啟時會偵測三天內未排時段，經行政同意後沿用 7 天前同時段路線並建立通知", async () => {
@@ -596,7 +657,7 @@ describe("AdminPages", () => {
         screen.getAllByText(/Google Geocoding API 回傳 ZERO_RESULTS/).length
       ).toBeGreaterThan(0)
     );
-    expect(screen.getByText(/Google 回傳原因：Google Geocoding API 回傳 ZERO_RESULTS/)).toBeInTheDocument();
+    expect(screen.getAllByText(/Google Geocoding API 回傳 ZERO_RESULTS/).length).toBeGreaterThan(0);
   });
 
   it("AdminSchedulesPage 可拖曳調整本次路線排序", () => {
@@ -704,13 +765,22 @@ describe("AdminPages", () => {
     expect(screen.getByRole("combobox", { name: "篩選星期" })).toHaveValue("");
     expect(screen.getByRole("combobox", { name: "篩選時段" })).toHaveValue("");
     expect(screen.getByLabelText("路線日期")).toHaveValue("");
-    expect(screen.getByText("可執行 0 站")).toBeInTheDocument();
+    expect(screen.getByText(/可執行 0 站/)).toBeInTheDocument();
   });
 
   it("AdminSchedulesPage 按下實行路線後，醫師端可收到這次規劃路線", async () => {
     const adminView = renderWithProviders(<AdminSchedulesPage />);
 
     selectScheduleFilters("2026-05-06");
+    const slotPatientDialog = openSlotPatientDialog();
+    const patientRow = within(slotPatientDialog)
+      .getByLabelText("王○珠 勾選")
+      .closest("div");
+    if (!patientRow) {
+      throw new Error("找不到王○珠列。");
+    }
+    fireEvent.click(within(patientRow).getByRole("button", { name: "目前患者暫停" }));
+    fireEvent.click(within(slotPatientDialog).getByRole("button", { name: "關閉" }));
     fireEvent.click(screen.getByRole("button", { name: "實行路線" }));
 
     await waitFor(() =>
@@ -735,14 +805,31 @@ describe("AdminPages", () => {
     expect(executedRoutePlan.end_latitude).toBe(22.880693);
     expect(executedRoutePlan.end_longitude).toBe(120.483276);
     expect(executedSchedules.length).toBeGreaterThan(0);
+    expect(executedRoutePlan.route_items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          patient_id: "pat-001",
+          checked: false,
+          route_order: null,
+          status: "paused"
+        })
+      ])
+    );
+    expect(
+      executedSchedules.some(
+        (schedule: { patient_id: string; status: string }) =>
+          schedule.patient_id === "pat-001" && schedule.status === "paused"
+      )
+    ).toBe(true);
     expect(
       executedSchedules.every(
         (schedule: {
+          patient_id: string;
           status: string;
           tracking_started_at: string | null;
           tracking_stopped_at: string | null;
         }) =>
-          schedule.status === "waiting_departure" &&
+          (schedule.patient_id === "pat-001" || schedule.status === "waiting_departure") &&
           schedule.tracking_started_at === null &&
           schedule.tracking_stopped_at === null
       )
@@ -765,7 +852,7 @@ describe("AdminPages", () => {
 
     await waitFor(() => {
       expect(screen.getAllByText("即時導航").length).toBeGreaterThan(0);
-      expect(screen.getByText("5月6日 星期三上午 / 8位")).toBeInTheDocument();
+      expect(screen.getByText("5月6日 星期三上午 / 7位")).toBeInTheDocument();
     });
   });
 
@@ -774,8 +861,35 @@ describe("AdminPages", () => {
 
     expect(screen.getByRole("combobox", { name: "已儲存的路線" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "套用前次路線" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "標示已完成" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "刪除這條路線" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "批次刪除路線" })).toBeInTheDocument();
+  });
+
+  it("AdminSchedulesPage 可將已儲存路線標示為已完成", () => {
+    renderWithProviders(<AdminSchedulesPage />);
+
+    const savedRouteSelect = screen.getByRole("combobox", { name: "已儲存的路線" });
+    const routeOptions = within(savedRouteSelect)
+      .getAllByRole("option")
+      .filter((option) => option.getAttribute("value"));
+    const selectedRouteId = routeOptions[0]?.getAttribute("value");
+    if (!selectedRouteId) {
+      throw new Error("找不到可標示完成的已儲存路線。");
+    }
+
+    fireEvent.change(savedRouteSelect, {
+      target: { value: selectedRouteId }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "標示已完成" }));
+
+    expect(screen.getByRole("status")).toHaveTextContent("標示為已完成");
+    const storedDb = JSON.parse(window.localStorage.getItem(MOCK_DB_STORAGE_KEY) ?? "{}");
+    const completedRoutePlan = storedDb.saved_route_plans.find(
+      (routePlan: { id: string }) => routePlan.id === selectedRouteId
+    );
+    expect(completedRoutePlan).toMatchObject({ execution_status: "completed" });
+    expect(screen.getByRole("combobox", { name: "已儲存的路線" })).toHaveTextContent("已完成");
   });
 
   it("AdminSchedulesPage 可套用同醫師前次路線但不沿用舊排程 ID", () => {
@@ -911,7 +1025,176 @@ describe("AdminPages", () => {
 
     const slotPatientDialog = openSlotPatientDialog();
     expect(within(slotPatientDialog).queryByLabelText("王○珠 勾選")).not.toBeInTheDocument();
-    expect(within(slotPatientDialog).getByText("目前共有 7 位個案")).toBeInTheDocument();
+    expect(within(slotPatientDialog).getByText("目前共有 7 位患者")).toBeInTheDocument();
+  });
+
+  it("AdminPatientsPage 結案有既有路線的個案時，會同步更新排程路線與關聯紀錄", () => {
+    const customDb = createSeedDb();
+    const closingSchedule = customDb.visit_schedules.find(
+      (schedule) => schedule.patient_id === "pat-001" && schedule.status !== "completed"
+    );
+    const remainingSchedule = customDb.visit_schedules.find(
+      (schedule) =>
+        schedule.patient_id !== "pat-001" &&
+        schedule.assigned_doctor_id === closingSchedule?.assigned_doctor_id &&
+        schedule.status !== "cancelled"
+    );
+    const routePlan = customDb.saved_route_plans[0];
+    const closingPatient = customDb.patients.find((patient) => patient.id === "pat-001");
+    const remainingPatient = remainingSchedule
+      ? customDb.patients.find((patient) => patient.id === remainingSchedule.patient_id)
+      : undefined;
+    if (!closingSchedule || !remainingSchedule || !routePlan || !closingPatient || !remainingPatient) {
+      throw new Error("缺少結案連動測試資料。");
+    }
+
+    customDb.saved_route_plans = [
+      {
+        ...routePlan,
+        id: "route-close-sync",
+        doctor_id: closingSchedule.assigned_doctor_id,
+        schedule_ids: [closingSchedule.id, remainingSchedule.id],
+        route_items: [
+          {
+            patient_id: closingPatient.id,
+            schedule_id: closingSchedule.id,
+            checked: true,
+            route_order: 1,
+            status: "scheduled",
+            patient_name: closingPatient.name,
+            address: closingPatient.address
+          },
+          {
+            patient_id: remainingPatient.id,
+            schedule_id: remainingSchedule.id,
+            checked: true,
+            route_order: 2,
+            status: "scheduled",
+            patient_name: remainingPatient.name,
+            address: remainingPatient.address
+          }
+        ],
+        execution_status: "executing"
+      }
+    ];
+    customDb.visit_schedules = customDb.visit_schedules.map((schedule) => {
+      if (schedule.id === closingSchedule.id) {
+        return { ...schedule, route_order: 1 };
+      }
+      if (schedule.id === remainingSchedule.id) {
+        return { ...schedule, route_order: 2 };
+      }
+      return schedule;
+    });
+    customDb.notification_tasks = [
+      {
+        id: "nt-close-sync",
+        template_id: "tpl-007",
+        patient_id: "pat-001",
+        caregiver_id: null,
+        visit_schedule_id: closingSchedule.id,
+        status: "pending",
+        channel: "google_chat",
+        scheduled_send_at: "2026-05-06T08:00:00+08:00",
+        sent_at: null,
+        recipient_name: "蕭坤元醫師",
+        recipient_role: "doctor",
+        recipient_target: "doc-001",
+        trigger_type: "route",
+        preview_payload: {},
+        reply_excerpt: null,
+        reply_code: null,
+        failure_reason: null,
+        linked_tracking_session_id: null,
+        created_at: "2026-05-06T08:00:00+08:00",
+        updated_at: "2026-05-06T08:00:00+08:00"
+      }
+    ];
+    customDb.reminders = [
+      {
+        id: "rem-close-sync",
+        role: "admin",
+        title: "追蹤王○珠",
+        detail: "確認本次訪視",
+        due_at: "2026-05-06T08:00:00+08:00",
+        related_visit_schedule_id: closingSchedule.id,
+        status: "pending",
+        created_at: "2026-05-06T08:00:00+08:00",
+        updated_at: "2026-05-06T08:00:00+08:00"
+      }
+    ];
+    customDb.reschedule_actions = [
+      {
+        id: "rs-close-sync",
+        visit_schedule_id: closingSchedule.id,
+        requested_by_role: "admin",
+        action_type: "reschedule",
+        original_start_at: closingSchedule.scheduled_start_at,
+        original_end_at: closingSchedule.scheduled_end_at,
+        new_start_at: closingSchedule.scheduled_start_at,
+        new_end_at: closingSchedule.scheduled_end_at,
+        new_doctor_id: null,
+        reason: "測試",
+        change_summary: "等待調整",
+        status: "pending",
+        created_at: "2026-05-06T08:00:00+08:00",
+        updated_at: "2026-05-06T08:00:00+08:00"
+      }
+    ];
+    customDb.notification_center_items = [
+      {
+        id: "nc-close-sync",
+        role: "admin",
+        owner_user_id: "admin-001",
+        source_type: "manual_notice",
+        title: "王○珠排程提醒",
+        content: "請追蹤",
+        linked_patient_id: "pat-001",
+        linked_visit_schedule_id: closingSchedule.id,
+        linked_doctor_id: closingSchedule.assigned_doctor_id,
+        linked_leave_request_id: null,
+        status: "pending",
+        is_unread: true,
+        reply_text: null,
+        reply_updated_at: null,
+        reply_updated_by_role: null,
+        created_at: "2026-05-06T08:00:00+08:00",
+        updated_at: "2026-05-06T08:00:00+08:00"
+      }
+    ];
+    window.localStorage.setItem(MOCK_DB_STORAGE_KEY, JSON.stringify(customDb));
+
+    renderWithProviders(<AdminPatientsPage />);
+
+    fireEvent.click(screen.getByLabelText("王○珠 勾選"));
+    fireEvent.click(screen.getByRole("button", { name: "結案" }));
+
+    const storedDb = JSON.parse(window.localStorage.getItem(MOCK_DB_STORAGE_KEY) ?? "{}");
+    const closedSchedule = storedDb.visit_schedules.find(
+      (schedule: { id: string }) => schedule.id === closingSchedule.id
+    );
+    const syncedRemainingSchedule = storedDb.visit_schedules.find(
+      (schedule: { id: string }) => schedule.id === remainingSchedule.id
+    );
+    const syncedRoutePlan = storedDb.saved_route_plans.find(
+      (storedRoutePlan: { id: string }) => storedRoutePlan.id === "route-close-sync"
+    );
+
+    expect(closedSchedule).toMatchObject({ status: "cancelled", route_order: 0 });
+    expect(syncedRemainingSchedule).toMatchObject({ route_order: 1 });
+    expect(syncedRoutePlan.route_items).toHaveLength(1);
+    expect(syncedRoutePlan.route_items[0]).toMatchObject({
+      patient_id: remainingPatient.id,
+      route_order: 1
+    });
+    expect(syncedRoutePlan.schedule_ids).toEqual([remainingSchedule.id]);
+    expect(storedDb.notification_tasks[0]).toMatchObject({ status: "closed" });
+    expect(storedDb.reminders[0]).toMatchObject({ status: "dismissed" });
+    expect(storedDb.reschedule_actions[0]).toMatchObject({ status: "cancelled" });
+    expect(storedDb.notification_center_items[0]).toMatchObject({
+      status: "closed",
+      is_unread: false
+    });
   });
 
   it("AdminDashboardPage 只保留行政儀表板，不在主內容區重複顯示醫師追蹤入口", () => {
@@ -938,10 +1221,24 @@ describe("AdminPages", () => {
 
   it("AdminDashboardPage 的總覽數字會連接實際排程與異常通知資料", () => {
     const seededDb = createSeedDb();
+    const dashboardDate = seededDb.visit_schedules.find((schedule) => schedule.id === "vs-002")?.scheduled_start_at.slice(0, 10);
+    const completedRoutePlans = seededDb.saved_route_plans.map((routePlan) =>
+      routePlan.route_date === dashboardDate ? { ...routePlan, execution_status: "completed" as const } : routePlan
+    );
+    const dashboardRoutePlan = completedRoutePlans.find((routePlan) => routePlan.route_date === dashboardDate);
+    const dashboardRouteItem = dashboardRoutePlan?.route_items.find((item) => item.schedule_id);
+    const dashboardSchedule = seededDb.visit_schedules.find(
+      (schedule) => schedule.id === dashboardRouteItem?.schedule_id
+    );
+    const dashboardPatient = seededDb.patients.find((patient) => patient.id === dashboardSchedule?.patient_id);
+    if (!dashboardRouteItem?.schedule_id || !dashboardSchedule || !dashboardPatient) {
+      throw new Error("缺少已完成路線中的測試排程。");
+    }
     window.localStorage.setItem(
       MOCK_DB_STORAGE_KEY,
       JSON.stringify({
         ...seededDb,
+        saved_route_plans: completedRoutePlans,
         notification_center_items: [
           {
             id: "nc-dashboard-exception-001",
@@ -950,9 +1247,9 @@ describe("AdminPages", () => {
             source_type: "patient_exception",
             title: "異常個案｜王○珠",
             content: "本次案件需行政後續追蹤。",
-            linked_patient_id: "pat-001",
-            linked_visit_schedule_id: "vs-001",
-            linked_doctor_id: "doc-001",
+            linked_patient_id: dashboardPatient.id,
+            linked_visit_schedule_id: dashboardSchedule.id,
+            linked_doctor_id: dashboardSchedule.assigned_doctor_id,
             linked_leave_request_id: null,
             status: "pending",
             is_unread: true,
@@ -970,14 +1267,181 @@ describe("AdminPages", () => {
 
     const executedCard = screen.getAllByText("執行人次")[0].closest("div");
     expect(executedCard).not.toBeNull();
-    expect(within(executedCard!).getByText("5")).toBeInTheDocument();
+    expect(within(executedCard!).getByText("6")).toBeInTheDocument();
 
     const previousMonthCard = screen.getByText("上月總計").closest("div");
     expect(previousMonthCard).not.toBeNull();
     expect(previousMonthCard?.textContent).toContain("2026年4月");
 
     expect(screen.getAllByText("緊急處置人次").length).toBeGreaterThan(0);
-    expect(screen.getByRole("link", { name: /王○珠/ })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: new RegExp(maskPatientName(dashboardPatient.name)) })).toBeInTheDocument();
+  });
+
+  it("AdminDashboardPage 的紀錄統計只納入已完成路線", () => {
+    const seededDb = createSeedDb();
+    const activeDate = seededDb.visit_schedules[0]?.scheduled_start_at.slice(0, 10);
+    const outOfRouteSchedule = seededDb.visit_schedules[1];
+    if (!activeDate || !outOfRouteSchedule) {
+      throw new Error("缺少測試用排程。");
+    }
+    window.localStorage.setItem(
+      MOCK_DB_STORAGE_KEY,
+      JSON.stringify({
+        ...seededDb,
+        visit_schedules: seededDb.visit_schedules.map((schedule) =>
+          schedule.id === outOfRouteSchedule.id
+            ? { ...schedule, status: "paused" as const, last_feedback_code: "urgent" as const }
+            : schedule
+        ),
+        saved_route_plans: [
+          {
+            ...seededDb.saved_route_plans[0],
+            id: "route-dashboard-completed-scope",
+            route_date: activeDate,
+            route_items: [
+              {
+                ...seededDb.saved_route_plans[0].route_items[0],
+                schedule_id: seededDb.visit_schedules[0].id,
+                checked: true,
+                status: "completed" as const
+              }
+            ],
+            schedule_ids: [seededDb.visit_schedules[0].id],
+            execution_status: "completed" as const,
+            executed_at: `${activeDate}T08:00:00+08:00`
+          },
+          {
+            ...seededDb.saved_route_plans[1],
+            id: "route-dashboard-executing-ignored",
+            route_date: activeDate,
+            route_items: [
+              {
+                ...seededDb.saved_route_plans[1].route_items[0],
+                schedule_id: outOfRouteSchedule.id,
+                checked: false,
+                status: "paused" as const
+              }
+            ],
+            schedule_ids: [outOfRouteSchedule.id],
+            execution_status: "executing" as const
+          }
+        ],
+        notification_center_items: [
+          {
+            id: "nc-dashboard-ignored-urgent",
+            role: "admin",
+            owner_user_id: "admin-001",
+            source_type: "patient_exception",
+            title: "緊急個案｜未完成路線",
+            content: "urgent but route is not completed",
+            linked_patient_id: outOfRouteSchedule.patient_id,
+            linked_visit_schedule_id: outOfRouteSchedule.id,
+            linked_doctor_id: outOfRouteSchedule.assigned_doctor_id,
+            linked_leave_request_id: null,
+            status: "pending",
+            is_unread: true,
+            reply_text: null,
+            reply_updated_at: null,
+            reply_updated_by_role: null,
+            created_at: `${activeDate}T09:00:00+08:00`,
+            updated_at: `${activeDate}T09:00:00+08:00`
+          }
+        ]
+      })
+    );
+
+    renderWithProviders(<AdminDashboardPage />);
+
+    expect(within(screen.getAllByText("執行人次")[0].closest("div")!).getByText("1")).toBeInTheDocument();
+    expect(within(screen.getAllByText("暫停人次")[0].closest("div")!).getByText("0")).toBeInTheDocument();
+    expect(within(screen.getAllByText("緊急處置人次")[0].closest("div")!).getByText("0")).toBeInTheDocument();
+    expect(screen.queryByText("緊急個案｜未完成路線")).not.toBeInTheDocument();
+  });
+
+  it("AdminDashboardPage 的上月總計會跟隨資料基準日，不會因系統日期不同而歸零", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-16T08:00:00+08:00"));
+    const seededDb = createSeedDb();
+    const baseSchedule = seededDb.visit_schedules[0];
+    if (!baseSchedule) {
+      throw new Error("缺少測試用排程。");
+    }
+    const buildSchedule = (id: string, scheduledStartAt: string) => ({
+      ...baseSchedule,
+      id,
+      patient_id: "pat-001",
+      scheduled_start_at: scheduledStartAt,
+      scheduled_end_at: scheduledStartAt.replace("09:00:00", "10:00:00"),
+      status: "completed" as const,
+      last_feedback_code: null
+    });
+
+    window.localStorage.setItem(
+      MOCK_DB_STORAGE_KEY,
+      JSON.stringify({
+        ...seededDb,
+        visit_schedules: [
+          buildSchedule("vs-dashboard-april-001", "2026-04-15T09:00:00+08:00"),
+          buildSchedule("vs-dashboard-april-002", "2026-04-15T10:30:00+08:00"),
+          buildSchedule("vs-dashboard-march-001", "2026-03-20T09:00:00+08:00")
+        ],
+        saved_route_plans: [
+          {
+            ...seededDb.saved_route_plans[0],
+            id: "route-dashboard-april",
+            route_date: "2026-04-15",
+            route_weekday: "星期三",
+            route_items: [
+              {
+                ...seededDb.saved_route_plans[0].route_items[0],
+                schedule_id: "vs-dashboard-april-001",
+                checked: true,
+                route_order: 1,
+                status: "scheduled"
+              },
+              {
+                ...seededDb.saved_route_plans[0].route_items[0],
+                patient_id: "pat-002",
+                schedule_id: "vs-dashboard-april-002",
+                checked: true,
+                route_order: 2,
+                status: "scheduled"
+              }
+            ],
+            schedule_ids: ["vs-dashboard-april-001", "vs-dashboard-april-002"],
+            execution_status: "completed",
+            executed_at: "2026-04-15T08:00:00+08:00"
+          },
+          {
+            ...seededDb.saved_route_plans[0],
+            id: "route-dashboard-march",
+            route_date: "2026-03-20",
+            route_weekday: "星期五",
+            route_items: [
+              {
+                ...seededDb.saved_route_plans[0].route_items[0],
+                schedule_id: "vs-dashboard-march-001",
+                checked: true,
+                route_order: 1,
+                status: "completed"
+              }
+            ],
+            schedule_ids: ["vs-dashboard-march-001"],
+            execution_status: "completed",
+            executed_at: "2026-03-20T08:00:00+08:00"
+          }
+        ],
+        visit_records: [],
+        notification_center_items: []
+      })
+    );
+
+    renderWithProviders(<AdminDashboardPage />);
+
+    const previousMonthCard = screen.getByText("上月總計").closest("div");
+    expect(previousMonthCard).not.toBeNull();
+    expect(previousMonthCard?.textContent).toContain("1/0/0");
+    expect(previousMonthCard?.textContent).toContain("2026年3月");
   });
 
   it("AdminDashboardPage 會顯示回院病歷勾選異常後建立的通知中心案件", () => {
@@ -1005,6 +1469,28 @@ describe("AdminPages", () => {
       JSON.stringify({
         ...seededDb,
         visit_schedules: [returnRecordSchedule, ...seededDb.visit_schedules],
+        saved_route_plans: [
+          {
+            ...seededDb.saved_route_plans[0],
+            id: "route-return-dashboard-exception",
+            route_date: "2026-05-18",
+            route_weekday: "星期一",
+            service_time_slot: "上午",
+            route_items: [
+              {
+                ...seededDb.saved_route_plans[0].route_items[0],
+                patient_id: "pat-001",
+                schedule_id: "vs-return-dashboard-exception-001",
+                checked: true,
+                route_order: 1,
+                status: "completed" as const
+              }
+            ],
+            schedule_ids: ["vs-return-dashboard-exception-001"],
+            execution_status: "completed" as const,
+            executed_at: "2026-05-18T01:30:00.000Z"
+          }
+        ],
         notification_center_items: [
           {
             id: "nc-reminder-return-dashboard-exception-001",
@@ -1092,6 +1578,9 @@ describe("AdminPages", () => {
   });
 
   it("AdminDoctorTrackingPage 會優先帶入最近且可追蹤的路線日期，切換日期時不會跳錯天", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-06T08:00:00+08:00"));
+
     const customDb = createSeedDb();
     customDb.saved_route_plans = customDb.saved_route_plans.filter((routePlan) =>
       ["2026-05-05", "2026-05-06"].includes(routePlan.route_date)
@@ -1121,14 +1610,14 @@ describe("AdminPages", () => {
     renderWithProviders(<AdminDoctorTrackingPage />);
 
     expect(screen.getByLabelText("路線日期")).toHaveValue("2026-05-06");
-    expect(screen.getByRole("combobox", { name: "規劃時段" })).toHaveValue("下午");
+    expect(screen.getByRole("combobox", { name: "規劃時段" })).toHaveValue("上午");
 
     fireEvent.change(screen.getByLabelText("路線日期"), {
       target: { value: "2026-05-06" }
     });
 
     expect(screen.getByLabelText("路線日期")).toHaveValue("2026-05-06");
-    expect(screen.getByRole("combobox", { name: "規劃時段" })).toHaveValue("下午");
+    expect(screen.getByRole("combobox", { name: "規劃時段" })).toHaveValue("上午");
   });
 
   it("AdminDoctorTrackingPage 在桌機版會停止滾輪縮放，但保留拖曳與按鍵縮放", async () => {
@@ -2787,6 +3276,165 @@ describe("AdminPages", () => {
     ).toBe(false);
   });
 
+  it("AdminPatientsPage 刪除有既有路線的個案時，會重新計算剩餘排程站序並移除關聯紀錄", () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const customDb = createSeedDb();
+    const deletingSchedule = customDb.visit_schedules.find(
+      (schedule) => schedule.patient_id === "pat-001" && schedule.status !== "completed"
+    );
+    const remainingSchedule = customDb.visit_schedules.find(
+      (schedule) =>
+        schedule.patient_id !== "pat-001" &&
+        schedule.assigned_doctor_id === deletingSchedule?.assigned_doctor_id &&
+        schedule.status !== "cancelled"
+    );
+    const routePlan = customDb.saved_route_plans[0];
+    const deletingPatient = customDb.patients.find((patient) => patient.id === "pat-001");
+    const remainingPatient = remainingSchedule
+      ? customDb.patients.find((patient) => patient.id === remainingSchedule.patient_id)
+      : undefined;
+    if (!deletingSchedule || !remainingSchedule || !routePlan || !deletingPatient || !remainingPatient) {
+      throw new Error("缺少刪除連動測試資料。");
+    }
+
+    customDb.saved_route_plans = [
+      {
+        ...routePlan,
+        id: "route-delete-sync",
+        doctor_id: deletingSchedule.assigned_doctor_id,
+        schedule_ids: [deletingSchedule.id, remainingSchedule.id],
+        route_items: [
+          {
+            patient_id: deletingPatient.id,
+            schedule_id: deletingSchedule.id,
+            checked: true,
+            route_order: 1,
+            status: "scheduled",
+            patient_name: deletingPatient.name,
+            address: deletingPatient.address
+          },
+          {
+            patient_id: remainingPatient.id,
+            schedule_id: remainingSchedule.id,
+            checked: true,
+            route_order: 2,
+            status: "scheduled",
+            patient_name: remainingPatient.name,
+            address: remainingPatient.address
+          }
+        ],
+        execution_status: "executing"
+      }
+    ];
+    customDb.visit_schedules = customDb.visit_schedules.map((schedule) => {
+      if (schedule.id === deletingSchedule.id) {
+        return { ...schedule, route_order: 1 };
+      }
+      if (schedule.id === remainingSchedule.id) {
+        return { ...schedule, route_order: 2 };
+      }
+      return schedule;
+    });
+    customDb.visit_records = [
+      {
+        id: "vr-delete-sync",
+        visit_schedule_id: deletingSchedule.id,
+        departure_time: null,
+        arrival_time: null,
+        departure_from_patient_home_time: null,
+        stay_duration_minutes: null,
+        treatment_start_time: null,
+        treatment_end_time: null,
+        treatment_duration_minutes: null,
+        treatment_duration_manually_adjusted: false,
+        chief_complaint: "",
+        sleep_status: "",
+        appetite_status: "",
+        bowel_movement_status: "",
+        pain_status: "",
+        energy_status: "",
+        inspection_tags: [],
+        inspection_other: "",
+        listening_tags: [],
+        listening_other: "",
+        inquiry_tags: [],
+        inquiry_other: "",
+        palpation_tags: [],
+        palpation_other: "",
+        physician_assessment: "",
+        treatment_provided: "",
+        treatment_chinese_medicine_checked: false,
+        treatment_chinese_medicine_note: "",
+        treatment_acupuncture_checked: false,
+        treatment_acupuncture_note: "",
+        treatment_topical_medication_checked: false,
+        treatment_topical_medication_note: "",
+        doctor_note: "",
+        caregiver_feedback: "",
+        follow_up_note: "",
+        medical_history_note: "",
+        generated_record_text: "",
+        next_visit_suggestion_date: null,
+        visit_feedback_code: null,
+        visit_feedback_at: null,
+        family_followup_status: "not_needed",
+        family_followup_sent_at: null,
+        created_at: "2026-05-06T08:00:00+08:00",
+        updated_at: "2026-05-06T08:00:00+08:00"
+      }
+    ];
+    customDb.notification_tasks = [
+      {
+        id: "nt-delete-sync",
+        template_id: "tpl-007",
+        patient_id: "pat-001",
+        caregiver_id: null,
+        visit_schedule_id: deletingSchedule.id,
+        status: "pending",
+        channel: "google_chat",
+        scheduled_send_at: "2026-05-06T08:00:00+08:00",
+        sent_at: null,
+        recipient_name: "蕭坤元醫師",
+        recipient_role: "doctor",
+        recipient_target: "doc-001",
+        trigger_type: "route",
+        preview_payload: {},
+        reply_excerpt: null,
+        reply_code: null,
+        failure_reason: null,
+        linked_tracking_session_id: null,
+        created_at: "2026-05-06T08:00:00+08:00",
+        updated_at: "2026-05-06T08:00:00+08:00"
+      }
+    ];
+    window.localStorage.setItem(MOCK_DB_STORAGE_KEY, JSON.stringify(customDb));
+
+    renderWithProviders(<AdminPatientsPage />);
+
+    fireEvent.click(screen.getByRole("button", { name: "刪除 王○珠" }));
+
+    const storedDb = JSON.parse(window.localStorage.getItem(MOCK_DB_STORAGE_KEY) ?? "{}");
+    const syncedRemainingSchedule = storedDb.visit_schedules.find(
+      (schedule: { id: string }) => schedule.id === remainingSchedule.id
+    );
+    const syncedRoutePlan = storedDb.saved_route_plans.find(
+      (storedRoutePlan: { id: string }) => storedRoutePlan.id === "route-delete-sync"
+    );
+
+    expect(storedDb.patients.some((patient: { id: string }) => patient.id === "pat-001")).toBe(false);
+    expect(
+      storedDb.visit_schedules.some((schedule: { patient_id: string }) => schedule.patient_id === "pat-001")
+    ).toBe(false);
+    expect(syncedRemainingSchedule).toMatchObject({ route_order: 1 });
+    expect(syncedRoutePlan.route_items).toHaveLength(1);
+    expect(syncedRoutePlan.route_items[0]).toMatchObject({
+      patient_id: remainingPatient.id,
+      route_order: 1
+    });
+    expect(storedDb.visit_records).toHaveLength(0);
+    expect(storedDb.notification_tasks).toHaveLength(0);
+  });
+
   it("AdminPatientsPage 可批次刪除勾選個案", () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
 
@@ -2814,7 +3462,7 @@ describe("AdminPages", () => {
     fireEvent.click(screen.getByRole("button", { name: "刪除個案" }));
 
     expect(screen.getByRole("status")).toHaveTextContent(
-      "已刪除 李○蘭，並清除 2 筆相關排程，其中 1 筆進行中訪視已取消並除名。"
+      "已刪除 李○蘭，並清除 3 筆相關排程，其中 1 筆進行中訪視已取消並除名。"
     );
     expect(screen.queryByRole("button", { name: "編輯 李○蘭" })).not.toBeInTheDocument();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();

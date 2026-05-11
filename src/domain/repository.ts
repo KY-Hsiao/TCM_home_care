@@ -22,6 +22,7 @@ import type {
   GeocodingStatus,
   NotificationStatus,
   RecipientRole,
+  RouteExecutionStatus,
   RouteItemStatus,
   UserRole,
   VisitFeedbackCode,
@@ -211,7 +212,7 @@ export interface VisitRepository {
     doctorId?: string;
     routeDate?: string;
     serviceTimeSlot?: "上午" | "下午";
-    executionStatus?: "draft" | "executing" | "archived";
+    executionStatus?: RouteExecutionStatus;
   }): SavedRoutePlan[];
   getSavedRoutePlanById(routePlanId: string): SavedRoutePlan | undefined;
   getActiveRoutePlan(doctorId: string): SavedRoutePlan | undefined;
@@ -222,6 +223,7 @@ export interface VisitRepository {
   upsertSavedRoutePlan(routePlan: SavedRoutePlan): void;
   deleteSavedRoutePlan(routePlanId: string): void;
   executeRoutePlan(routePlanId: string): SavedRoutePlan | undefined;
+  completeRoutePlan(routePlanId: string): SavedRoutePlan | undefined;
   upsertSavedRoutePlanAndExecute(routePlan: SavedRoutePlan): SavedRoutePlan | undefined;
   resetRoutePlanProgress(routePlanId: string): SavedRoutePlan | undefined;
   syncRouteItemStatus(routePlanId: string, patientId: string, status: RouteItemStatus): void;

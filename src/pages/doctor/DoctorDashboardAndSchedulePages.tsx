@@ -24,6 +24,7 @@ type EmbeddedNavigationWindow = {
   embedUrl: string | null;
   externalUrl: string;
   arrivalAction?: () => void;
+  pauseAction?: () => void;
 };
 
 type DoctorNavigationUrls = Pick<EmbeddedNavigationWindow, "embedUrl" | "externalUrl">;
@@ -62,6 +63,18 @@ function EmbeddedNavigationDialog({
             >
               外部 Google 地圖
             </a>
+            {windowState.pauseAction ? (
+              <button
+                type="button"
+                onClick={() => {
+                  windowState.pauseAction?.();
+                  onClose();
+                }}
+                className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-brand-ink"
+              >
+                目前患者暫停
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={() => {
@@ -98,6 +111,18 @@ function EmbeddedNavigationDialog({
               >
                 開啟 Google 導航
               </a>
+              {windowState.pauseAction ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    windowState.pauseAction?.();
+                    onClose();
+                  }}
+                  className="mt-3 inline-flex min-h-[48px] w-full items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-brand-ink transition hover:bg-slate-50"
+                >
+                  目前患者暫停
+                </button>
+              ) : null}
               <button
                 type="button"
                 onClick={() => {
@@ -130,6 +155,23 @@ function resolveDoctorRouteStatus(status: string) {
     return "on_the_way";
   }
   return "scheduled";
+}
+
+function isExecutableScheduleStatus(status: string) {
+  return !["paused", "cancelled"].includes(status);
+}
+
+function getExecutableRouteItemCount(
+  routePlan: SavedRoutePlan,
+  repositories?: ReturnType<typeof useAppContext>["repositories"]
+) {
+  return routePlan.route_items.filter((item) => {
+    if (!item.checked || item.status === "paused") {
+      return false;
+    }
+    const patient = repositories?.patientRepository.getPatientById(item.patient_id);
+    return !patient || patient.status === "active";
+  }).length;
 }
 
 function resolveActiveTrackingContext(input: {
@@ -221,7 +263,7 @@ function findNextUnlockedRouteContext(
 
   return remainingContexts.find((entry) => {
     const unlocked = isVisitUnlocked(routeContexts.map((item) => item.schedule), entry.schedule.id, entry.record);
-    return unlocked && !isVisitFinished(entry.schedule.status);
+    return unlocked && isExecutableScheduleStatus(entry.schedule.status) && !isVisitFinished(entry.schedule.status);
   });
 }
 
@@ -235,25 +277,30 @@ function findNextSequentialRouteContext(
   const remainingContexts =
     currentIndex >= 0 ? routeContexts.slice(currentIndex + 1) : routeContexts;
 
-  return remainingContexts.find((entry) => !isVisitFinished(entry.schedule.status));
+  return remainingContexts.find(
+    (entry) => isExecutableScheduleStatus(entry.schedule.status) && !isVisitFinished(entry.schedule.status)
+  );
 }
 
 function getRouteDisplayOrder(
   routeSchedules: Array<{ id: string; status: string }>,
   scheduleId: string
 ) {
-  const activeSchedules = routeSchedules.filter((schedule) => schedule.status !== "paused");
+  const activeSchedules = routeSchedules.filter((schedule) => isExecutableScheduleStatus(schedule.status));
   const targetIndex = activeSchedules.findIndex((schedule) => schedule.id === scheduleId);
   return targetIndex >= 0 ? targetIndex + 1 : null;
 }
 
-function formatRoutePlanButtonLabel(routePlan: SavedRoutePlan) {
+function formatRoutePlanButtonLabel(
+  routePlan: SavedRoutePlan,
+  repositories?: ReturnType<typeof useAppContext>["repositories"]
+) {
   const [, month, day] = routePlan.route_date.split("-");
   const fallbackDate = new Date(routePlan.route_date);
   const normalizedMonth = Number(month) || fallbackDate.getMonth() + 1;
   const normalizedDay = Number(day) || fallbackDate.getDate();
 
-  return `${normalizedMonth}月${normalizedDay}日 ${routePlan.route_weekday}${routePlan.service_time_slot} / ${routePlan.route_items.length}位`;
+  return `${normalizedMonth}月${normalizedDay}日 ${routePlan.route_weekday}${routePlan.service_time_slot} / ${getExecutableRouteItemCount(routePlan, repositories)}位`;
 }
 
 function resolveRoutePlanItemStatusLabel(status: string) {
@@ -277,7 +324,13 @@ function buildRouteMapInputFromRoutePlan(
   repositories: ReturnType<typeof useAppContext>["repositories"]
 ): RouteMapInput | null {
   const orderedStops = routePlan.route_items
-    .filter((item) => item.checked)
+    .filter((item) => {
+      if (!item.checked || item.status === "paused") {
+        return false;
+      }
+      const patient = repositories.patientRepository.getPatientById(item.patient_id);
+      return !patient || patient.status === "active";
+    })
     .slice()
     .sort((left, right) => {
       const leftOrder = left.route_order ?? Number.MAX_SAFE_INTEGER;
@@ -318,7 +371,7 @@ function buildRouteMapInputFromRoutePlan(
       };
     }),
     travelMode: "driving",
-    label: formatRoutePlanButtonLabel(routePlan)
+    label: formatRoutePlanButtonLabel(routePlan, repositories)
   };
 }
 
@@ -332,6 +385,21 @@ function resolveRoutePlanNavigationState(input: {
     input.doctorId,
     input.routePlanId
   );
+  const routePlan = input.repositories.visitRepository.getSavedRoutePlanById(input.routePlanId);
+  const executableScheduleIds = new Set(
+    routePlan?.route_items
+      .filter((item) => item.checked && item.status !== "paused" && item.schedule_id)
+      .map((item) => item.schedule_id as string) ?? []
+  );
+  const executableRouteSchedules = routeSchedules.filter((schedule) => {
+    const detail = input.repositories.visitRepository.getScheduleDetail(schedule.id);
+    const routeItemAllowsSchedule = !routePlan || executableScheduleIds.has(schedule.id);
+    return (
+      routeItemAllowsSchedule &&
+      isExecutableScheduleStatus(schedule.status) &&
+      detail?.patient.status === "active"
+    );
+  });
   const activeTrackingContext = resolveActiveTrackingContext({
     repositories: input.repositories,
     services: input.services,
@@ -344,21 +412,21 @@ function resolveRoutePlanNavigationState(input: {
       ? activeTrackingContext.schedule
       : null;
   const nextRouteSchedule =
-    routeSchedules.find((schedule) => {
+    executableRouteSchedules.find((schedule) => {
       const record = input.repositories.visitRepository.getVisitRecordByScheduleId(schedule.id);
-      return isVisitUnlocked(routeSchedules, schedule.id, record) && !isVisitFinished(schedule.status);
+      return isVisitUnlocked(executableRouteSchedules, schedule.id, record) && !isVisitFinished(schedule.status);
     }) ?? null;
   const nextRouteScheduleDetail = nextRouteSchedule
     ? input.repositories.visitRepository.getScheduleDetail(nextRouteSchedule.id)
     : undefined;
   const currentNavigationDisplayOrder = currentNavigationSchedule
-    ? getRouteDisplayOrder(routeSchedules, currentNavigationSchedule.id)
+    ? getRouteDisplayOrder(executableRouteSchedules, currentNavigationSchedule.id)
     : null;
   const nextRouteDisplayOrder = nextRouteSchedule
-    ? getRouteDisplayOrder(routeSchedules, nextRouteSchedule.id)
+    ? getRouteDisplayOrder(executableRouteSchedules, nextRouteSchedule.id)
     : null;
   const shouldReturnHospital =
-    routeSchedules.length > 0 && routeSchedules.every((schedule) => isVisitFinished(schedule.status));
+    executableRouteSchedules.length > 0 && executableRouteSchedules.every((schedule) => isVisitFinished(schedule.status));
   const routeNavigationButtonLabel = currentNavigationSchedule
     ? "抵達"
     : shouldReturnHospital
@@ -630,7 +698,8 @@ function DoctorRouteSelector({ embedded = false }: { embedded?: boolean }) {
       openPatientDetailNavigation({
         title: `前往 ${maskPatientName(patientDetail.patient.name)}`,
         ...patientDetailNavigationUrls,
-        arrivalAction: () => services.visitAutomation.confirmArrival(patientDetail.schedule.id, "doctor")
+        arrivalAction: () => services.visitAutomation.confirmArrival(patientDetail.schedule.id, "doctor"),
+        pauseAction: handlePatientDetailPauseVisit
       });
     }
   };
@@ -648,7 +717,8 @@ function DoctorRouteSelector({ embedded = false }: { embedded?: boolean }) {
       openPatientDetailNavigation({
         title: `前往 ${maskPatientName(patientDetail.patient.name)}`,
         ...patientDetailNavigationUrls,
-        arrivalAction: () => services.visitAutomation.confirmArrival(patientDetail.schedule.id, "doctor")
+        arrivalAction: () => services.visitAutomation.confirmArrival(patientDetail.schedule.id, "doctor"),
+        pauseAction: handlePatientDetailPauseVisit
       });
     }
   };
@@ -718,7 +788,14 @@ function DoctorRouteSelector({ embedded = false }: { embedded?: boolean }) {
     if (!patientDetail) {
       return;
     }
-    services.visitAutomation.recordDoctorFeedback(patientDetail.schedule.id, "absent");
+    services.visitAutomation.resetTracking(patientDetail.schedule.id);
+    repositories.visitRepository.pauseVisit(
+      patientDetail.schedule.id,
+      "醫師標記目前患者暫停",
+      "醫師端臨時暫停本次訪視"
+    );
+    setPatientDetailScheduleId(null);
+    setEmbeddedNavigationWindow(null);
   };
 
   const routeListContent = (
@@ -746,7 +823,7 @@ function DoctorRouteSelector({ embedded = false }: { embedded?: boolean }) {
                       }`}
                     >
                       <p className="text-[13px] font-semibold leading-tight lg:text-base">
-                        {formatRoutePlanButtonLabel(routePlan)}
+                        {formatRoutePlanButtonLabel(routePlan, repositories)}
                       </p>
                       <p className={`mt-0.5 text-[9px] leading-tight lg:mt-1 lg:text-xs ${isActive ? "text-white/80" : "text-slate-500"}`}>
                         點這裡查看受試者名單與單人紀錄
@@ -793,7 +870,7 @@ function DoctorRouteSelector({ embedded = false }: { embedded?: boolean }) {
               <div>
                 <p className="text-sm font-medium text-brand-coral">受試者名單</p>
                 <h2 className="mt-1 text-lg font-semibold text-brand-ink lg:text-2xl">
-                  {formatRoutePlanButtonLabel(selectedRoutePlan)}
+                  {formatRoutePlanButtonLabel(selectedRoutePlan, repositories)}
                 </h2>
               </div>
               <button
@@ -972,7 +1049,7 @@ function DoctorRouteSelector({ embedded = false }: { embedded?: boolean }) {
                       onClick={handlePatientDetailPauseVisit}
                       className={doctorActionButtonClass()}
                     >
-                      標記暫停
+                      目前患者暫停
                     </button>
                   ) : null}
                   {!patientDetailVisitFinished &&
@@ -1038,8 +1115,23 @@ export function DoctorLocationPage() {
   const activeRoutePlan = session.activeRoutePlanId
     ? repositories.visitRepository.getSavedRoutePlanById(session.activeRoutePlanId)
     : repositories.visitRepository.getActiveRoutePlan(effectiveDoctorId);
-  const navigatingContext = routeContexts.find((entry) => {
-    const unlocked = isVisitUnlocked(routeContexts.map((item) => item.schedule), entry.schedule.id, entry.record);
+  const executableRouteScheduleIds = new Set(
+    activeRoutePlan?.route_items
+      .filter((item) => item.checked && item.status !== "paused" && item.schedule_id)
+      .map((item) => item.schedule_id as string) ?? []
+  );
+  const executableRouteContexts = routeContexts.filter((entry) => {
+    const routeItemAllowsSchedule =
+      !activeRoutePlan || executableRouteScheduleIds.has(entry.schedule.id);
+    return (
+      routeItemAllowsSchedule &&
+      isExecutableScheduleStatus(entry.schedule.status) &&
+      entry.detail.patient.status === "active"
+    );
+  });
+  const executableRouteSchedules = executableRouteContexts.map((entry) => entry.schedule);
+  const navigatingContext = executableRouteContexts.find((entry) => {
+    const unlocked = isVisitUnlocked(executableRouteSchedules, entry.schedule.id, entry.record);
     return (
       unlocked &&
       Boolean(entry.record?.departure_time) &&
@@ -1047,8 +1139,8 @@ export function DoctorLocationPage() {
       !isVisitFinished(entry.schedule.status)
     );
   });
-  const treatmentContext = routeContexts.find((entry) => {
-    const unlocked = isVisitUnlocked(routeContexts.map((item) => item.schedule), entry.schedule.id, entry.record);
+  const treatmentContext = executableRouteContexts.find((entry) => {
+    const unlocked = isVisitUnlocked(executableRouteSchedules, entry.schedule.id, entry.record);
     return (
       unlocked &&
       Boolean(entry.record?.arrival_time) &&
@@ -1056,8 +1148,8 @@ export function DoctorLocationPage() {
       !isVisitFinished(entry.schedule.status)
     );
   });
-  const readyContext = routeContexts.find((entry) => {
-    const unlocked = isVisitUnlocked(routeContexts.map((item) => item.schedule), entry.schedule.id, entry.record);
+  const readyContext = executableRouteContexts.find((entry) => {
+    const unlocked = isVisitUnlocked(executableRouteSchedules, entry.schedule.id, entry.record);
     return (
       unlocked &&
       !entry.record?.departure_time &&
@@ -1069,14 +1161,14 @@ export function DoctorLocationPage() {
     navigatingContext ?? treatmentContext ?? readyContext ?? null;
   const nextRouteContext =
     currentRouteContext
-      ? findNextSequentialRouteContext(routeContexts, currentRouteContext.schedule.id)
-      : findNextUnlockedRouteContext(routeContexts);
+      ? findNextSequentialRouteContext(executableRouteContexts, currentRouteContext.schedule.id)
+      : findNextUnlockedRouteContext(executableRouteContexts);
   const shouldShowHospitalReturn =
     Boolean(activeRoutePlan) &&
-    routeContexts.length > 0 &&
-    routeContexts.every((entry) => isVisitFinished(entry.schedule.status));
+    executableRouteContexts.length > 0 &&
+    executableRouteContexts.every((entry) => isVisitFinished(entry.schedule.status));
   const lastCompletedRouteContext =
-    routeContexts
+    executableRouteContexts
       .filter((entry) => isVisitFinished(entry.schedule.status))
       .slice()
       .sort((left, right) => {
@@ -1102,7 +1194,7 @@ export function DoctorLocationPage() {
     : undefined;
   const latestLocation = currentRouteContext?.runtime?.latestSample ?? latestLinkedLocation;
   const buildScheduleNavigationUrls = (input: {
-    schedule: (typeof routeContexts)[number]["schedule"];
+    schedule: (typeof executableRouteContexts)[number]["schedule"];
     originLatitude?: number | null;
     originLongitude?: number | null;
   }) => {
@@ -1142,6 +1234,15 @@ export function DoctorLocationPage() {
   };
   const openEmbeddedNavigation = (windowState: EmbeddedNavigationWindow) => {
     setEmbeddedNavigationWindow(windowState);
+  };
+  const pauseRouteSchedule = (scheduleId: string) => {
+    services.visitAutomation.resetTracking(scheduleId);
+    repositories.visitRepository.pauseVisit(
+      scheduleId,
+      "醫師導航途中標記目前患者暫停",
+      "醫師端導航途中臨時暫停本次訪視"
+    );
+    setEmbeddedNavigationWindow(null);
   };
   const currentMapUrl = currentRouteContext
     ? buildScheduleNavigationUrls({
@@ -1205,7 +1306,8 @@ export function DoctorLocationPage() {
     openEmbeddedNavigation({
       title: `前往 ${maskPatientName(routeContext.detail.patient.name)}`,
       ...navigationUrls,
-      arrivalAction: () => services.visitAutomation.confirmArrival(routeContext.schedule.id, "doctor")
+      arrivalAction: () => services.visitAutomation.confirmArrival(routeContext.schedule.id, "doctor"),
+      pauseAction: () => pauseRouteSchedule(routeContext.schedule.id)
     });
   };
   const handleConfirmArrival = () => {
@@ -1213,6 +1315,12 @@ export function DoctorLocationPage() {
       return;
     }
     services.visitAutomation.confirmArrival(navigatingContext.schedule.id, "doctor");
+  };
+  const handlePauseNavigatingVisit = () => {
+    if (!navigatingContext) {
+      return;
+    }
+    pauseRouteSchedule(navigatingContext.schedule.id);
   };
   const handleCompleteTreatment = () => {
     if (!treatmentContext) {
@@ -1227,7 +1335,7 @@ export function DoctorLocationPage() {
         treatmentContext.schedule.home_longitude_snapshot
     });
     services.visitAutomation.confirmDeparture(treatmentContext.schedule.id, "doctor");
-    const nextContext = findNextSequentialRouteContext(routeContexts, treatmentContext.schedule.id);
+    const nextContext = findNextSequentialRouteContext(executableRouteContexts, treatmentContext.schedule.id);
     if (!nextContext) {
       if (returnHospitalNavigationUrls) {
         openEmbeddedNavigation({
@@ -1278,7 +1386,7 @@ export function DoctorLocationPage() {
               <h3 className="mt-1 text-base font-semibold leading-tight lg:text-xl">前往 {maskPatientName(navigatingContext.detail.patient.name)} 的停留點</h3>
             </div>
             <div className="rounded-xl bg-white/10 px-3 py-2 text-xs lg:rounded-2xl lg:px-4 lg:py-3 lg:text-sm">
-              第 {getRouteDisplayOrder(routeSchedules, navigatingContext.schedule.id) ?? navigatingContext.schedule.route_order} 站 / 下一位 {nextRouteContext ? maskPatientName(nextRouteContext.detail.patient.name) : "返院"}
+              第 {getRouteDisplayOrder(executableRouteSchedules, navigatingContext.schedule.id) ?? navigatingContext.schedule.route_order} 站 / 下一位 {nextRouteContext ? maskPatientName(nextRouteContext.detail.patient.name) : "返院"}
             </div>
           </div>
           <div className="space-y-3 p-3 xl:p-5">
@@ -1290,7 +1398,8 @@ export function DoctorLocationPage() {
                     title: `前往 ${maskPatientName(navigatingContext.detail.patient.name)}`,
                     externalUrl: currentMapUrl,
                     embedUrl: currentMapEmbedUrl,
-                    arrivalAction: () => services.visitAutomation.confirmArrival(navigatingContext.schedule.id, "doctor")
+                    arrivalAction: () => services.visitAutomation.confirmArrival(navigatingContext.schedule.id, "doctor"),
+                    pauseAction: handlePauseNavigatingVisit
                   })
                 }
                 className="inline-flex min-h-[44px] flex-1 items-center justify-center rounded-full bg-brand-coral px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90"
@@ -1352,6 +1461,13 @@ export function DoctorLocationPage() {
             >
               已抵達，開始治療
             </button>
+            <button
+              type="button"
+              onClick={handlePauseNavigatingVisit}
+              className="inline-flex min-h-[44px] w-full items-center justify-center rounded-full border border-white/25 bg-white/10 px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/20"
+            >
+              目前患者暫停
+            </button>
           </div>
         </section>
       ) : null}
@@ -1381,7 +1497,7 @@ export function DoctorLocationPage() {
         <section className="rounded-[1.15rem] border border-slate-200 bg-white p-3 lg:rounded-[1.75rem] lg:p-6">
           <p className="text-sm font-semibold text-brand-moss">待出發</p>
           <h3 className="mt-1.5 text-lg font-bold leading-tight text-brand-ink lg:mt-2 lg:text-2xl">
-            即將前往第 {getRouteDisplayOrder(routeSchedules, readyContext.schedule.id) ?? readyContext.schedule.route_order} 站 {maskPatientName(readyContext.detail.patient.name)}
+            即將前往第 {getRouteDisplayOrder(executableRouteSchedules, readyContext.schedule.id) ?? readyContext.schedule.route_order} 站 {maskPatientName(readyContext.detail.patient.name)}
           </h3>
           <p className="mt-1.5 text-sm text-slate-600">
             請在本頁開始出發；手機會在頁內開啟 Google 導航，抵達後會回到即時導航流程。
@@ -1449,7 +1565,7 @@ export function DoctorLocationPage() {
               <div>
                 <p className="text-xs text-white/70">今日總結</p>
                 <p className="mt-1 text-sm text-white/90">
-                  共完成 {routeContexts.length} 站患者服務，返院後即可整理回院病歷與後續紀錄。
+                  共完成 {executableRouteContexts.length} 站患者服務，返院後即可整理回院病歷與後續紀錄。
                 </p>
               </div>
             </div>
@@ -1499,6 +1615,18 @@ export function DoctorLocationPage() {
                 >
                   改用外部 Google 地圖
                 </a>
+                {embeddedNavigationWindow.pauseAction ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      embeddedNavigationWindow.pauseAction?.();
+                      setEmbeddedNavigationWindow(null);
+                    }}
+                    className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-brand-ink"
+                  >
+                    目前患者暫停
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   onClick={() => {
@@ -1534,6 +1662,18 @@ export function DoctorLocationPage() {
                   >
                     開啟 Google 導航
                   </a>
+                  {embeddedNavigationWindow.pauseAction ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        embeddedNavigationWindow.pauseAction?.();
+                        setEmbeddedNavigationWindow(null);
+                      }}
+                      className="mt-3 inline-flex min-h-[48px] w-full items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-brand-ink transition hover:bg-slate-50"
+                    >
+                      目前患者暫停
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     onClick={() => {

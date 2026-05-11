@@ -37,6 +37,12 @@ function handleEnvStatus(request, response) {
       GOOGLE_DRIVE_REFRESH_TOKEN: isConfigured(process.env.GOOGLE_DRIVE_REFRESH_TOKEN),
       GOOGLE_DRIVE_CLIENT_ID: isConfigured(process.env.GOOGLE_DRIVE_CLIENT_ID),
       GOOGLE_DRIVE_CLIENT_SECRET: isConfigured(process.env.GOOGLE_DRIVE_CLIENT_SECRET),
+      GOOGLE_DRIVE_SERVICE_ACCOUNT_CLIENT_EMAIL: isConfigured(
+        process.env.GOOGLE_DRIVE_SERVICE_ACCOUNT_CLIENT_EMAIL
+      ),
+      GOOGLE_DRIVE_SERVICE_ACCOUNT_PRIVATE_KEY: isConfigured(
+        process.env.GOOGLE_DRIVE_SERVICE_ACCOUNT_PRIVATE_KEY
+      ),
       GOOGLE_DRIVE_FOLDER_ID: isConfigured(process.env.GOOGLE_DRIVE_FOLDER_ID)
     }
   });

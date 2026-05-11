@@ -37,6 +37,8 @@ type EnvVariableName =
   | "GOOGLE_DRIVE_REFRESH_TOKEN"
   | "GOOGLE_DRIVE_CLIENT_ID"
   | "GOOGLE_DRIVE_CLIENT_SECRET"
+  | "GOOGLE_DRIVE_SERVICE_ACCOUNT_CLIENT_EMAIL"
+  | "GOOGLE_DRIVE_SERVICE_ACCOUNT_PRIVATE_KEY"
   | "GOOGLE_DRIVE_FOLDER_ID";
 
 type EnvStatus = {
@@ -132,6 +134,18 @@ const envServiceGroups: EnvServiceGroup[] = [
         label: "Google Drive Folder ID",
         note: "回院病歷儲存的資料夾。",
         source: "開啟 Google Drive 資料夾，網址 /folders/ 後面的字串就是 Folder ID。"
+      },
+      {
+        key: "GOOGLE_DRIVE_SERVICE_ACCOUNT_CLIENT_EMAIL",
+        label: "Google Drive Service Account Client Email",
+        note: "建議正式環境使用。把 Drive 資料夾分享給這個服務帳號後，系統可長期讀寫。",
+        source: "Google Cloud Console > IAM & Admin > Service Accounts 建立服務帳號後取得 client_email。"
+      },
+      {
+        key: "GOOGLE_DRIVE_SERVICE_ACCOUNT_PRIVATE_KEY",
+        label: "Google Drive Service Account Private Key",
+        note: "搭配服務帳號換取 Drive access token；請只放在 Vercel 環境變數，不要放到前端。",
+        source: "同一個 Service Account > Keys > Add key > JSON，使用 private_key 欄位。"
       },
       {
         key: "GOOGLE_DRIVE_REFRESH_TOKEN",
@@ -642,25 +656,33 @@ export function AdminStaffPage() {
       const hasRefreshToken = Boolean(getEnvVariableStatus("GOOGLE_DRIVE_REFRESH_TOKEN"));
       const hasClientId = Boolean(getEnvVariableStatus("GOOGLE_DRIVE_CLIENT_ID"));
       const hasClientSecret = Boolean(getEnvVariableStatus("GOOGLE_DRIVE_CLIENT_SECRET"));
+      const hasServiceAccountClientEmail = Boolean(getEnvVariableStatus("GOOGLE_DRIVE_SERVICE_ACCOUNT_CLIENT_EMAIL"));
+      const hasServiceAccountPrivateKey = Boolean(getEnvVariableStatus("GOOGLE_DRIVE_SERVICE_ACCOUNT_PRIVATE_KEY"));
       const hasAccessToken = Boolean(getEnvVariableStatus("GOOGLE_DRIVE_ACCESS_TOKEN"));
+      const serviceAccountReady = hasServiceAccountClientEmail && hasServiceAccountPrivateKey;
       const refreshTokenReady = hasRefreshToken && hasClientId && hasClientSecret;
-      const ready = hasFolder && (refreshTokenReady || hasAccessToken);
+      const ready = hasFolder && (serviceAccountReady || refreshTokenReady || hasAccessToken);
       const missingKeys: EnvVariableName[] = [];
       if (!hasFolder) {
         missingKeys.push("GOOGLE_DRIVE_FOLDER_ID");
       }
-      if (!refreshTokenReady && !hasAccessToken) {
-        missingKeys.push("GOOGLE_DRIVE_REFRESH_TOKEN", "GOOGLE_DRIVE_CLIENT_ID", "GOOGLE_DRIVE_CLIENT_SECRET");
+      if (!serviceAccountReady && !refreshTokenReady && !hasAccessToken) {
+        missingKeys.push(
+          "GOOGLE_DRIVE_SERVICE_ACCOUNT_CLIENT_EMAIL",
+          "GOOGLE_DRIVE_SERVICE_ACCOUNT_PRIVATE_KEY"
+        );
       }
 
       return {
         ready,
         label: ready ? group.readyText : group.pendingText,
-        detail: refreshTokenReady
+        detail: serviceAccountReady
+          ? "目前使用 Service Account 方案；請確認 Drive 資料夾已分享給服務帳號。"
+          : refreshTokenReady
           ? "目前使用 Refresh Token 方案，Drive 授權可自動更新。"
           : hasAccessToken
             ? "目前只使用短效 Access Token；若 Drive 顯示授權失效，請改補 Refresh Token 三件組。"
-            : "需要 Folder ID，並設定 Refresh Token 三件組；Access Token 只建議當臨時備援。",
+            : "需要 Folder ID，並設定 Service Account 兩個欄位；Refresh Token 三件組也可作為替代方案。",
         missingKeys
       };
     }
@@ -768,8 +790,9 @@ export function AdminStaffPage() {
               <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
                 <p className="font-semibold">Google Drive 建議設定方式</p>
                 <p className="mt-1">
-                  正式使用請設定 `GOOGLE_DRIVE_REFRESH_TOKEN`、`GOOGLE_DRIVE_CLIENT_ID`、`GOOGLE_DRIVE_CLIENT_SECRET`
-                  與 `GOOGLE_DRIVE_FOLDER_ID`。只設定 `GOOGLE_DRIVE_ACCESS_TOKEN` 會很容易過期，出現授權失效時需要重新產生 token。
+                  正式使用建議設定 Service Account 的 `GOOGLE_DRIVE_SERVICE_ACCOUNT_CLIENT_EMAIL`、
+                  `GOOGLE_DRIVE_SERVICE_ACCOUNT_PRIVATE_KEY` 與 `GOOGLE_DRIVE_FOLDER_ID`，並把該 Drive 資料夾分享給服務帳號。
+                  也可改用 Refresh Token 三件組；只設定 `GOOGLE_DRIVE_ACCESS_TOKEN` 會很容易過期。
                 </p>
               </div>
               <div className="mt-3 flex flex-wrap items-center gap-2">

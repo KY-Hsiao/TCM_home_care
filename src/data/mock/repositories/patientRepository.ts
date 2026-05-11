@@ -76,6 +76,59 @@ function reindexRouteItems(routeItems: SavedRoutePlan["route_items"]) {
   );
 }
 
+function removePatientFromRoutePlans(db: AppDb, patientId: string, now: string) {
+  let changedRoutePlanCount = 0;
+  const nextSavedRoutePlans = db.saved_route_plans
+    .map((routePlan) => {
+      const nextRouteItems = reindexRouteItems(
+        routePlan.route_items.filter((item) => item.patient_id !== patientId)
+      );
+      const changed = nextRouteItems.length !== routePlan.route_items.length;
+      if (changed) {
+        changedRoutePlanCount += 1;
+      }
+      return {
+        ...routePlan,
+        route_items: nextRouteItems,
+        schedule_ids: nextRouteItems
+          .map((item) => item.schedule_id)
+          .filter((scheduleId): scheduleId is string => Boolean(scheduleId)),
+        updated_at: changed ? now : routePlan.updated_at
+      };
+    })
+    .filter((routePlan) => routePlan.route_items.length > 0);
+
+  const routeOrderByScheduleId = new Map(
+    nextSavedRoutePlans.flatMap((routePlan) =>
+      routePlan.route_items
+        .filter((item) => item.schedule_id)
+        .map((item) => [item.schedule_id as string, item.route_order] as const)
+    )
+  );
+
+  return {
+    changedRoutePlanCount,
+    nextSavedRoutePlans,
+    routeOrderByScheduleId
+  };
+}
+
+function syncRemainingScheduleRouteOrders(
+  schedules: AppDb["visit_schedules"],
+  routeOrderByScheduleId: Map<string, number | null>,
+  now: string
+) {
+  return schedules.map((schedule) =>
+    routeOrderByScheduleId.has(schedule.id)
+      ? {
+          ...schedule,
+          route_order: routeOrderByScheduleId.get(schedule.id) ?? schedule.route_order,
+          updated_at: now
+        }
+      : schedule
+  );
+}
+
 function removePatientFromDb(
   db: AppDb,
   patientId: string
@@ -104,20 +157,9 @@ function removePatientFromDb(
       .filter((caregiver) => caregiver.patient_id === patientId)
       .map((caregiver) => caregiver.id)
   );
-  const nextSavedRoutePlans = db.saved_route_plans
-    .map((routePlan) => {
-      const nextRouteItems = reindexRouteItems(
-        routePlan.route_items.filter((item) => item.patient_id !== patientId)
-      );
-      return {
-        ...routePlan,
-        route_items: nextRouteItems,
-        schedule_ids: nextRouteItems
-          .map((item) => item.schedule_id)
-          .filter((scheduleId): scheduleId is string => Boolean(scheduleId))
-      };
-    })
-    .filter((routePlan) => routePlan.route_items.length > 0);
+  const now = new Date().toISOString();
+  const { nextSavedRoutePlans, routeOrderByScheduleId } = removePatientFromRoutePlans(db, patientId, now);
+  const remainingSchedules = db.visit_schedules.filter((schedule) => schedule.patient_id !== patientId);
 
   return {
     db: {
@@ -127,7 +169,7 @@ function removePatientFromDb(
       caregiver_chat_bindings: db.caregiver_chat_bindings.filter(
         (binding) => !caregiverIds.has(binding.caregiver_id)
       ),
-      visit_schedules: db.visit_schedules.filter((schedule) => schedule.patient_id !== patientId),
+      visit_schedules: syncRemainingScheduleRouteOrders(remainingSchedules, routeOrderByScheduleId, now),
       saved_route_plans: nextSavedRoutePlans,
       visit_records: db.visit_records.filter(
         (record) => !scheduleIds.has(record.visit_schedule_id)
@@ -498,35 +540,14 @@ export function createPatientRepository(
         }
 
         const now = new Date().toISOString();
-        let removedRoutePlans = 0;
         let removedSchedules = 0;
-
-        const nextSavedRoutePlans = db.saved_route_plans
-          .map((routePlan) => {
-            const nextRouteItems = reindexRouteItems(
-              routePlan.route_items.filter((item) => item.patient_id !== patientId)
-            );
-            if (nextRouteItems.length !== routePlan.route_items.length) {
-              removedRoutePlans += 1;
-            }
-            return {
-              ...routePlan,
-              route_items: nextRouteItems,
-              schedule_ids: routePlan.schedule_ids.filter((scheduleId) =>
-                nextRouteItems.some((item) => item.schedule_id === scheduleId)
-              ),
-              updated_at: nextRouteItems.length !== routePlan.route_items.length ? now : routePlan.updated_at
-            };
-          })
-          .filter((routePlan) => routePlan.route_items.length > 0);
-
-        const routeOrderByScheduleId = new Map(
-          nextSavedRoutePlans.flatMap((routePlan) =>
-            routePlan.route_items
-              .filter((item) => item.schedule_id)
-              .map((item) => [item.schedule_id as string, item.route_order] as const)
-          )
+        const patientScheduleIds = new Set(
+          db.visit_schedules
+            .filter((schedule) => schedule.patient_id === patientId)
+            .map((schedule) => schedule.id)
         );
+        const { changedRoutePlanCount, nextSavedRoutePlans, routeOrderByScheduleId } =
+          removePatientFromRoutePlans(db, patientId, now);
 
         const nextSchedules = db.visit_schedules.map((schedule) => {
           if (
@@ -539,23 +560,17 @@ export function createPatientRepository(
           return {
             ...schedule,
             status: "cancelled" as const,
+            route_order: 0,
             note: `${schedule.note}｜結案：${reason}`,
             updated_at: now
           };
-        }).map((schedule) =>
-          routeOrderByScheduleId.has(schedule.id)
-            ? {
-                ...schedule,
-                route_order: routeOrderByScheduleId.get(schedule.id) ?? schedule.route_order,
-                updated_at: now
-              }
-            : schedule
-        );
+        });
+        const syncedSchedules = syncRemainingScheduleRouteOrders(nextSchedules, routeOrderByScheduleId, now);
 
         closeResult = {
           patientId,
           closed: true,
-          removedRoutePlans,
+          removedRoutePlans: changedRoutePlanCount,
           removedSchedules,
           message: `已結案 ${maskPatientName(patient.name)}，並移除原排定時段與相關路線。`
         };
@@ -573,7 +588,51 @@ export function createPatientRepository(
               : item
           ),
           saved_route_plans: nextSavedRoutePlans,
-          visit_schedules: nextSchedules
+          visit_schedules: syncedSchedules,
+          notification_tasks: db.notification_tasks.map((task) =>
+            task.patient_id === patientId ||
+            (task.visit_schedule_id !== null && patientScheduleIds.has(task.visit_schedule_id))
+              ? {
+                  ...task,
+                  status: "closed",
+                  failure_reason: task.failure_reason ?? `個案結案：${reason}`,
+                  updated_at: now
+                }
+              : task
+          ),
+          reschedule_actions: db.reschedule_actions.map((action) =>
+            patientScheduleIds.has(action.visit_schedule_id)
+              ? {
+                  ...action,
+                  status: "cancelled",
+                  change_summary: action.change_summary.includes("個案結案")
+                    ? action.change_summary
+                    : `${action.change_summary}｜個案結案：${reason}`,
+                  updated_at: now
+                }
+              : action
+          ),
+          reminders: db.reminders.map((reminder) =>
+            reminder.related_visit_schedule_id &&
+            patientScheduleIds.has(reminder.related_visit_schedule_id)
+              ? {
+                  ...reminder,
+                  status: "dismissed",
+                  updated_at: now
+                }
+              : reminder
+          ),
+          notification_center_items: db.notification_center_items.map((item) =>
+            item.linked_patient_id === patientId ||
+            (item.linked_visit_schedule_id !== null && patientScheduleIds.has(item.linked_visit_schedule_id))
+              ? {
+                  ...item,
+                  status: "closed",
+                  is_unread: false,
+                  updated_at: now
+                }
+              : item
+          )
         };
       });
 

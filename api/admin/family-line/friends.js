@@ -99,6 +99,7 @@ function mergeContactsByUserId(...contactGroups) {
       ...existing,
       ...contact,
       linkedPatientIds: contact.linkedPatientIds ?? existing?.linkedPatientIds ?? [],
+      linkedAdminUserIds: contact.linkedAdminUserIds ?? existing?.linkedAdminUserIds ?? [],
       note: contact.note ?? existing?.note ?? ""
     });
   });

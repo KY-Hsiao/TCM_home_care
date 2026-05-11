@@ -87,6 +87,10 @@ describe("DoctorReturnNavigation", () => {
         "href",
         expect.stringContaining(`destination=${destinationQuery}`)
       );
+      fireEvent.click(within(navigationWindow).getByRole("button", { name: "已抵達，回到即時導航" }));
+      expect(
+        capturedContext?.repositories.visitRepository.getSavedRoutePlanById(activeRoutePlan.id)?.execution_status
+      ).toBe("completed");
       return;
     }
     expect(openSpy).toHaveBeenCalled();

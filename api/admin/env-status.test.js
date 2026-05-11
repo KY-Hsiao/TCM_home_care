@@ -54,6 +54,8 @@ describe("/api/admin/env-status", () => {
       GOOGLE_DRIVE_REFRESH_TOKEN: false,
       GOOGLE_DRIVE_CLIENT_ID: false,
       GOOGLE_DRIVE_CLIENT_SECRET: false,
+      GOOGLE_DRIVE_SERVICE_ACCOUNT_CLIENT_EMAIL: false,
+      GOOGLE_DRIVE_SERVICE_ACCOUNT_PRIVATE_KEY: false,
       GOOGLE_DRIVE_FOLDER_ID: true
     });
   });

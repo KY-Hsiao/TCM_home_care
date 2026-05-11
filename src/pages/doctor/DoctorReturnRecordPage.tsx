@@ -880,7 +880,7 @@ async function fetchGoogleDriveRecordFiles() {
 function formatGoogleDriveHistoryError(error: unknown) {
   if (error instanceof Error) {
     if (error.name === "GOOGLE_DRIVE_AUTH_INVALID") {
-      return "Google Drive 授權已失效，無法載入已儲存檔案。請到 Vercel 改設定 GOOGLE_DRIVE_REFRESH_TOKEN、GOOGLE_DRIVE_CLIENT_ID、GOOGLE_DRIVE_CLIENT_SECRET，或更新短效 GOOGLE_DRIVE_ACCESS_TOKEN 後重新部署。";
+      return "Google Drive 授權已失效，無法載入已儲存檔案。請到 Vercel 改用 Service Account 或 Refresh Token 設定，或更新短效 GOOGLE_DRIVE_ACCESS_TOKEN 後重新部署。";
     }
     if (error.name === "GOOGLE_DRIVE_AUTH_ENV_MISSING" || error.name === "GOOGLE_DRIVE_ENV_MISSING") {
       return "Google Drive 尚未完成 Vercel 環境變數設定，請確認 GOOGLE_DRIVE_FOLDER_ID 與 Drive 授權變數。";
