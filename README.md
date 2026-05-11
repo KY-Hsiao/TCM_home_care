@@ -132,7 +132,7 @@ $env:VITE_TEAM_COMM_SYNC_MODE = "http"
 
 ### Google Drive 回院病歷開通
 
-醫師端回院病歷會透過 serverless API 上傳 HTML 病歷到 Google Drive，並可讀取同一個資料夾內既有的 HTML 病歷作為歷史紀錄。正式開通時不要把 token 放在瀏覽器端，請到 Vercel 專案的 Settings / Environment Variables 設定。
+醫師端回院病歷會透過 serverless API 上傳 HTML 病歷到 Google Drive，並可讀取同一個資料夾內既有的 HTML 病歷作為歷史紀錄。Google Drive 只用於不需要高頻同步的檔案型資料，例如病歷 HTML、匯出檔與備份快照；排程、個案、定位、通訊這類會影響操作速度與多人同步的資料，仍應走線上資料庫或專用 API。正式開通時不要把 token 放在瀏覽器端，請到 Vercel 專案的 Settings / Environment Variables 設定。
 
 建議使用 Service Account：
 
@@ -154,7 +154,7 @@ $env:VITE_TEAM_COMM_SYNC_MODE = "http"
 
 `GOOGLE_DRIVE_ACCESS_TOKEN` 只建議短期測試，通常約 1 小時會過期。設定完成並重新部署後，可到行政端 `角色設置` > `機密管理區` 按 `重新整理狀態` 與 `測試 Google Drive 連線` 確認是否已開通。
 
-注意：這個 Google Drive 資料夾目前用於回院病歷 HTML 檔案的線上儲存與讀取，不等同於 Neon / Postgres 這類正式結構化資料庫。團隊通訊等正式共享資料仍依 `DATABASE_URL` 或 `POSTGRES_URL` 連線。
+注意：這個 Google Drive 資料夾目前用於回院病歷 HTML 檔案、匯出檔與低頻備份的線上儲存與讀取，不等同於 Neon / Postgres 這類正式結構化資料庫。團隊通訊、排程、個案、定位等速度敏感資料仍依 `DATABASE_URL` 或 `POSTGRES_URL` 連線。
 
 ### 行政端頁面內的線上更新按鈕
 

@@ -2087,6 +2087,7 @@ describe("AdminPages", () => {
         body: JSON.stringify({
           lineUserId: "Uaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           linkedPatientIds: ["pat-001"],
+          linkedAdminUserIds: [],
           note: ""
         })
       })
@@ -2115,11 +2116,63 @@ describe("AdminPages", () => {
         body: JSON.stringify({
           lineUserId: "Uaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           linkedPatientIds: [],
+          linkedAdminUserIds: [],
           note: ""
         })
       })
     );
     expect(window.localStorage.getItem("tcm-family-line-managed-contacts")).not.toContain("pat-001");
+  });
+
+  it("AdminFamilyLinePage 可將 LINE 好友關聯到行政人員", async () => {
+    window.localStorage.setItem(
+      "tcm-family-line-managed-contacts",
+      JSON.stringify([
+        {
+          id: "line-contact-admin-a",
+          displayName: "行政 LINE",
+          lineUserId: "Uadmin1234567890abcdef1234567890",
+          linkedPatientIds: [],
+          linkedAdminUserIds: [],
+          note: "",
+          source: "official_friend",
+          updatedAt: "2026-05-01T00:00:00.000Z"
+        }
+      ])
+    );
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ contact: {} })
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderWithProviders(<AdminFamilyLinePage />);
+
+    fireEvent.click(screen.getByRole("button", { name: "顯示詳細" }));
+    fireEvent.click(screen.getByLabelText("行政 LINE 批次關聯勾選"));
+    fireEvent.change(screen.getByLabelText("批次關聯行政人員"), {
+      target: { value: "admin-001" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "關聯所選行政人員" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("status")).toHaveTextContent("已將 1 位 LINE 好友關聯到 吳佳芸");
+      expect(screen.getByRole("status")).toHaveTextContent("新公告建立時會推播給已關聯行政人員");
+    });
+    expect(window.localStorage.getItem("tcm-family-line-managed-contacts")).toContain("admin-001");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/admin/family-line/contacts",
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({
+          lineUserId: "Uadmin1234567890abcdef1234567890",
+          linkedPatientIds: [],
+          linkedAdminUserIds: ["admin-001"],
+          note: ""
+        })
+      })
+    );
+    expect(screen.getByText("關聯行政：吳佳芸")).toBeInTheDocument();
   });
 
   it("AdminFamilyLinePage 可勾選抵達前提醒與結束後關心並編輯範本後確認送出", async () => {
@@ -2434,6 +2487,61 @@ describe("AdminPages", () => {
           item.role === "admin" && item.owner_user_id === null && item.linked_doctor_id === "doc-001"
       )
     ).toBe(true);
+  });
+
+  it("AdminRemindersPage 建立公告時會推播給已關聯的行政 LINE", async () => {
+    window.localStorage.setItem(
+      "tcm-family-line-managed-contacts",
+      JSON.stringify([
+        {
+          id: "line-contact-admin-notice",
+          displayName: "行政 LINE",
+          lineUserId: "Uadminnotice1234567890abcdef",
+          linkedPatientIds: [],
+          linkedAdminUserIds: ["admin-001"],
+          note: "",
+          source: "webhook",
+          updatedAt: "2026-05-01T00:00:00.000Z"
+        }
+      ])
+    );
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ sentCount: 1 })
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderWithProviders(<AdminRemindersPage />);
+
+    fireEvent.click(screen.getByRole("button", { name: "建立站內通知" }));
+    const dialog = screen.getByRole("dialog", { name: "建立站內通知視窗" });
+    fireEvent.change(within(dialog).getByLabelText("標題"), {
+      target: { value: "今日交班提醒" }
+    });
+    fireEvent.change(within(dialog).getByLabelText("內容"), {
+      target: { value: "上午案件請先整理成同批摘要再交班。" }
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "送出站內通知" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/admin/family-line/send",
+        expect.objectContaining({ method: "POST" })
+      );
+      expect(screen.getByRole("status")).toHaveTextContent("已發送 LINE 公告給 1 位行政人員");
+    });
+    const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(requestBody.subject).toBe("今日交班提醒");
+    expect(requestBody.content).toBe("上午案件請先整理成同批摘要再交班。");
+    expect(requestBody.recipients).toEqual([
+      expect.objectContaining({
+        caregiverId: "line-contact-admin-notice",
+        caregiverName: "行政 LINE",
+        lineUserId: "Uadminnotice1234567890abcdef",
+        adminUserId: "admin-001",
+        adminUserName: "吳佳芸"
+      })
+    ]);
   });
 
   it("AdminRemindersPage 進入選擇模式後可選取刪除指定通知", async () => {
