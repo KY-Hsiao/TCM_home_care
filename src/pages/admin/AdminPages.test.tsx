@@ -2150,9 +2150,7 @@ describe("AdminPages", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "顯示詳細" }));
     fireEvent.click(screen.getByLabelText("行政 LINE 批次關聯勾選"));
-    fireEvent.change(screen.getByLabelText("批次關聯行政人員"), {
-      target: { value: "admin-001" }
-    });
+    fireEvent.click(screen.getByRole("button", { name: /吳佳芸/ }));
     fireEvent.click(screen.getByRole("button", { name: "關聯所選行政人員" }));
 
     await waitFor(() => {

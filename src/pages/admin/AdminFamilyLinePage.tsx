@@ -1587,22 +1587,38 @@ export function AdminFamilyLinePage() {
                   取消所選關聯
                 </button>
               </div>
-              <label className="block">
-                <span className="mb-1 block font-medium text-brand-ink">批次關聯到行政人員</span>
-                <select
-                  aria-label="批次關聯行政人員"
-                  value={bulkLinkAdminUserId}
-                  onChange={(event) => setBulkLinkAdminUserId(event.target.value)}
-                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-2.5"
-                >
-                  <option value="">請選擇行政人員</option>
-                  {db.admin_users.map((adminUser) => (
-                    <option key={adminUser.id} value={adminUser.id}>
-                      {adminUser.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <div className="space-y-2">
+                <p className="font-medium text-brand-ink">批次關聯到行政人員</p>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {db.admin_users.map((adminUser) => {
+                    const linkedContactCount = managedLineContacts.filter((contact) =>
+                      contact.linkedAdminUserIds.includes(adminUser.id)
+                    ).length;
+                    return (
+                      <button
+                        key={adminUser.id}
+                        type="button"
+                        aria-pressed={bulkLinkAdminUserId === adminUser.id}
+                        onClick={() =>
+                          setBulkLinkAdminUserId((current) =>
+                            current === adminUser.id ? "" : adminUser.id
+                          )
+                        }
+                        className={`rounded-2xl border px-4 py-3 text-left transition ${
+                          bulkLinkAdminUserId === adminUser.id
+                            ? "border-brand-forest bg-emerald-50 text-brand-ink"
+                            : "border-slate-200 bg-white text-slate-600 hover:border-brand-moss"
+                        }`}
+                      >
+                        <span className="block text-sm font-semibold">{adminUser.name}</span>
+                        <span className="mt-1 block text-xs">
+                          已關聯 {linkedContactCount} 位 LINE 好友
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
               <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
@@ -1782,7 +1798,7 @@ export function AdminFamilyLinePage() {
                                     className="mt-1 h-4 w-4"
                                   />
                                   <span className="min-w-0 text-xs text-slate-600">
-                                    選入右上方個案關聯操作
+                                    選入右上方關聯操作
                                   </span>
                                 </label>
                               </div>
