@@ -1,5 +1,6 @@
 (() => {
   const CHIEF_OPTIONS = ["中風", "腦傷", "脊隨損傷", "癌症", "失智", "老化衰弱"];
+  const RECENT_TRIP_LIMIT = 10;
   const TRACKED_FIELDS = [
     "chief_complaint_option",
     "chief_complaint_other",
@@ -62,9 +63,9 @@
   }
 
   function setCheckboxGroup(name, values) {
-    const set = new Set(values.filter(Boolean));
+    const wanted = new Set(values.filter(Boolean));
     document.querySelectorAll(`input[type="checkbox"][name="${name}"]`).forEach((element) => {
-      element.checked = set.has(element.value);
+      element.checked = wanted.has(element.value);
       fire(element);
     });
   }
@@ -77,6 +78,47 @@
         fire(element);
       });
     });
+  }
+
+  function parseDateToken(token) {
+    const raw = String(token || "");
+    const match = raw.match(/(?:^|[^0-9])((?:20)?\d{6})(?:[^0-9]|$)/);
+    if (!match) return null;
+    const value = match[1];
+    let year;
+    let month;
+    let day;
+    if (value.length === 8) {
+      year = Number(value.slice(0, 4));
+      month = Number(value.slice(4, 6));
+      day = Number(value.slice(6, 8));
+    } else {
+      year = Number(value.slice(0, 3)) + 1911;
+      month = Number(value.slice(3, 5));
+      day = Number(value.slice(5, 7));
+    }
+    const time = new Date(year, month - 1, day).getTime();
+    return Number.isFinite(time) ? time : null;
+  }
+
+  function fileTime(file) {
+    return parseDateToken(file?.name) ??
+      parseDateToken(file?.title) ??
+      (file?.modifiedTime ? new Date(file.modifiedTime).getTime() : null) ??
+      (file?.modified_time ? new Date(file.modified_time).getTime() : null) ??
+      0;
+  }
+
+  function recentTripFiles(files) {
+    const now = Date.now();
+    return [...files]
+      .filter((file) => file?.id)
+      .sort((a, b) => {
+        const aTime = fileTime(a);
+        const bTime = fileTime(b);
+        return Math.abs(aTime - now) - Math.abs(bTime - now) || bTime - aTime;
+      })
+      .slice(0, RECENT_TRIP_LIMIT);
   }
 
   function textOfSection(card, title, selector = "p") {
@@ -171,8 +213,8 @@
     const four = textOfSection(card, "四診摘要");
     const history = textOfSection(card, "病史");
     return [generated, chief, four, history].some((text) => {
-      const v = String(text || "").trim();
-      return v && v !== "未填寫" && v !== "未勾選" && !v.includes("望 未勾選；聞 未勾選；問 未勾選；切 未勾選");
+      const value = String(text || "").trim();
+      return value && value !== "未填寫" && value !== "未勾選" && !value.includes("望 未勾選；聞 未勾選；問 未勾選；切 未勾選");
     });
   }
 
@@ -222,9 +264,8 @@
       clearFields();
       const listResponse = await fetch("/api/admin/google-drive?action=records", { cache: "no-store" });
       const listPayload = await listResponse.json().catch(() => ({}));
-      const files = Array.isArray(listPayload.files) ? listPayload.files : [];
+      const files = recentTripFiles(Array.isArray(listPayload.files) ? listPayload.files : []);
       for (const file of files) {
-        if (!file?.id) continue;
         const fileResponse = await fetch(`/api/admin/google-drive?action=records&fileId=${encodeURIComponent(file.id)}`, { cache: "no-store" });
         const filePayload = await fileResponse.json().catch(() => ({}));
         const card = filePayload.html ? findMatchingCard(filePayload.html, key) : null;
