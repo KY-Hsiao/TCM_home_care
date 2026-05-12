@@ -16,6 +16,7 @@ import {
 import {
   DoctorLocationPage,
   DoctorLeaveRequestPage,
+  DoctorLineQrPage,
   DoctorPatientPage,
   DoctorRecordPage,
   DoctorRemindersPage,
@@ -36,6 +37,7 @@ export const router = createBrowserRouter([
       { path: "/demo-overview", element: <DemoOverviewPage /> },
       { path: "/doctor/navigation", element: <DoctorLocationPage /> },
       { path: "/doctor/location", element: <DoctorLocationPage /> },
+      { path: "/doctor/line-qr", element: <DoctorLineQrPage /> },
       { path: "/doctor/return-records", element: <DoctorReturnRecordPage /> },
       { path: "/doctor/schedules/:id", element: <DoctorScheduleDetailPage /> },
       { path: "/doctor/records/:visitScheduleId", element: <DoctorRecordPage /> },
