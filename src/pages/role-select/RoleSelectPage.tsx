@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { useAppContext } from "../../app/use-app-context";
 import { Panel } from "../../shared/ui/Panel";
 
@@ -72,10 +72,6 @@ export function RoleSelectPage() {
         .getNotificationCenterItems(selectedAccount.role, selectedAccount.userId)
         .filter((item) => item.is_unread && item.role === selectedAccount.role).length
     : 0;
-  const authenticated =
-    selectedAccount?.role === "doctor"
-      ? session.authenticatedDoctorId === selectedAccount.userId
-      : session.authenticatedAdminId === selectedAccount?.userId;
 
   const handleLogin = () => {
     if (!selectedAccount) {
@@ -106,20 +102,7 @@ export function RoleSelectPage() {
 
   return (
     <div className="mx-auto flex min-h-screen max-w-4xl items-center px-3 py-4 sm:px-4 lg:px-6">
-      <Panel
-        title="登入系統"
-        className="w-full"
-        action={
-          authenticated ? (
-            <Link
-              to={selectedAccount?.to ?? "/doctor/navigation"}
-              className="rounded-full bg-brand-forest px-4 py-2 text-sm font-semibold text-white"
-            >
-              直接進入
-            </Link>
-          ) : null
-        }
-      >
+      <Panel title="登入系統" className="w-full">
         <div className="grid gap-0 overflow-hidden rounded-[1.35rem] lg:grid-cols-[0.85fr_1.15fr] lg:rounded-[1.75rem]">
           <div className="bg-[linear-gradient(140deg,#0f172a_0%,#1e293b_62%,#14532d_100%)] px-5 py-5 text-white lg:px-6 lg:py-6">
             <p className="text-xs font-semibold tracking-[0.18em] text-brand-sand/70">
