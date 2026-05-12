@@ -1,5 +1,5 @@
+export { AdminDashboardPage } from "./AdminDashboardCompactPage";
 export {
-  AdminDashboardPage,
   AdminDoctorTrackingPage,
   AdminPatientDetailPage,
   AdminPatientsPage
