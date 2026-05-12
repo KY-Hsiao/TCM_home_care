@@ -2,7 +2,6 @@ import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAppContext } from "../../app/use-app-context";
 import { Panel } from "../../shared/ui/Panel";
-import { getDefaultPassword } from "../../app/auth-storage";
 
 type LoginRole = "doctor" | "admin";
 
@@ -95,6 +94,7 @@ export function RoleSelectPage() {
       return;
     }
 
+    window.localStorage.setItem("tcm-home-care-entry-visited-at", String(Date.now()));
     setMessage(
       role === "doctor"
         ? "登入成功，正在前往醫師首頁並要求定位分享。"
@@ -163,11 +163,11 @@ export function RoleSelectPage() {
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 className="w-full rounded-2xl border border-slate-200 px-4 py-3"
-                placeholder={`預設密碼 ${getDefaultPassword()}`}
+                placeholder="請輸入登入密碼"
               />
             </label>
             <p className="text-xs text-slate-500">
-              預設密碼為 `{getDefaultPassword()}`，登入後可在頁面右上角修改密碼。
+              登入後可在系統內修改密碼。若忘記密碼，請由系統管理者重設。
             </p>
             {selectedAccount?.role === "doctor" ? (
               <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
