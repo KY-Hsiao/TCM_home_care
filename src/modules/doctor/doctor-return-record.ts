@@ -151,13 +151,13 @@ function escapeHtml(value: string | number | boolean | null | undefined) {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
+    .replace(/\"/g, "&quot;")
     .replace(/'/g, "&#39;");
 }
 
 function normalizeFileToken(value: string) {
   return value
-    .replace(/[\\/:*?"<>|]/g, "-")
+    .replace(/[\\/:*?\"<>|]/g, "-")
     .replace(/\s+/g, "")
     .trim();
 }
@@ -492,35 +492,49 @@ export function buildReturnRecordHtml(rows: ReturnRecordHtmlRow[]) {
 </html>`;
 }
 
+function extractRecordSection(text: string | undefined, label: string) {
+  if (!text) {
+    return "";
+  }
+  const normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const labels = ["主訴", "病史", "四診", "處置", "提醒", "治療日期", "開始治療時間", "結束治療時間"];
+  const nextLabels = labels.filter((item) => item !== label).join("|");
+  const pattern = new RegExp(`${label}[：:]\\s*([\\s\\S]*?)(?=\\n(?:${nextLabels})[：:]|$)`);
+  return normalized.match(pattern)?.[1]?.trim() ?? "";
+}
+
 export function resolvePreviousMedicalHistory(record: VisitRecord | undefined, fallback = "") {
   return (
-    record?.medical_history_note ||
-    record?.follow_up_note ||
-    record?.generated_record_text.match(/病史：(.+)/)?.[1] ||
+    record?.medical_history_note?.trim() ||
+    record?.follow_up_note?.trim() ||
+    extractRecordSection(record?.generated_record_text, "病史") ||
     fallback
   );
 }
 
 export function buildPreviousMedicalHistorySelections(record: VisitRecord | undefined, fallback = "") {
   const history = resolvePreviousMedicalHistory(record, fallback)
-    .split(/[、,\n]/)
+    .replace(/^病史[：:]/, "")
+    .split(/[、,，;；\n]/)
     .map((item) => item.trim())
-    .filter(Boolean);
+    .filter(Boolean)
+    .filter((item) => item !== "未填寫" && item !== "未勾選");
 
   const selectedTags = medicalHistoryOptions.filter(
     (option) =>
       option !== "其他" &&
       history.some((item) => item.includes(option))
   );
-  const otherItem = history.find((item) => item.startsWith("其他："));
+  const otherItem = history.find((item) => item.startsWith("其他：") || item.startsWith("其他:"));
   const hasGenericOther = history.includes("其他");
   const unmatchedItems = history.filter(
     (item) =>
       !selectedTags.some((tag) => item.includes(tag)) &&
       item !== "其他" &&
-      !item.startsWith("其他：")
+      !item.startsWith("其他：") &&
+      !item.startsWith("其他:")
   );
-  const otherValue = otherItem?.replace(/^其他：/, "").trim() ?? unmatchedItems.join("、");
+  const otherValue = otherItem?.replace(/^其他[：:]/, "").trim() ?? unmatchedItems.join("、");
   const tags =
     hasGenericOther || Boolean(otherItem) || unmatchedItems.length > 0
       ? [...selectedTags, "其他"]
