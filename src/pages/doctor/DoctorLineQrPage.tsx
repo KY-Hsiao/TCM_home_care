@@ -7,7 +7,7 @@ export function DoctorLineQrPage() {
         <div className="flex flex-col items-center gap-4 text-center">
           <div className="rounded-[2rem] border border-slate-200 bg-white p-5 shadow-sm">
             <img
-              src="/line-qr.svg"
+              src="/line-qr.svg?v=provided-line-qr-20260513"
               alt="LINE QR Code"
               className="h-auto w-full max-w-[420px]"
             />
