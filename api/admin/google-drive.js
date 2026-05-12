@@ -21,8 +21,28 @@ function resolveQueryValue(value) {
   return Array.isArray(value) ? value[0] : value;
 }
 
-function buildFolderQuery(folderId) {
-  return `'${folderId.replace(/'/g, "\\'")}' in parents and trashed = false and mimeType = 'text/html'`;
+function escapeDriveQueryValue(value) {
+  return value.replace(/'/g, "\\'");
+}
+
+function resolveRecordFolderIds(defaultFolderId) {
+  const raw = String(
+    process.env.GOOGLE_DRIVE_RECORDS_FOLDER_ID ??
+      process.env.GOOGLE_DRIVE_OLD_RECORDS_FOLDER_ID ??
+      defaultFolderId ??
+      ""
+  );
+  return raw
+    .split(/[;,\n]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function buildFolderQuery(folderIds) {
+  const parentQuery = folderIds
+    .map((folderId) => `'${escapeDriveQueryValue(folderId)}' in parents`)
+    .join(" or ");
+  return `(${parentQuery}) and trashed = false and mimeType = 'text/html'`;
 }
 
 async function fetchDriveJson(url, accessToken) {
@@ -155,13 +175,22 @@ async function handleRecords(request, response) {
     return;
   }
 
+  const recordFolderIds = resolveRecordFolderIds(driveAuth.folderId);
+  if (!recordFolderIds.length) {
+    setJson(response, 503, {
+      reason: "GOOGLE_DRIVE_RECORDS_FOLDER_MISSING",
+      error: "尚未設定舊病歷資料夾。請設定 GOOGLE_DRIVE_RECORDS_FOLDER_ID、GOOGLE_DRIVE_OLD_RECORDS_FOLDER_ID 或 GOOGLE_DRIVE_FOLDER_ID。"
+    });
+    return;
+  }
+
   const fileId = String(resolveQueryValue(request.query?.fileId) ?? "").trim();
 
   try {
     if (!fileId) {
       const listUrl = new URL("https://www.googleapis.com/drive/v3/files");
-      listUrl.searchParams.set("q", buildFolderQuery(driveAuth.folderId));
-      listUrl.searchParams.set("fields", "files(id,name,modifiedTime,webViewLink,size),nextPageToken");
+      listUrl.searchParams.set("q", buildFolderQuery(recordFolderIds));
+      listUrl.searchParams.set("fields", "files(id,name,modifiedTime,webViewLink,size,parents),nextPageToken");
       listUrl.searchParams.set("orderBy", "modifiedTime desc");
       listUrl.searchParams.set("pageSize", "100");
 
@@ -181,6 +210,7 @@ async function handleRecords(request, response) {
 
       setJson(response, 200, {
         ok: true,
+        folderIds: recordFolderIds,
         files: Array.isArray(payload.files) ? payload.files : []
       });
       return;
@@ -204,9 +234,12 @@ async function handleRecords(request, response) {
       );
       return;
     }
-    if (!Array.isArray(metadata.parents) || !metadata.parents.includes(driveAuth.folderId)) {
+    if (
+      !Array.isArray(metadata.parents) ||
+      !metadata.parents.some((parentId) => recordFolderIds.includes(parentId))
+    ) {
       setJson(response, 404, {
-        reason: "DRIVE_FILE_NOT_IN_FOLDER",
+        reason: "DRIVE_FILE_NOT_IN_RECORDS_FOLDER",
         error: "指定的 Google Drive 檔案不在設定的病歷資料夾中。"
       });
       return;
