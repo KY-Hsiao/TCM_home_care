@@ -9,6 +9,7 @@ export type NavItem = {
 export const navigationByRole: Record<UserRole, NavItem[]> = {
   doctor: [
     { to: "/doctor/navigation", label: "即時導航", description: "在系統內查看導航、到站與接續下一站" },
+    { to: "/doctor/line-qr", label: "LINE QR", description: "顯示 LINE QR Code 供掃描加入" },
     { to: "/doctor/return-records", label: "回院病歷", description: "勾選四診並延續上次病史產生病歷" },
     { to: "/doctor/leave-requests", label: "請假申請", description: "填寫請假期間、原因與交班備註" },
     { to: "/doctor/team-communication", label: "團隊通訊", description: "直接聯絡行政人員並查看院內協作紀錄" },
