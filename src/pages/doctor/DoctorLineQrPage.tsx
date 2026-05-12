@@ -33,7 +33,7 @@ export function DoctorLineQrPage() {
             className="flex min-h-[70vh] items-center justify-center rounded-3xl bg-white p-2 sm:p-4"
           >
             <img
-              src="/line-qr-final.svg?v=exact-final-20260513"
+              src="/line-qr-final.svg?v=clear-vector-20260513"
               alt="LINE QR Code"
               className="block h-auto w-full max-w-[98vw] sm:max-w-[820px]"
             />
