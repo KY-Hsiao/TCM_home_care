@@ -102,48 +102,6 @@ function isArrivalReminderMessage(body, subject, content) {
   );
 }
 
-function normalizeForPatientNameComparison(value) {
-  return String(value || "").replace(/[\s()（）｜|:：,，。\-_/]/g, "").trim();
-}
-
-function maskPatientNameValue(name) {
-  const chars = Array.from(String(name || "").trim());
-  if (chars.length <= 2) {
-    return chars.join("");
-  }
-  return `${chars[0]}${"○".repeat(chars.length - 2)}${chars[chars.length - 1]}`;
-}
-
-function patientNameVariants(name) {
-  const normalizedName = String(name || "").trim();
-  if (!normalizedName) return [];
-  return Array.from(new Set([normalizedName, maskPatientNameValue(normalizedName)]))
-    .map(normalizeForPatientNameComparison)
-    .filter((variant) => variant.length >= 2);
-}
-
-function arrivalReminderContainsPatientName(recipients, subject, content) {
-  const messageText = normalizeForPatientNameComparison(`${subject}\n${content}`);
-  if (!messageText) return false;
-  return recipients.some((recipient) =>
-    patientNameVariants(recipient.patientName).some((variant) => messageText.includes(variant))
-  );
-}
-
-function buildSuppressedNamedArrivalResults(recipients) {
-  return recipients.map((recipient) => ({
-    caregiverId: recipient.caregiverId,
-    patientId: recipient.patientId,
-    doctorId: recipient.doctorId,
-    lineUserId: recipient.lineUserId,
-    ok: true,
-    status: 200,
-    skipped: true,
-    suppressed: true,
-    error: "named_arrival_reminder_disabled"
-  }));
-}
-
 function uniquePatientIds(recipients) {
   return Array.from(
     new Set(recipients.map((recipient) => recipient.patientId).filter((patientId) => patientId.trim()))
@@ -239,21 +197,6 @@ export default async function handler(request, response) {
   }
 
   const isArrivalReminder = isArrivalReminderMessage(body, subject, content);
-  if (isArrivalReminder && arrivalReminderContainsPatientName(recipients, subject, content)) {
-    const suppressedResults = buildSuppressedNamedArrivalResults(recipients);
-    setJson(response, 200, {
-      sentCount: 0,
-      failedCount: 0,
-      attemptedCount: recipients.length,
-      skippedCount: suppressedResults.length,
-      cooldownApplied: false,
-      suppressed: true,
-      suppressedReason: "named_arrival_reminder_disabled",
-      results: suppressedResults
-    });
-    return;
-  }
-
   let recipientsToSend = recipients;
   let skippedResults = [];
   let acquiredLockKeys = [];
