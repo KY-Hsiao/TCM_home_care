@@ -3,6 +3,11 @@ import {
   listFamilyLineContacts,
   updateFamilyLineContact
 } from "../../_lib/family-line-contacts.js";
+import {
+  getFamilyLineSettings,
+  normalizeFamilyLineSettings,
+  updateFamilyLineSettings
+} from "../../_lib/family-line-settings.js";
 
 function setJson(response, statusCode, payload) {
   response.status(statusCode).setHeader("Content-Type", "application/json");
@@ -23,6 +28,22 @@ function normalizeBody(request) {
   return {};
 }
 
+function getResource(request) {
+  const queryResource = request.query?.resource;
+  if (Array.isArray(queryResource)) {
+    return String(queryResource[0] ?? "");
+  }
+  if (queryResource) {
+    return String(queryResource);
+  }
+  try {
+    const url = new URL(request.url || "", "http://localhost");
+    return url.searchParams.get("resource") || "";
+  } catch {
+    return "";
+  }
+}
+
 export default async function handler(request, response) {
   if (!["GET", "PATCH", "POST"].includes(request.method)) {
     response.setHeader("Allow", "GET, PATCH, POST");
@@ -30,7 +51,24 @@ export default async function handler(request, response) {
     return;
   }
 
+  const resource = getResource(request);
+
   try {
+    if (resource === "settings") {
+      if (request.method === "GET") {
+        const result = await getFamilyLineSettings();
+        setJson(response, 200, result);
+        return;
+      }
+
+      const body = normalizeBody(request);
+      const result = await updateFamilyLineSettings(
+        normalizeFamilyLineSettings(body.settings ?? body)
+      );
+      setJson(response, 200, result);
+      return;
+    }
+
     await ensureFamilyLineContactsTable();
 
     if (request.method === "GET") {
@@ -55,10 +93,16 @@ export default async function handler(request, response) {
     setJson(response, 200, { contact: updatedContact });
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
-    setJson(response, message.includes("DATABASE_URL") ? 503 : 500, {
-      error: message.includes("DATABASE_URL")
-        ? "LINE 名單資料庫尚未完成設定，請先配置 Neon / Vercel Postgres。"
-        : "LINE 名單管理資料存取失敗。"
+    const missingDatabase = message.includes("DATABASE_URL") || message.includes("POSTGRES_URL");
+    const isSettings = resource === "settings";
+    setJson(response, missingDatabase ? 503 : 500, {
+      error: missingDatabase
+        ? isSettings
+          ? "LINE 發訊息設定資料庫尚未完成設定，請先配置 Neon / Vercel Postgres。"
+          : "LINE 名單資料庫尚未完成設定，請先配置 Neon / Vercel Postgres。"
+        : isSettings
+          ? "LINE 發訊息設定存取失敗。"
+          : "LINE 名單管理資料存取失敗。"
     });
   }
 }
