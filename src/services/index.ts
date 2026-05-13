@@ -7,7 +7,7 @@ import { createMockDoctorLocationSyncService } from "./location-sync/mock-doctor
 import { createNotificationPayloadBuilder } from "./chat/notification-payload-builder";
 import { createMapsUrlBuilder } from "./maps/maps-url-builder";
 import type { AppServices, ServicesContextDeps } from "./types";
-import { MockVisitAutomationService } from "./visit-automation/visit-automation-service";
+import { VisitAutomationServiceWithoutNextStopArrivalReminder } from "./visit-automation/visit-automation-service-without-next-stop-arrival";
 
 export function createAppServices(deps: ServicesContextDeps): AppServices {
   const payloadBuilder = createNotificationPayloadBuilder();
@@ -20,7 +20,7 @@ export function createAppServices(deps: ServicesContextDeps): AppServices {
     resolveDoctorLocationSyncMode() === "api_polling"
       ? createHttpDoctorLocationSyncService()
       : createMockDoctorLocationSyncService(deps);
-  const visitAutomation = new MockVisitAutomationService(
+  const visitAutomation = new VisitAutomationServiceWithoutNextStopArrivalReminder(
     deps,
     geolocation,
     doctorLocationSync
