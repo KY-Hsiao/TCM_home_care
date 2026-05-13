@@ -11,35 +11,20 @@ import type {
 } from "../types";
 import { MockVisitAutomationService } from "./visit-automation-service";
 
-const SETTINGS_STORAGE_KEY = "tcm-family-line-settings";
-
-function runWithDoctorArrivalReminderTemporarilyDisabled(action: () => void) {
-  if (typeof window === "undefined") {
-    action();
-    return;
-  }
-
-  let originalRaw: string | null = null;
-  try {
-    originalRaw = window.localStorage.getItem(SETTINGS_STORAGE_KEY);
-    const original = originalRaw ? JSON.parse(originalRaw) : {};
-    window.localStorage.setItem(
-      SETTINGS_STORAGE_KEY,
-      JSON.stringify({
-        ...original,
-        doctorArrivalReminder: false
-      })
-    );
-    action();
-  } finally {
-    if (originalRaw === null) {
-      window.localStorage.removeItem(SETTINGS_STORAGE_KEY);
-    } else {
-      window.localStorage.setItem(SETTINGS_STORAGE_KEY, originalRaw);
-    }
-  }
-}
-
+/**
+ * Decorates the original visit automation service and removes the legacy
+ * next-stop LINE arrival reminder side effect.
+ *
+ * The legacy implementation sends a second arrival reminder from
+ * `confirmDeparture()` by calling `sendArrivalReminderForNextStop()`. That
+ * message includes the next patient's name and duplicates the explicit
+ * button-based reminder in `public/line-arrival-click-target.js`.
+ *
+ * This class keeps the visit workflow delegated to the original service, but
+ * shields `confirmDeparture()` from the legacy reminder path. The explicit
+ * departure/next-stop button remains the single supported LINE arrival
+ * reminder trigger.
+ */
 export class VisitAutomationServiceWithoutNextStopArrivalReminder
   implements VisitAutomationService
 {
@@ -97,9 +82,45 @@ export class VisitAutomationServiceWithoutNextStopArrivalReminder
   }
 
   confirmDeparture(scheduleId: string, confirmedBy: ConfirmationSource): void {
-    runWithDoctorArrivalReminderTemporarilyDisabled(() => {
+    const previousFetch = typeof window !== "undefined" ? window.fetch : undefined;
+
+    if (typeof window !== "undefined" && typeof previousFetch === "function") {
+      window.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        if (url.includes("/api/admin/family-line/send")) {
+          const body = typeof init?.body === "string" ? init.body : "";
+          if (
+            body.includes("已完成前一站") &&
+            body.includes("接下來會前往") &&
+            body.includes("的住處")
+          ) {
+            return new Response(
+              JSON.stringify({
+                sentCount: 0,
+                failedCount: 0,
+                attemptedCount: 0,
+                skippedCount: 1,
+                suppressed: true,
+                suppressedReason: "legacy_next_stop_named_arrival_trigger_removed"
+              }),
+              {
+                status: 200,
+                headers: { "Content-Type": "application/json" }
+              }
+            );
+          }
+        }
+        return previousFetch(input, init);
+      }) as typeof window.fetch;
+    }
+
+    try {
       this.inner.confirmDeparture(scheduleId, confirmedBy);
-    });
+    } finally {
+      if (typeof window !== "undefined" && previousFetch) {
+        window.fetch = previousFetch;
+      }
+    }
   }
 
   confirmReturnToEndpoint(scheduleId: string, confirmedBy: ConfirmationSource): void {
