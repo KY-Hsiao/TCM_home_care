@@ -1,6 +1,6 @@
 (() => {
   const STORAGE_KEY = 'tcm-family-line-settings';
-  const API_URL = '/api/admin/family-line/settings';
+  const API_URL = '/api/admin/family-line/contacts?resource=settings';
   const DEFAULT_SETTINGS = {
     doctorLeaveAutoBroadcast: false,
     doctorArrivalReminder: true,
