@@ -62,6 +62,26 @@
     }
   }
 
+  function isActionLabel(text) {
+    const label = clean(text);
+    return (
+      label.includes(clean('外部 Google 地圖')) ||
+      label.includes(clean('外部地圖')) ||
+      label.includes(clean('開啟 Google 導航')) ||
+      label.includes(clean('開導航')) ||
+      label.includes(clean('目前患者暫停')) ||
+      label.includes(clean('註記患者不在家')) ||
+      label.includes(clean('患者不在家／暫停')) ||
+      label.includes(clean('不在家')) ||
+      label.includes(clean('已抵達，回到即時導航')) ||
+      label.includes(clean('已抵達')) ||
+      label.includes(clean('關閉導航')) ||
+      label.includes(clean('關閉')) ||
+      label.includes(clean('返回前頁')) ||
+      label.includes(clean('返回'))
+    );
+  }
+
   function findElementByText(dialog, selector, labels) {
     return Array.from(dialog.querySelectorAll(selector)).find((element) => {
       const label = clean(element.textContent);
@@ -69,29 +89,15 @@
     }) || null;
   }
 
-  function hideOriginalActions(dialog) {
-    Array.from(dialog.querySelectorAll('a, button')).forEach((element) => {
-      if (element.closest('[data-unified-nav-actions="true"]')) return;
-      const label = clean(element.textContent);
-      const isNavAction =
-        label.includes(clean('外部 Google 地圖')) ||
-        label.includes(clean('外部地圖')) ||
-        label.includes(clean('開啟 Google 導航')) ||
-        label.includes(clean('開導航')) ||
-        label.includes(clean('目前患者暫停')) ||
-        label.includes(clean('註記患者不在家')) ||
-        label.includes(clean('患者不在家／暫停')) ||
-        label.includes(clean('不在家')) ||
-        label.includes(clean('已抵達，回到即時導航')) ||
-        label.includes(clean('已抵達')) ||
-        label.includes(clean('關閉導航')) ||
-        label.includes(clean('關閉'));
-      if (isNavAction) element.style.display = 'none';
-    });
-  }
-
   function getHeader(dialog) {
     return dialog.querySelector('.border-b') || dialog.querySelector('div');
+  }
+
+  function standardizeHeader(dialog) {
+    const header = getHeader(dialog);
+    if (!header) return null;
+    header.className = 'flex shrink-0 flex-col gap-2 border-b border-slate-200 px-4 py-3 sm:flex-row sm:items-center sm:justify-between lg:px-5 lg:py-4';
+    return header;
   }
 
   function createUnifiedBar(dialog) {
@@ -104,7 +110,7 @@
 
     const bar = document.createElement('div');
     bar.dataset.unifiedNavActions = 'true';
-    bar.className = 'flex w-full flex-wrap gap-2 pt-2 sm:w-auto sm:pt-0';
+    bar.className = 'flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end';
 
     bar.appendChild(makeButton('返回', 'normal', () => {
       if (window.history.length > 1) window.history.back();
@@ -127,25 +133,54 @@
       bar.appendChild(makeButton(arriveLabel, 'primary', () => arrive.click()));
     }
 
-    const header = getHeader(dialog);
+    const header = standardizeHeader(dialog);
     if (header) header.appendChild(bar);
     return bar;
   }
 
-  function trimFallbackText(dialog) {
+  function hideOriginalActions(dialog) {
+    Array.from(dialog.querySelectorAll('a, button')).forEach((element) => {
+      if (element.closest('[data-unified-nav-actions="true"]')) return;
+      if (isActionLabel(element.textContent)) element.style.display = 'none';
+    });
+
+    Array.from(dialog.querySelectorAll('div')).forEach((node) => {
+      if (node.closest('[data-unified-nav-actions="true"]')) return;
+      if (node.querySelector('[data-unified-nav-actions="true"]')) return;
+      const controls = Array.from(node.querySelectorAll('a, button'));
+      if (!controls.length) return;
+      const allControlsAreHidden = controls.every((control) => control.style.display === 'none' || isActionLabel(control.textContent));
+      const text = clean(node.textContent);
+      const isMostlyActionBlock = ['外部Google地圖', '外部地圖', '開啟Google導航', '開導航', '目前患者暫停', '不在家', '已抵達', '關閉導航', '關閉'].some((label) => text.includes(label));
+      if (allControlsAreHidden && isMostlyActionBlock) node.style.display = 'none';
+    });
+  }
+
+  function normalizeFallbackPanel(dialog) {
+    const fallbackTitle = Array.from(dialog.querySelectorAll('p')).find((p) =>
+      (p.textContent || '').includes('目前無法在頁內載入 Google 導航')
+    );
+    if (!fallbackTitle) return;
+    fallbackTitle.textContent = '頁內導航無法載入，請使用上方「外部地圖」。';
+    fallbackTitle.className = 'text-sm font-semibold text-brand-ink';
     Array.from(dialog.querySelectorAll('p')).forEach((p) => {
       const text = p.textContent || '';
       if (text.includes('這通常是 Google Maps Embed API key') || text.includes('抵達後回到本頁')) {
         p.style.display = 'none';
       }
     });
+    const fallbackCard = fallbackTitle.closest('div');
+    if (fallbackCard) {
+      fallbackCard.className = 'mx-auto max-w-lg rounded-[1.25rem] border border-slate-200 bg-white p-4 text-center shadow-sm sm:p-6';
+    }
   }
 
   function enhance(dialog) {
     if (!dialog) return;
+    standardizeHeader(dialog);
     createUnifiedBar(dialog);
     hideOriginalActions(dialog);
-    trimFallbackText(dialog);
+    normalizeFallbackPanel(dialog);
   }
 
   function scan() {
