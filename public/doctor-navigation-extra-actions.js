@@ -46,13 +46,23 @@
     }
   }
 
+  function shortenBuiltInLabels(dialog) {
+    Array.from(dialog.querySelectorAll('a, button')).forEach((element) => {
+      const label = clean(element.textContent);
+      if (label.includes(clean('外部 Google 地圖'))) element.textContent = '外部地圖';
+      if (label.includes(clean('已抵達，回到即時導航'))) element.textContent = '已抵達';
+      if (label.includes(clean('關閉導航'))) element.textContent = '關閉';
+      if (label.includes(clean('開啟 Google 導航'))) element.textContent = '開導航';
+    });
+  }
+
   function mergePauseButtonsWithNotHome(dialog) {
-    const alertClass = 'rounded-full border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-800';
+    const alertClass = 'rounded-full border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800';
     Array.from(dialog.querySelectorAll('button')).forEach((button) => {
       const label = clean(button.textContent);
-      if (!label.includes(clean('目前患者暫停')) && !label.includes(clean('註記患者不在家'))) return;
+      if (!label.includes(clean('目前患者暫停')) && !label.includes(clean('註記患者不在家')) && !label.includes(clean('患者不在家／暫停'))) return;
       if (button.dataset.notHomeMerged === 'true') return;
-      button.textContent = '患者不在家／暫停';
+      button.textContent = '不在家';
       button.className = alertClass;
       button.dataset.notHomeMerged = 'true';
       button.addEventListener('click', markNotHome, { capture: true });
@@ -63,14 +73,14 @@
     if (!dialog) return;
     const containers = Array.from(dialog.querySelectorAll('div')).filter((node) => {
       const text = node.textContent || '';
-      return text.includes('外部 Google 地圖') && (text.includes('已抵達') || text.includes('關閉導航'));
+      return (text.includes('外部 Google 地圖') || text.includes('外部地圖')) && (text.includes('已抵達') || text.includes('關閉導航') || text.includes('關閉'));
     });
     const container = containers[0];
     if (!container) return;
 
     if (dialog.dataset.navigationExtraActions !== 'true') {
-      const normalClass = 'rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-brand-ink';
-      container.insertBefore(makeButton('返回前頁', normalClass, () => {
+      const normalClass = 'rounded-full border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-brand-ink';
+      container.insertBefore(makeButton('返回', normalClass, () => {
         if (window.history.length > 1) window.history.back();
         else window.location.assign('/doctor/navigation');
       }), container.firstChild);
@@ -78,6 +88,7 @@
     }
 
     mergePauseButtonsWithNotHome(dialog);
+    shortenBuiltInLabels(dialog);
   }
 
   function scan() {
