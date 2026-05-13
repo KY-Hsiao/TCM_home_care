@@ -1,7 +1,7 @@
 (() => {
   const DB_KEY = "tcm-home-care-mvp-db";
   const SETTINGS_KEY = "tcm-family-line-settings";
-  const CONTACTS_KEY = "tcm-family-line-managed-contacts";
+  const LOCAL_CONTACTS_KEY = "tcm-family-line-managed-contacts";
   const TEMPLATE_KEY = "tcm-family-line-template-drafts";
   const SENT_KEY = "tcm-line-arrival-reminder-sent";
   const DEFAULT_TEMPLATE = {
@@ -53,6 +53,27 @@
       content: String(template.content || DEFAULT_TEMPLATE.content).replaceAll("{醫師}", doctorName || "醫師").trim()
     };
   }
+  async function loadContacts() {
+    try {
+      const response = await fetch("/api/admin/family-line/contacts", { cache: "no-store" });
+      const payload = await response.json().catch(() => ({}));
+      const contacts = Array.isArray(payload.contacts) ? payload.contacts : Array.isArray(payload.friends) ? payload.friends : [];
+      if (response.ok && contacts.length) return contacts;
+    } catch {
+      // fall back to local storage
+    }
+    return loadJson(LOCAL_CONTACTS_KEY, []);
+  }
+  function normalizeContact(contact) {
+    const lineUserId = String(contact.lineUserId || contact.userId || "").trim();
+    return {
+      id: contact.id || `line-contact-${lineUserId}`,
+      displayName: contact.displayName || lineUserId || "LINE 家屬",
+      lineUserId,
+      linkedPatientIds: Array.isArray(contact.linkedPatientIds) ? contact.linkedPatientIds.map((id) => String(id || "").trim()).filter(Boolean) : [],
+      contactRole: contact.contactRole === "admin" ? "admin" : "family"
+    };
+  }
   function clickText(target) {
     const button = target?.closest?.("button, a");
     if (!button) return "";
@@ -83,7 +104,7 @@
         .filter((plan) => plan.execution_status === "executing")
         .flatMap((plan) => (plan.route_items || []).map((item) => item.schedule_id).filter(Boolean))
     );
-    const schedules = (db.visit_schedules || [])
+    return (db.visit_schedules || [])
       .filter((schedule) => schedule.patient_id === patientId)
       .filter((schedule) => schedule.visit_type !== "回院病歷")
       .filter((schedule) => !["completed", "cancelled", "paused"].includes(schedule.status))
@@ -95,31 +116,30 @@
         const bo = Number(b.route_order || 9999);
         if (ao !== bo) return ao - bo;
         return new Date(a.scheduled_start_at || 0).getTime() - new Date(b.scheduled_start_at || 0).getTime();
-      });
-    return schedules[0] || null;
+      })[0] || null;
   }
-  function recipientsFor(db, schedule) {
-    const contacts = loadJson(CONTACTS_KEY, []);
-    if (!Array.isArray(contacts)) return [];
+  async function recipientsFor(db, schedule) {
+    const contacts = await loadContacts();
     const patient = (db.patients || []).find((item) => item.id === schedule.patient_id);
     const doctor = (db.doctors || []).find((item) => item.id === schedule.assigned_doctor_id);
-    return contacts
+    return (Array.isArray(contacts) ? contacts : [])
+      .map(normalizeContact)
       .filter((contact) => contact.contactRole !== "admin")
-      .filter((contact) => String(contact.lineUserId || "").trim())
-      .filter((contact) => Array.isArray(contact.linkedPatientIds) && contact.linkedPatientIds.includes(schedule.patient_id))
+      .filter((contact) => contact.lineUserId)
+      .filter((contact) => contact.linkedPatientIds.includes(schedule.patient_id))
       .map((contact) => ({
-        caregiverId: contact.id || `line-contact-${contact.lineUserId}`,
-        caregiverName: contact.displayName || "LINE 家屬",
+        caregiverId: contact.id,
+        caregiverName: contact.displayName,
         patientId: patient?.id || schedule.patient_id,
         patientName: patient?.name || "",
         doctorId: doctor?.id || schedule.assigned_doctor_id,
         doctorName: doctor?.name || "醫師",
-        lineUserId: String(contact.lineUserId || "").trim()
+        lineUserId: contact.lineUserId
       }));
   }
   async function sendForSchedule(db, schedule) {
     if (!schedule || wasSent(schedule.id)) return;
-    const recipients = recipientsFor(db, schedule);
+    const recipients = await recipientsFor(db, schedule);
     if (!recipients.length) return;
     const doctor = (db.doctors || []).find((item) => item.id === schedule.assigned_doctor_id);
     const message = templateFor(doctor?.name || "醫師");
