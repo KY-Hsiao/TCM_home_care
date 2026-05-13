@@ -23,6 +23,9 @@ function formatCoordinateQuery(latitude: number | null, longitude: number | null
   if (latitude === null || longitude === null) {
     return null;
   }
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+    return null;
+  }
   return `${latitude},${longitude}`;
 }
 
@@ -30,6 +33,12 @@ function resolveMapQuery({ address, locationKeyword, latitude, longitude }: Rout
   const keywordQuery = locationKeyword ? resolveLocationKeyword(locationKeyword, address) : null;
   const coordinateQuery = formatCoordinateQuery(latitude, longitude);
   return keywordQuery ?? coordinateQuery ?? address;
+}
+
+function resolveNavigationQuery({ address, locationKeyword, latitude, longitude }: RouteMapLocation): string {
+  const coordinateQuery = formatCoordinateQuery(latitude, longitude);
+  const keywordQuery = locationKeyword ? resolveLocationKeyword(locationKeyword, address) : null;
+  return coordinateQuery ?? keywordQuery ?? address;
 }
 
 function resolveMapsApiKey(defaultEmbedApiKey: string) {
@@ -56,7 +65,7 @@ function buildInternalNavigationUrl(input: {
 }) {
   const params = new URLSearchParams({
     destination: input.destination,
-    v: "nav-fixed-small-vector-20260506",
+    v: "nav-coordinate-priority-20260513",
     navZoom: "17"
   });
   if (input.mapsApiKey) {
@@ -81,12 +90,12 @@ function buildInternalNavigationUrl(input: {
 }
 
 function buildRouteWaypointQuery(waypoints: RouteMapInput["waypoints"]) {
-  return waypoints.map((waypoint) => resolveMapQuery(waypoint)).join("|");
+  return waypoints.map((waypoint) => resolveNavigationQuery(waypoint)).join("|");
 }
 
 function buildRouteDirectionsQuery(input: RouteMapInput) {
-  const origin = resolveMapQuery(input.origin);
-  const destination = resolveMapQuery(input.destination);
+  const origin = resolveNavigationQuery(input.origin);
+  const destination = resolveNavigationQuery(input.destination);
   const waypoints = buildRouteWaypointQuery(input.waypoints);
   return { origin, destination, waypoints, travelMode: input.travelMode };
 }
@@ -118,7 +127,7 @@ export function createMapsUrlBuilder(options?: { embedApiKey?: string | null }):
       originLongitude,
       navigationTarget = "web"
     }) {
-      const destination = resolveMapQuery({
+      const destination = resolveNavigationQuery({
         address: destinationAddress,
         locationKeyword: destinationKeyword,
         latitude: destinationLatitude,
@@ -138,7 +147,7 @@ export function createMapsUrlBuilder(options?: { embedApiKey?: string | null }):
       originLatitude,
       originLongitude
     }) {
-      const destination = resolveMapQuery({
+      const destination = resolveNavigationQuery({
         address: destinationAddress,
         locationKeyword: destinationKeyword,
         latitude: destinationLatitude,
