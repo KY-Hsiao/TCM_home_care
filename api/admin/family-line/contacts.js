@@ -5,8 +5,11 @@ import {
 } from "../../_lib/family-line-contacts.js";
 import {
   getFamilyLineSettings,
+  getFamilyLineTemplateDrafts,
   normalizeFamilyLineSettings,
-  updateFamilyLineSettings
+  normalizeFamilyLineTemplateDrafts,
+  updateFamilyLineSettings,
+  updateFamilyLineTemplateDrafts
 } from "../../_lib/family-line-settings.js";
 
 function setJson(response, statusCode, payload) {
@@ -69,6 +72,21 @@ export default async function handler(request, response) {
       return;
     }
 
+    if (resource === "templates") {
+      if (request.method === "GET") {
+        const result = await getFamilyLineTemplateDrafts();
+        setJson(response, 200, result);
+        return;
+      }
+
+      const body = normalizeBody(request);
+      const result = await updateFamilyLineTemplateDrafts(
+        normalizeFamilyLineTemplateDrafts(body.templates ?? body)
+      );
+      setJson(response, 200, result);
+      return;
+    }
+
     await ensureFamilyLineContactsTable();
 
     if (request.method === "GET") {
@@ -95,14 +113,19 @@ export default async function handler(request, response) {
     const message = error instanceof Error ? error.message : "";
     const missingDatabase = message.includes("DATABASE_URL") || message.includes("POSTGRES_URL");
     const isSettings = resource === "settings";
+    const isTemplates = resource === "templates";
     setJson(response, missingDatabase ? 503 : 500, {
       error: missingDatabase
         ? isSettings
           ? "LINE 發訊息設定資料庫尚未完成設定，請先配置 Neon / Vercel Postgres。"
-          : "LINE 名單資料庫尚未完成設定，請先配置 Neon / Vercel Postgres。"
+          : isTemplates
+            ? "LINE 訊息模板資料庫尚未完成設定，請先配置 Neon / Vercel Postgres。"
+            : "LINE 名單資料庫尚未完成設定，請先配置 Neon / Vercel Postgres。"
         : isSettings
           ? "LINE 發訊息設定存取失敗。"
-          : "LINE 名單管理資料存取失敗。"
+          : isTemplates
+            ? "LINE 訊息模板存取失敗。"
+            : "LINE 名單管理資料存取失敗。"
     });
   }
 }
