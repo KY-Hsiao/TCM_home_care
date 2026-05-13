@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useAppContext } from "../../app/use-app-context";
 import { buildReadonlySummary } from "../../modules/doctor/doctor-page-helpers";
@@ -15,7 +16,7 @@ function isDefaultBirthDate(value: string | null | undefined) {
   return !value || value === "1950-01-01" || value === "1950/01/01";
 }
 
-function InfoRow({ label, children }: { label: string; children: React.ReactNode }) {
+function InfoRow({ label, children }: { label: string; children: ReactNode }) {
   if (children === null || children === undefined || children === "") {
     return null;
   }
