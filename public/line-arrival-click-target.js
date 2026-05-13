@@ -6,12 +6,13 @@
   const TEMPLATE_KEY = "tcm-family-line-template-drafts";
   const SENT_KEY = "tcm-line-arrival-reminder-sent";
   const LAST_RESULT_KEY = "tcm-line-arrival-reminder-last-result";
-  const COOLDOWN_MS = 5 * 60 * 1000;
+  const COOLDOWN_MS = 2 * 60 * 60 * 1000;
   const DEFAULT_TEMPLATE = {
     subject: "醫師即將抵達提醒",
     content: "您好，{醫師} 已出發前往個案住處，請協助家中環境與個案狀態準備。若臨時不便，請盡快回覆行政人員。"
   };
   let sending = false;
+  let clickTimer = null;
 
   function loadJson(key, fallback) {
     try {
@@ -47,16 +48,30 @@
     return sent && typeof sent === "object" ? sent : {};
   }
 
-  function sentRecently(scheduleId) {
-    const value = sentMap()[scheduleId];
-    if (!value) return false;
+  function sentKeys(schedule) {
+    return [
+      `patient:${String(schedule.patient_id || "")}`,
+      `schedule:${String(schedule.id || "")}`,
+      String(schedule.id || "")
+    ].filter(Boolean);
+  }
+
+  function isRecentIso(value) {
     const time = new Date(value).getTime();
     return Number.isFinite(time) && Date.now() - time < COOLDOWN_MS;
   }
 
-  function markSent(scheduleId) {
+  function sentRecently(schedule) {
     const sent = sentMap();
-    sent[scheduleId] = new Date().toISOString();
+    return sentKeys(schedule).some((key) => isRecentIso(sent[key]));
+  }
+
+  function markSent(schedule) {
+    const sent = sentMap();
+    const now = new Date().toISOString();
+    sentKeys(schedule).forEach((key) => {
+      sent[key] = now;
+    });
     saveJson(SENT_KEY, sent);
   }
 
@@ -122,28 +137,29 @@
   }
 
   function chooseNextRouteSchedule(db, clickLabel) {
+    const label = compact(clickLabel);
+    const isDepartIntent = label.includes("出發") || label.includes("前往下一") || label.includes("下一站") || label.includes("下一家");
+    if (!isDepartIntent) return { schedule: null, reason: "not_departure_click" };
+
     const routePlan = getActiveRoutePlan(db);
     const schedules = activeRouteSchedules(db, routePlan);
-    const unsent = schedules.filter((schedule) => !sentRecently(schedule.id));
+    const unsent = schedules.filter((schedule) => !sentRecently(schedule));
 
-    const onWay = unsent.find((schedule) => ["on_the_way", "tracking", "proximity_pending"].includes(schedule.status));
-    if (onWay) return { schedule: onWay, reason: "current_on_the_way" };
-
-    const currentIndex = schedules.findIndex((schedule) => ["arrived", "in_treatment", "issue_pending"].includes(schedule.status));
+    const currentIndex = schedules.findIndex((schedule) => ["arrived", "in_treatment", "issue_pending", "completed", "followup_pending"].includes(schedule.status));
     if (currentIndex >= 0) {
       const next = schedules.slice(currentIndex + 1).find((schedule) =>
-        !["completed", "cancelled", "paused"].includes(schedule.status) && !sentRecently(schedule.id)
+        !["completed", "cancelled", "paused", "followup_pending"].includes(schedule.status) && !sentRecently(schedule)
       );
       if (next) return { schedule: next, reason: "next_after_current" };
     }
 
-    const label = compact(clickLabel);
-    if (label.includes("下一") || label.includes("前往") || label.includes("出發") || label.includes("導航")) {
-      const firstPending = unsent.find((schedule) => ["waiting_departure", "preparing", "scheduled"].includes(schedule.status));
-      if (firstPending) return { schedule: firstPending, reason: "first_pending_in_route" };
-    }
+    const currentOnWay = unsent.find((schedule) => ["on_the_way", "tracking", "proximity_pending"].includes(schedule.status));
+    if (currentOnWay) return { schedule: currentOnWay, reason: "current_on_the_way" };
 
-    return { schedule: null, reason: "no_route_target" };
+    const firstPending = unsent.find((schedule) => ["waiting_departure", "preparing", "scheduled"].includes(schedule.status));
+    if (firstPending) return { schedule: firstPending, reason: "first_pending_in_route" };
+
+    return { schedule: null, reason: "no_route_target_or_2h_cooldown" };
   }
 
   async function recipientsFor(db, schedule) {
@@ -169,11 +185,11 @@
 
   async function sendForSchedule(db, schedule, reason) {
     if (!schedule) {
-      recordResult({ ok: false, reason, error: "no_schedule" });
+      recordResult({ ok: false, reason, error: "no_schedule_or_2h_cooldown" });
       return;
     }
-    if (sentRecently(schedule.id)) {
-      recordResult({ ok: false, reason, scheduleId: schedule.id, error: "cooldown" });
+    if (sentRecently(schedule)) {
+      recordResult({ ok: false, reason, scheduleId: schedule.id, patientId: schedule.patient_id, error: "patient_2h_cooldown" });
       return;
     }
     const { recipients, source, patient, doctor, contactCount } = await recipientsFor(db, schedule);
@@ -188,7 +204,7 @@
       body: JSON.stringify({ subject: message.subject, content: message.content, recipients })
     });
     const payload = await response.json().catch(() => ({}));
-    if (response.ok) markSent(schedule.id);
+    if (response.ok) markSent(schedule);
     recordResult({ ok: response.ok, reason, scheduleId: schedule.id, patientId: schedule.patient_id, patientName: patient?.name || "", source, recipientCount: recipients.length, status: response.status, payload });
   }
 
@@ -210,15 +226,19 @@
     if (!button) return "";
     const text = button.textContent || "";
     const label = compact(text);
-    if (!(label.includes("前往") || label.includes("出發") || label.includes("導航") || label.includes("開導航") || label.includes("外部地圖") || label.includes("下一"))) return "";
+    const isDepartIntent = label.includes("出發") || label.includes("前往下一") || label.includes("下一站") || label.includes("下一家");
+    const isExcluded = label.includes("抵達") || label.includes("返回醫院") || label.includes("外部Google地圖") || label.includes("開啟Google導航") || label.includes("目前患者暫停") || label.includes("關閉導航");
+    if (!isDepartIntent || isExcluded) return "";
     return text;
   }
 
   document.addEventListener("click", (event) => {
     const label = clickLabel(event.target);
     if (!label) return;
-    void dispatch(label);
-    setTimeout(() => void dispatch(label), 450);
-    setTimeout(() => void dispatch(label), 1200);
-  }, true);
+    if (clickTimer) window.clearTimeout(clickTimer);
+    clickTimer = window.setTimeout(() => {
+      clickTimer = null;
+      void dispatch(label);
+    }, 250);
+  }, false);
 })();
