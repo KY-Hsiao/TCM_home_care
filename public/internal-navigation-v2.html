@@ -166,7 +166,9 @@
       const ARRIVAL_METERS = 70;
       const REROUTE_INTERVAL_MS = 28000;
       const POSITION_ALPHA = 0.42;
-      const HEADING_ALPHA = 0.22;
+      const HEADING_ALPHA = 0.48;
+      const HEADING_DEADBAND_DEGREES = 3;
+      const HEADING_MAX_STEP_DEGREES = 35;
       const SPEED_ALPHA = 0.3;
       const CAR_ICON_PATH =
         "M -10 -18 L 10 -18 L 15 -7 L 15 12 L 8 20 L -8 20 L -15 12 L -15 -7 Z M -6 -12 L 6 -12 L 9 -5 L -9 -5 Z";
@@ -288,7 +290,13 @@
 
       function smoothHeading(nextHeading) {
         const delta = ((nextHeading - lastHeading + 540) % 360) - 180;
-        lastHeading = (lastHeading + delta * HEADING_ALPHA + 360) % 360;
+        if (Math.abs(delta) < HEADING_DEADBAND_DEGREES) {
+          return Math.round(lastHeading);
+        }
+        const blendedDelta = delta * HEADING_ALPHA;
+        const limitedDelta =
+          Math.sign(blendedDelta) * Math.min(Math.abs(blendedDelta), HEADING_MAX_STEP_DEGREES);
+        lastHeading = (lastHeading + limitedDelta + 360) % 360;
         return Math.round(lastHeading);
       }
 
