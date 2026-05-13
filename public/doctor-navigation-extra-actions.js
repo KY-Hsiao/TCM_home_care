@@ -3,13 +3,29 @@
     return String(text || '').replace(/\s+/g, '').trim();
   }
 
-  function makeButton(label, className, onClick) {
+  function buttonClass(kind) {
+    if (kind === 'primary') return 'rounded-full bg-brand-coral px-3 py-2 text-sm font-semibold text-white';
+    if (kind === 'warn') return 'rounded-full border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800';
+    return 'rounded-full border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-brand-ink';
+  }
+
+  function makeButton(label, kind, onClick) {
     const button = document.createElement('button');
     button.type = 'button';
     button.textContent = label;
-    button.className = className;
+    button.className = buttonClass(kind);
     button.addEventListener('click', onClick);
     return button;
+  }
+
+  function makeLink(label, href) {
+    const link = document.createElement('a');
+    link.textContent = label;
+    link.href = href || '#';
+    link.target = '_blank';
+    link.rel = 'noreferrer';
+    link.className = buttonClass('normal');
+    return link;
   }
 
   function markNotHome() {
@@ -46,49 +62,90 @@
     }
   }
 
-  function shortenBuiltInLabels(dialog) {
-    Array.from(dialog.querySelectorAll('a, button')).forEach((element) => {
+  function findElementByText(dialog, selector, labels) {
+    return Array.from(dialog.querySelectorAll(selector)).find((element) => {
       const label = clean(element.textContent);
-      if (label.includes(clean('外部 Google 地圖'))) element.textContent = '外部地圖';
-      if (label.includes(clean('已抵達，回到即時導航'))) element.textContent = '已抵達';
-      if (label.includes(clean('關閉導航'))) element.textContent = '關閉';
-      if (label.includes(clean('開啟 Google 導航'))) element.textContent = '開導航';
+      return labels.some((text) => label.includes(clean(text)));
+    }) || null;
+  }
+
+  function hideOriginalActions(dialog) {
+    Array.from(dialog.querySelectorAll('a, button')).forEach((element) => {
+      if (element.closest('[data-unified-nav-actions="true"]')) return;
+      const label = clean(element.textContent);
+      const isNavAction =
+        label.includes(clean('外部 Google 地圖')) ||
+        label.includes(clean('外部地圖')) ||
+        label.includes(clean('開啟 Google 導航')) ||
+        label.includes(clean('開導航')) ||
+        label.includes(clean('目前患者暫停')) ||
+        label.includes(clean('註記患者不在家')) ||
+        label.includes(clean('患者不在家／暫停')) ||
+        label.includes(clean('不在家')) ||
+        label.includes(clean('已抵達，回到即時導航')) ||
+        label.includes(clean('已抵達')) ||
+        label.includes(clean('關閉導航')) ||
+        label.includes(clean('關閉'));
+      if (isNavAction) element.style.display = 'none';
     });
   }
 
-  function mergePauseButtonsWithNotHome(dialog) {
-    const alertClass = 'rounded-full border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800';
-    Array.from(dialog.querySelectorAll('button')).forEach((button) => {
-      const label = clean(button.textContent);
-      if (!label.includes(clean('目前患者暫停')) && !label.includes(clean('註記患者不在家')) && !label.includes(clean('患者不在家／暫停'))) return;
-      if (button.dataset.notHomeMerged === 'true') return;
-      button.textContent = '不在家';
-      button.className = alertClass;
-      button.dataset.notHomeMerged = 'true';
-      button.addEventListener('click', markNotHome, { capture: true });
+  function getHeader(dialog) {
+    return dialog.querySelector('.border-b') || dialog.querySelector('div');
+  }
+
+  function createUnifiedBar(dialog) {
+    const existing = dialog.querySelector('[data-unified-nav-actions="true"]');
+    if (existing) return existing;
+
+    const external = findElementByText(dialog, 'a', ['外部 Google 地圖', '外部地圖', '開啟 Google 導航', '開導航']);
+    const pause = findElementByText(dialog, 'button', ['目前患者暫停', '註記患者不在家', '患者不在家／暫停', '不在家']);
+    const arrive = findElementByText(dialog, 'button', ['已抵達，回到即時導航', '已抵達', '關閉導航', '關閉']);
+
+    const bar = document.createElement('div');
+    bar.dataset.unifiedNavActions = 'true';
+    bar.className = 'flex w-full flex-wrap gap-2 pt-2 sm:w-auto sm:pt-0';
+
+    bar.appendChild(makeButton('返回', 'normal', () => {
+      if (window.history.length > 1) window.history.back();
+      else window.location.assign('/doctor/navigation');
+    }));
+
+    if (pause) {
+      bar.appendChild(makeButton('不在家', 'warn', () => {
+        markNotHome();
+        pause.click();
+      }));
+    }
+
+    if (external && external.getAttribute('href')) {
+      bar.appendChild(makeLink('外部地圖', external.getAttribute('href')));
+    }
+
+    if (arrive) {
+      const arriveLabel = clean(arrive.textContent).includes(clean('關閉')) ? '關閉' : '已抵達';
+      bar.appendChild(makeButton(arriveLabel, 'primary', () => arrive.click()));
+    }
+
+    const header = getHeader(dialog);
+    if (header) header.appendChild(bar);
+    return bar;
+  }
+
+  function trimFallbackText(dialog) {
+    Array.from(dialog.querySelectorAll('p')).forEach((p) => {
+      const text = p.textContent || '';
+      if (text.includes('這通常是 Google Maps Embed API key') || text.includes('抵達後回到本頁')) {
+        p.style.display = 'none';
+      }
     });
   }
 
   function enhance(dialog) {
     if (!dialog) return;
-    const containers = Array.from(dialog.querySelectorAll('div')).filter((node) => {
-      const text = node.textContent || '';
-      return (text.includes('外部 Google 地圖') || text.includes('外部地圖')) && (text.includes('已抵達') || text.includes('關閉導航') || text.includes('關閉'));
-    });
-    const container = containers[0];
-    if (!container) return;
-
-    if (dialog.dataset.navigationExtraActions !== 'true') {
-      const normalClass = 'rounded-full border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-brand-ink';
-      container.insertBefore(makeButton('返回', normalClass, () => {
-        if (window.history.length > 1) window.history.back();
-        else window.location.assign('/doctor/navigation');
-      }), container.firstChild);
-      dialog.dataset.navigationExtraActions = 'true';
-    }
-
-    mergePauseButtonsWithNotHome(dialog);
-    shortenBuiltInLabels(dialog);
+    createUnifiedBar(dialog);
+    hideOriginalActions(dialog);
+    trimFallbackText(dialog);
   }
 
   function scan() {
