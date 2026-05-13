@@ -3,10 +3,6 @@
     return String(text || '').replace(/\s+/g, '').trim();
   }
 
-  function findButton(root, label) {
-    return Array.from(root.querySelectorAll('button')).find((button) => clean(button.textContent).includes(clean(label)));
-  }
-
   function makeButton(label, className, onClick) {
     const button = document.createElement('button');
     button.type = 'button';
@@ -23,7 +19,7 @@
       if (!raw) return;
       const db = JSON.parse(raw);
       const now = new Date().toISOString();
-      const active = new Set(['on_the_way', 'tracking', 'proximity_pending']);
+      const active = new Set(['on_the_way', 'tracking', 'proximity_pending', 'paused']);
       const schedules = Array.isArray(db.visit_schedules) ? db.visit_schedules : [];
       const target = schedules
         .filter((schedule) => active.has(schedule.status) && schedule.visit_type !== '回院病歷')
@@ -50,33 +46,38 @@
     }
   }
 
+  function mergePauseButtonsWithNotHome(dialog) {
+    const alertClass = 'rounded-full border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-800';
+    Array.from(dialog.querySelectorAll('button')).forEach((button) => {
+      const label = clean(button.textContent);
+      if (!label.includes(clean('目前患者暫停')) && !label.includes(clean('註記患者不在家'))) return;
+      if (button.dataset.notHomeMerged === 'true') return;
+      button.textContent = '患者不在家／暫停';
+      button.className = alertClass;
+      button.dataset.notHomeMerged = 'true';
+      button.addEventListener('click', markNotHome, { capture: true });
+    });
+  }
+
   function enhance(dialog) {
-    if (!dialog || dialog.dataset.navigationExtraActions === 'true') return;
+    if (!dialog) return;
     const containers = Array.from(dialog.querySelectorAll('div')).filter((node) => {
       const text = node.textContent || '';
       return text.includes('外部 Google 地圖') && (text.includes('已抵達') || text.includes('關閉導航'));
     });
     const container = containers[0];
     if (!container) return;
-    dialog.dataset.navigationExtraActions = 'true';
 
-    const normalClass = 'rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-brand-ink';
-    const alertClass = 'rounded-full border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-800';
-
-    container.insertBefore(makeButton('返回前頁', normalClass, () => {
-      if (window.history.length > 1) window.history.back();
-      else window.location.assign('/doctor/navigation');
-    }), container.firstChild);
-
-    const pauseButton = findButton(dialog, '目前患者暫停');
-    if (pauseButton) {
-      const notHomeButton = makeButton('註記患者不在家', alertClass, () => {
-        markNotHome();
-        pauseButton.click();
-      });
-      container.insertBefore(notHomeButton, pauseButton);
-      pauseButton.style.display = 'none';
+    if (dialog.dataset.navigationExtraActions !== 'true') {
+      const normalClass = 'rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-brand-ink';
+      container.insertBefore(makeButton('返回前頁', normalClass, () => {
+        if (window.history.length > 1) window.history.back();
+        else window.location.assign('/doctor/navigation');
+      }), container.firstChild);
+      dialog.dataset.navigationExtraActions = 'true';
     }
+
+    mergePauseButtonsWithNotHome(dialog);
   }
 
   function scan() {
