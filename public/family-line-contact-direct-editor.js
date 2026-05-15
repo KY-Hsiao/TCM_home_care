@@ -209,7 +209,8 @@
         color: #64748b;
         font-size: 14px;
       }
-      .tcm-hide-complex-line-association {
+      .tcm-hide-complex-line-association,
+      .tcm-hide-original-line-contact-row {
         display: none !important;
       }
       @media (max-width: 760px) {
@@ -229,6 +230,53 @@
       '操作名單',
       '目前顯示好友'
     ].some((label) => text.includes(clean(label)));
+  }
+
+  function isOriginalContactRowElement(element, contacts) {
+    if (!element || element.id === PANEL_ID || element.closest?.(`#${PANEL_ID}`)) return false;
+    const text = clean(element.textContent);
+    if (!text || shouldPreserveOriginalTool(text)) return false;
+    const matchedContact = contacts.some((contact) =>
+      (contact.lineUserId && text.includes(clean(contact.lineUserId))) ||
+      (contact.displayName && clean(contact.displayName).length >= 2 && text.includes(clean(contact.displayName)))
+    );
+    if (!matchedContact) return false;
+    const hasOriginalAssociationCue = [
+      '已綁定',
+      '缺LINEuserId',
+      'LINE名單',
+      '行政人員',
+      '家屬聯繫',
+      '關聯',
+      '取消關聯',
+      '設為',
+      '備註'
+    ].some((cue) => text.includes(clean(cue)));
+    return hasOriginalAssociationCue;
+  }
+
+  function hideOriginalContactRows(contacts) {
+    if (!contacts.length) return;
+    const candidates = Array.from(document.querySelectorAll('li, tr, article, section, div'))
+      .filter((node) => {
+        if (node.id === PANEL_ID || node.closest?.(`#${PANEL_ID}`)) return false;
+        const text = clean(node.textContent);
+        if (!text) return false;
+        if (shouldPreserveOriginalTool(text)) return false;
+        const childContactRows = Array.from(node.children || []).filter((child) =>
+          isOriginalContactRowElement(child, contacts)
+        );
+        if (childContactRows.length >= 2) return true;
+        return isOriginalContactRowElement(node, contacts);
+      })
+      .sort((a, b) => (b.textContent || '').length - (a.textContent || '').length);
+
+    candidates.forEach((node) => {
+      const text = clean(node.textContent);
+      if (shouldPreserveOriginalTool(text)) return;
+      if (node.querySelector?.('button') && shouldPreserveOriginalTool(node.textContent)) return;
+      node.classList.add('tcm-hide-original-line-contact-row');
+    });
   }
 
   function hideOriginalComplexAssociationUi() {
@@ -257,6 +305,7 @@
         target.classList.add('tcm-hide-complex-line-association');
       }
     });
+    hideOriginalContactRows(loadContacts());
   }
 
   function renderPanel(options = {}) {
@@ -371,6 +420,7 @@
       row.appendChild(adminLabel);
       list.appendChild(row);
     });
+    hideOriginalContactRows(contacts);
   }
 
   function scheduleRender(options = {}) {
