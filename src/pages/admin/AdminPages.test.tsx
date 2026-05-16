@@ -2423,7 +2423,8 @@ describe("AdminPages", () => {
     expect(screen.queryByRole("combobox", { name: "批次關聯居家個案" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "顯示詳細" }));
     expect(screen.getByLabelText("王先生 LINE 發送勾選")).toBeChecked();
-    expect(screen.getByRole("combobox", { name: "篩選醫師" })).toHaveValue("doc-001");
+    expect(screen.queryByText("LINE 好友篩選")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "重新整理 LINE 好友" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "顯示全部 LINE 好友以新增關聯" })).not.toBeInTheDocument();
   });
 
@@ -2761,15 +2762,15 @@ describe("AdminPages", () => {
     vi.stubGlobal("fetch", fetchMock);
     renderWithProviders(<AdminFamilyLinePage />);
 
-    fireEvent.change(screen.getByLabelText("篩選醫師"), {
+    fireEvent.click(screen.getByRole("button", { name: /範本群發/ }));
+    expect(screen.getByRole("dialog", { name: "範本群發" })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("範本套用醫師"), {
       target: { value: "doc-extra" }
     });
     fireEvent.click(screen.getByRole("button", { name: "顯示詳細" }));
     expect(screen.getByLabelText("跨醫師家屬 LINE 發送勾選")).toBeInTheDocument();
     expect(screen.getAllByText(/蕭坤元醫師、許明哲醫師|許明哲醫師、蕭坤元醫師/).length).toBeGreaterThan(0);
 
-    fireEvent.click(screen.getByRole("button", { name: /範本群發/ }));
-    expect(screen.getByRole("dialog", { name: "範本群發" })).toBeInTheDocument();
     fireEvent.click(screen.getByLabelText("醫師抵達前提醒 本次發送勾選"));
     fireEvent.click(screen.getByLabelText("跨醫師家屬 LINE 發送勾選"));
     fireEvent.click(screen.getByLabelText("確認本次 LINE 發送"));

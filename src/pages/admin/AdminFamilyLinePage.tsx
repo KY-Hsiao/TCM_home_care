@@ -1337,36 +1337,19 @@ export function AdminFamilyLinePage() {
         </div>
 
         <div className="space-y-4">
-          <Panel title="LINE 好友篩選">
-            <div className="grid gap-3 text-sm sm:grid-cols-[minmax(140px,180px)_auto] sm:items-end">
-              <label className="block">
-                <span className="mb-1 block font-medium text-brand-ink">篩選醫師</span>
-                <select
-                  aria-label="篩選醫師"
-                  value={selectedDoctorId}
-                  onChange={(event) => setSelectedDoctorId(event.target.value)}
-                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2"
-                >
-                  <option value="all">全部醫師</option>
-                  {db.doctors.map((doctor) => (
-                    <option key={doctor.id} value={doctor.id}>
-                      {doctor.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
+          <Panel
+            title="LINE 好友名單"
+            action={
               <button
                 type="button"
                 onClick={() => void syncLineOfficialAccountFriends()}
                 disabled={isSyncingLineFriends}
-                className="w-fit rounded-full border border-emerald-200 bg-white px-4 py-2 text-xs font-semibold text-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+                className="rounded-full border border-emerald-200 bg-white px-4 py-2 text-xs font-semibold text-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {isSyncingLineFriends ? "重新整理中" : "重新整理 LINE 好友"}
               </button>
-            </div>
-          </Panel>
-
-          <Panel title="LINE 好友名單">
+            }
+          >
             <div className="space-y-3">
               <div className="flex flex-wrap items-center gap-2">
                 <button
@@ -1404,7 +1387,7 @@ export function AdminFamilyLinePage() {
                   <p>
                     {focusedPatientId
                       ? "目前此個案尚未關聯 LINE 好友。"
-                      : "目前篩選醫師沒有可發送的 LINE 好友。請確認右上方個案關聯是否已連到該醫師的居家個案。"}
+                      : "目前篩選醫師沒有可發送的 LINE 好友。請確認個案關聯是否已連到該醫師的居家個案。"}
                   </p>
                 </div>
               ) : (
