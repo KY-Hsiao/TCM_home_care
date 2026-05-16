@@ -60,10 +60,30 @@ function Invoke-NativeTextCommand {
 
   $process = [System.Diagnostics.Process]::new()
   $process.StartInfo = $processInfo
+  $stdoutBuilder = [System.Text.StringBuilder]::new()
+  $stderrBuilder = [System.Text.StringBuilder]::new()
+
+  $stdoutHandler = [System.Diagnostics.DataReceivedEventHandler]{
+    param($sender, $eventArgs)
+    if ($null -ne $eventArgs.Data) {
+      [void]$stdoutBuilder.AppendLine($eventArgs.Data)
+    }
+  }
+  $stderrHandler = [System.Diagnostics.DataReceivedEventHandler]{
+    param($sender, $eventArgs)
+    if ($null -ne $eventArgs.Data) {
+      [void]$stderrBuilder.AppendLine($eventArgs.Data)
+    }
+  }
+  $process.add_OutputDataReceived($stdoutHandler)
+  $process.add_ErrorDataReceived($stderrHandler)
 
   if (-not $process.Start()) {
     throw "$Description failed to start."
   }
+
+  $process.BeginOutputReadLine()
+  $process.BeginErrorReadLine()
 
   $completed = $process.WaitForExit($TimeoutSeconds * 1000)
   if (-not $completed) {
@@ -75,8 +95,11 @@ function Invoke-NativeTextCommand {
     throw "$Description timed out after $TimeoutSeconds seconds. Check network access and authentication, then retry."
   }
 
-  $stdout = $process.StandardOutput.ReadToEnd()
-  $stderr = $process.StandardError.ReadToEnd()
+  $process.WaitForExit()
+  $stdout = $stdoutBuilder.ToString()
+  $stderr = $stderrBuilder.ToString()
+  $process.remove_OutputDataReceived($stdoutHandler)
+  $process.remove_ErrorDataReceived($stderrHandler)
   $result = [pscustomobject]@{
     ExitCode = $process.ExitCode
     StdOut = $stdout
