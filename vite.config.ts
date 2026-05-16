@@ -5,12 +5,21 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
 
   return {
-  plugins: [
-    react(),
-    {
-      name: "local-geocode-api",
-      configureServer(server) {
-        server.middlewares.use("/api/maps/geocode", async (request, response) => {
+    server: {
+      watch: {
+        ignored: [
+          "**/.codex/**",
+          "**/dist/**",
+          "**/run_logs/**"
+        ]
+      }
+    },
+    plugins: [
+      react(),
+      {
+        name: "local-geocode-api",
+        configureServer(server) {
+          server.middlewares.use("/api/maps/geocode", async (request, response) => {
           if (request.method !== "POST") {
             response.statusCode = 405;
             response.setHeader("Allow", "POST");
@@ -101,14 +110,14 @@ export default defineConfig(({ mode }) => {
               );
             }
           });
-        });
+          });
+        }
       }
+    ],
+    test: {
+      environment: "jsdom",
+      globals: true,
+      setupFiles: "./src/test/setup.ts"
     }
-  ],
-  test: {
-    environment: "jsdom",
-    globals: true,
-    setupFiles: "./src/test/setup.ts"
-  }
   };
 });

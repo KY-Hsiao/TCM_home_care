@@ -9,6 +9,7 @@ dist/
 coverage/
 run_logs/
 .vercel/
+.codex/deploy-*/
 .DS_Store
 *.tsbuildinfo
 .env.local

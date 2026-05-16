@@ -151,13 +151,13 @@ function escapeHtml(value: string | number | boolean | null | undefined) {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
-    .replace(/\"/g, "&quot;")
+    .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
 }
 
 function normalizeFileToken(value: string) {
   return value
-    .replace(/[\\/:*?\"<>|]/g, "-")
+    .replace(/[\\/:*?"<>|]/g, "-")
     .replace(/\s+/g, "")
     .trim();
 }

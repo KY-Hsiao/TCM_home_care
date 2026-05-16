@@ -633,6 +633,7 @@ export function AdminDashboardPage() {
   const selectedPausedPatientValue = selectedPausedPatient
     ? getPausedPatientOptionKey(selectedPausedPatient)
     : "";
+  const pausedPatientCount = new Set(dashboard.pausedPatients.map((patient) => patient.patientId)).size;
 
   return (
     <div className="space-y-6">
@@ -768,7 +769,7 @@ export function AdminDashboardPage() {
                   const statusLabel =
                     patient.source === "temporary_schedule"
                       ? "臨時暫停"
-                      : `本月 ${patient.expectedVisitCount} 次`;
+                      : `長期暫停 / 本月 ${patient.expectedVisitCount} 次`;
                   return (
                     <option key={optionKey} value={optionKey}>
                       {maskPatientName(patient.patientName)} / {patient.serviceSlot || "未設定服務時段"} / {statusLabel}
@@ -782,7 +783,7 @@ export function AdminDashboardPage() {
           <div className="grid gap-3 sm:grid-cols-3">
             <div className="rounded-2xl border border-slate-200 bg-white p-4">
               <p className="text-xs text-slate-500">暫停個案</p>
-              <p className="mt-2 text-2xl font-semibold text-brand-ink">{dashboard.pausedPatients.length}</p>
+              <p className="mt-2 text-2xl font-semibold text-brand-ink">{pausedPatientCount}</p>
             </div>
             <div className="rounded-2xl border border-slate-200 bg-white p-4">
               <p className="text-xs text-slate-500">本月未排程暫停</p>
@@ -809,7 +810,7 @@ export function AdminDashboardPage() {
                     value={
                       selectedPausedPatient.source === "temporary_schedule"
                         ? "臨時暫停"
-                        : `本月 ${selectedPausedPatient.expectedVisitCount} 次`
+                        : `長期暫停 / 本月 ${selectedPausedPatient.expectedVisitCount} 次`
                     }
                     compact
                   />

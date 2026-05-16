@@ -1402,7 +1402,9 @@ describe("AdminPages", () => {
 
     const currentMonthStats = screen.getByRole("heading", { name: "本月統計" }).closest("section");
     expect(currentMonthStats).not.toBeNull();
-    expect(within(currentMonthStats!).getAllByText("1")).toHaveLength(3);
+    expect(currentMonthStats?.textContent).toContain("執行人次1");
+    expect(currentMonthStats?.textContent).toContain("暫停人次3");
+    expect(currentMonthStats?.textContent).toContain("緊急處置人次1");
   });
 
   it("AdminDashboardPage 清掉已儲存路線後仍保留已結算 KPI", () => {
@@ -1500,14 +1502,92 @@ describe("AdminPages", () => {
 
     const currentMonthStats = screen.getByRole("heading", { name: "本月統計" }).closest("section");
     expect(currentMonthStats).not.toBeNull();
+    expect(currentMonthStats?.textContent).toContain("暫停人次6");
+
+    const pausedPanel = screen.getByRole("heading", { name: "本月暫停名單" }).closest("section");
+    expect(pausedPanel).not.toBeNull();
+    fireEvent.change(screen.getByLabelText("瀏覽暫停個案"), {
+      target: { value: "pat-001:patient_status:expected" }
+    });
+    expect(within(pausedPanel!).getByText("王○珠")).toBeInTheDocument();
+    expect(within(pausedPanel!).getByText("蕭坤元醫師 / 星期三上午")).toBeInTheDocument();
+    expect(within(pausedPanel!).getByText("長期暫停 / 本月 4 次")).toBeInTheDocument();
+  });
+
+  it("AdminDashboardPage 長期暫停與路線暫停同一天同患者不會重複計算", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-16T08:00:00+08:00"));
+    const seededDb = createSeedDb();
+    const baseSchedule = seededDb.visit_schedules[0];
+    if (!baseSchedule) {
+      throw new Error("缺少測試用排程。");
+    }
+    const pausedSchedule = {
+      ...baseSchedule,
+      id: "vs-dashboard-overlap-paused-001",
+      patient_id: "pat-001",
+      scheduled_start_at: "2026-05-06T09:00:00+08:00",
+      scheduled_end_at: "2026-05-06T10:00:00+08:00",
+      service_time_slot: "星期三上午",
+      status: "paused" as const,
+      note: "路線上暫停一次"
+    };
+    const completedRoutePlan = {
+      ...seededDb.saved_route_plans[0],
+      id: "route-dashboard-overlap-paused",
+      route_date: "2026-05-06",
+      route_weekday: "星期三",
+      route_items: [
+        {
+          ...seededDb.saved_route_plans[0].route_items[0],
+          patient_id: "pat-001",
+          schedule_id: pausedSchedule.id,
+          checked: false,
+          route_order: 1,
+          status: "paused" as const
+        }
+      ],
+      schedule_ids: [pausedSchedule.id],
+      execution_status: "completed" as const,
+      executed_at: "2026-05-06T08:00:00+08:00"
+    };
+    const dbForRecord = {
+      ...seededDb,
+      patients: seededDb.patients.map((patient) =>
+        patient.id === "pat-001"
+          ? {
+              ...patient,
+              status: "paused" as const,
+              preferred_service_slot: "星期三上午"
+            }
+          : patient
+      ),
+      visit_schedules: [pausedSchedule],
+      saved_route_plans: [completedRoutePlan],
+      notification_center_items: []
+    };
+
+    window.localStorage.setItem(
+      MOCK_DB_STORAGE_KEY,
+      JSON.stringify({
+        ...dbForRecord,
+        route_completion_records: [
+          buildRouteCompletionRecord(dbForRecord, completedRoutePlan, "2026-05-06T11:00:00+08:00")
+        ]
+      })
+    );
+
+    renderWithProviders(<AdminDashboardPage />);
+
+    const currentMonthStats = screen.getByRole("heading", { name: "本月統計" }).closest("section");
+    expect(currentMonthStats).not.toBeNull();
     expect(currentMonthStats?.textContent).toContain("暫停人次4");
 
     const pausedPanel = screen.getByRole("heading", { name: "本月暫停名單" }).closest("section");
     expect(pausedPanel).not.toBeNull();
-    expect(screen.getByLabelText("瀏覽暫停個案")).toHaveValue("pat-001:patient_status:expected");
-    expect(within(pausedPanel!).getByText("王○珠")).toBeInTheDocument();
-    expect(within(pausedPanel!).getByText("蕭坤元醫師 / 星期三上午")).toBeInTheDocument();
-    expect(within(pausedPanel!).getByText("本月 4 次")).toBeInTheDocument();
+    expect(within(pausedPanel!).getByText("暫停個案").nextElementSibling?.textContent).toBe("1");
+    expect(within(pausedPanel!).getByText("本月未排程暫停").nextElementSibling?.textContent).toBe("3");
+    expect(within(pausedPanel!).getByText("臨時/已排程暫停").nextElementSibling?.textContent).toBe("1");
   });
 
   it("AdminDashboardPage 本月暫停會納入臨時暫停排程並可查名單", () => {
@@ -1545,7 +1625,7 @@ describe("AdminPages", () => {
 
     const currentMonthStats = screen.getByRole("heading", { name: "本月統計" }).closest("section");
     expect(currentMonthStats).not.toBeNull();
-    expect(currentMonthStats?.textContent).toContain("暫停人次1");
+    expect(currentMonthStats?.textContent).toContain("暫停人次3");
 
     const pausedPanel = screen.getByRole("heading", { name: "本月暫停名單" }).closest("section");
     expect(pausedPanel).not.toBeNull();
@@ -1554,6 +1634,185 @@ describe("AdminPages", () => {
     });
     expect(within(pausedPanel!).getByText("陳○雄")).toBeInTheDocument();
     expect(within(pausedPanel!).getByText("臨時暫停")).toBeInTheDocument();
+  });
+
+  it("AdminDashboardPage 暫停個案會以患者去重，不會把同一患者多筆暫停算成多人", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-16T08:00:00+08:00"));
+    const seededDb = createSeedDb();
+    const baseSchedule = seededDb.visit_schedules[0];
+    if (!baseSchedule) {
+      throw new Error("缺少測試用排程。");
+    }
+
+    window.localStorage.setItem(
+      MOCK_DB_STORAGE_KEY,
+      JSON.stringify({
+        ...seededDb,
+        visit_schedules: [
+          {
+            ...baseSchedule,
+            id: "vs-dashboard-same-patient-paused-001",
+            patient_id: "pat-002",
+            scheduled_start_at: "2026-05-20T09:00:00+08:00",
+            scheduled_end_at: "2026-05-20T10:00:00+08:00",
+            service_time_slot: "星期三上午",
+            status: "paused" as const,
+            note: "家屬臨時暫停一次"
+          },
+          {
+            ...baseSchedule,
+            id: "vs-dashboard-same-patient-paused-002",
+            patient_id: "pat-002",
+            scheduled_start_at: "2026-05-27T09:00:00+08:00",
+            scheduled_end_at: "2026-05-27T10:00:00+08:00",
+            service_time_slot: "星期三上午",
+            status: "paused" as const,
+            note: "家屬臨時暫停一次"
+          }
+        ],
+        saved_route_plans: [],
+        route_completion_records: []
+      })
+    );
+
+    renderWithProviders(<AdminDashboardPage />);
+
+    const currentMonthStats = screen.getByRole("heading", { name: "本月統計" }).closest("section");
+    expect(currentMonthStats).not.toBeNull();
+    expect(currentMonthStats?.textContent).toContain("暫停人次2");
+
+    const pausedPanel = screen.getByRole("heading", { name: "本月暫停名單" }).closest("section");
+    expect(pausedPanel).not.toBeNull();
+    expect(within(pausedPanel!).getByText("暫停個案").nextElementSibling?.textContent).toBe("1");
+  });
+
+  it("AdminDashboardPage 患者端請假未服務算暫停，醫師請假取消不算患者暫停", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-16T08:00:00+08:00"));
+    const seededDb = createSeedDb();
+    const baseSchedule = seededDb.visit_schedules[0];
+    if (!baseSchedule) {
+      throw new Error("缺少測試用排程。");
+    }
+
+    window.localStorage.setItem(
+      MOCK_DB_STORAGE_KEY,
+      JSON.stringify({
+        ...seededDb,
+        visit_schedules: [
+          {
+            ...baseSchedule,
+            id: "vs-dashboard-patient-leave-001",
+            patient_id: "pat-001",
+            scheduled_start_at: "2026-05-20T09:00:00+08:00",
+            scheduled_end_at: "2026-05-20T10:00:00+08:00",
+            service_time_slot: "星期三上午",
+            status: "cancelled" as const,
+            note: "患者請假，當日無法服務"
+          },
+          {
+            ...baseSchedule,
+            id: "vs-dashboard-doctor-leave-001",
+            patient_id: "pat-002",
+            scheduled_start_at: "2026-05-21T09:00:00+08:00",
+            scheduled_end_at: "2026-05-21T10:00:00+08:00",
+            service_time_slot: "星期四上午",
+            status: "cancelled" as const,
+            note: "取消：醫師請假：院內會議"
+          }
+        ],
+        saved_route_plans: [],
+        route_completion_records: []
+      })
+    );
+
+    renderWithProviders(<AdminDashboardPage />);
+
+    const currentMonthStats = screen.getByRole("heading", { name: "本月統計" }).closest("section");
+    expect(currentMonthStats).not.toBeNull();
+    expect(currentMonthStats?.textContent).toContain("暫停人次1");
+
+    const pausedPanel = screen.getByRole("heading", { name: "本月暫停名單" }).closest("section");
+    expect(pausedPanel).not.toBeNull();
+    expect(within(pausedPanel!).getByText("王○珠")).toBeInTheDocument();
+    expect(within(pausedPanel!).queryByText("陳○雄")).not.toBeInTheDocument();
+  });
+
+  it("AdminDashboardPage 無暫停註記但服務時間已過未服務也算暫停", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-16T12:00:00+08:00"));
+    const seededDb = createSeedDb();
+    const baseSchedule = seededDb.visit_schedules[0];
+    if (!baseSchedule) {
+      throw new Error("缺少測試用排程。");
+    }
+
+    window.localStorage.setItem(
+      MOCK_DB_STORAGE_KEY,
+      JSON.stringify({
+        ...seededDb,
+        visit_schedules: [
+          {
+            ...baseSchedule,
+            id: "vs-dashboard-unserved-due-001",
+            patient_id: "pat-001",
+            scheduled_start_at: "2026-05-16T09:00:00+08:00",
+            scheduled_end_at: "2026-05-16T10:00:00+08:00",
+            service_time_slot: "星期六上午",
+            status: "scheduled" as const,
+            last_feedback_code: null,
+            note: "例行居家訪視"
+          },
+          {
+            ...baseSchedule,
+            id: "vs-dashboard-unserved-future-001",
+            patient_id: "pat-002",
+            scheduled_start_at: "2026-05-16T14:00:00+08:00",
+            scheduled_end_at: "2026-05-16T15:00:00+08:00",
+            service_time_slot: "星期六下午",
+            status: "scheduled" as const,
+            last_feedback_code: null,
+            note: "例行居家訪視"
+          }
+        ],
+        saved_route_plans: [
+          {
+            ...seededDb.saved_route_plans[0],
+            id: "route-dashboard-unserved-due",
+            route_date: "2026-05-16",
+            route_weekday: "星期六",
+            route_items: [
+              {
+                ...seededDb.saved_route_plans[0].route_items[0],
+                patient_id: "pat-001",
+                schedule_id: "vs-dashboard-unserved-due-001",
+                checked: false,
+                route_order: 1,
+                status: "scheduled" as const
+              }
+            ],
+            schedule_ids: ["vs-dashboard-unserved-due-001"],
+            execution_status: "completed" as const,
+            executed_at: "2026-05-16T08:00:00+08:00"
+          }
+        ],
+        route_completion_records: [],
+        visit_records: [],
+        notification_center_items: []
+      })
+    );
+
+    renderWithProviders(<AdminDashboardPage />);
+
+    const currentMonthStats = screen.getByRole("heading", { name: "本月統計" }).closest("section");
+    expect(currentMonthStats).not.toBeNull();
+    expect(currentMonthStats?.textContent).toContain("暫停人次1");
+
+    const pausedPanel = screen.getByRole("heading", { name: "本月暫停名單" }).closest("section");
+    expect(pausedPanel).not.toBeNull();
+    expect(within(pausedPanel!).getByText("王○珠")).toBeInTheDocument();
+    expect(within(pausedPanel!).queryByText("陳○雄")).not.toBeInTheDocument();
   });
 
   it("AdminDashboardPage 會顯示醫師本月綜合表現排行", () => {
@@ -1623,7 +1882,7 @@ describe("AdminPages", () => {
     expect(performancePanel).not.toBeNull();
     expect(within(performancePanel!).getByText("#1 蕭坤元醫師")).toBeInTheDocument();
     expect(within(performancePanel!).getByText("#2 測試排行醫師")).toBeInTheDocument();
-    expect(within(performancePanel!).getByText("分數 55")).toBeInTheDocument();
+    expect(within(performancePanel!).getByText("分數 47")).toBeInTheDocument();
     expect(within(performancePanel!).getByText("分數 9")).toBeInTheDocument();
   });
 

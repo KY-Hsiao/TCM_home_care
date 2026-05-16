@@ -1102,10 +1102,6 @@ export function DoctorLocationPage() {
     repositories.patientRepository.getDoctors().find((doctor) => doctor.id === session.activeDoctorId) ??
     repositories.patientRepository.getDoctors()[0];
   const effectiveDoctorId = currentDoctor?.id ?? session.activeDoctorId;
-  const routeSchedules = repositories.visitRepository.getDoctorRouteSchedules(
-    effectiveDoctorId,
-    session.activeRoutePlanId
-  );
   const routeContexts = buildDoctorRouteContexts({
     repositories,
     services,

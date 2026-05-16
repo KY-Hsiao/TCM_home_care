@@ -29,7 +29,7 @@ powershell -ExecutionPolicy Bypass -File .\tools\publish_github_and_vercel.ps1 -
 
 6. 發布流程會：
    - 推送目前 branch 到 GitHub
-   - 等待 `deploy-vercel.yml` 的 `Deploy to Vercel` GitHub Actions run
+   - 以低輸出輪詢等待 `deploy-vercel.yml` 的 `Deploy to Vercel` GitHub Actions run
    - 若 push 沒有產生新的 workflow run，會改用 `workflow_dispatch` 主動觸發一次
    - 若本機也設定 `VERCEL_DEPLOY_HOOK_URL`，會額外直接觸發 Vercel deploy hook
 7. 若 `VERCEL_DEPLOY_HOOK_URL` 未設定，需明確告知：

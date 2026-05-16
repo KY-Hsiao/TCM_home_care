@@ -50,22 +50,73 @@ export function createStaffingRepository(
     return matchedWeekday ? weekdayToIndex[matchedWeekday] : null;
   };
 
-  const countServiceSlotOccurrences = (serviceSlot: string, start: Date, end: Date) => {
+  const listServiceSlotOccurrenceDates = (serviceSlot: string, start: Date, end: Date) => {
     const targetWeekday = parseServiceSlotWeekday(serviceSlot);
     if (targetWeekday === null) {
-      return 0;
+      return [];
     }
 
-    let count = 0;
+    const dates: string[] = [];
     const cursor = new Date(start);
     cursor.setHours(0, 0, 0, 0);
     while (cursor < end) {
       if (cursor.getDay() === targetWeekday) {
-        count += 1;
+        dates.push(formatDateInputValue(cursor));
       }
       cursor.setDate(cursor.getDate() + 1);
     }
-    return count;
+    return dates;
+  };
+
+  const isDoctorSideUnavailableSchedule = (schedule: AppDb["visit_schedules"][number]) => {
+    const note = schedule.note.replace(/\s/g, "");
+    return note.includes("醫師請假") || note.includes("醫師服務時段異動");
+  };
+
+  const isExplicitPatientSideUnavailableSchedule = (schedule: AppDb["visit_schedules"][number]) => {
+    if (isDoctorSideUnavailableSchedule(schedule)) {
+      return false;
+    }
+    if (schedule.status === "paused" || schedule.last_feedback_code === "absent") {
+      return true;
+    }
+    if (!["cancelled", "rescheduled"].includes(schedule.status)) {
+      return false;
+    }
+
+    const note = schedule.note.replace(/\s/g, "");
+    return (
+      /(個案|患者|病家|家屬).*(請假|外出|不在家|改期|取消|暫停)/.test(note) ||
+      /(請假|外出|不在家|改期|取消|暫停).*(個案|患者|病家|家屬)/.test(note)
+    );
+  };
+
+  const isUnservedAfterDueSchedule = (
+    db: AppDb,
+    schedule: AppDb["visit_schedules"][number],
+    cutoff: Date
+  ) => {
+    const scheduledEnd = new Date(schedule.scheduled_end_at);
+    if (scheduledEnd > cutoff || isDoctorSideUnavailableSchedule(schedule)) {
+      return false;
+    }
+    const statisticalRouteItems = db.saved_route_plans.flatMap((routePlan) =>
+      ["executing", "archived", "completed"].includes(routePlan.execution_status)
+        ? routePlan.route_items.filter((item) => item.schedule_id === schedule.id)
+        : []
+    );
+    if (statisticalRouteItems.length === 0) {
+      return false;
+    }
+    if (
+      schedule.status === "completed" ||
+      db.visit_records.some((record) => record.visit_schedule_id === schedule.id) ||
+      statisticalRouteItems.some((item) => item.checked && item.status !== "paused")
+    ) {
+      return false;
+    }
+
+    return true;
   };
 
   const buildPausedPatientStats = (db: AppDb, start: Date, end: Date) =>
@@ -73,6 +124,7 @@ export function createStaffingRepository(
       .filter((patient) => patient.status === "paused")
       .map((patient) => {
         const doctor = db.doctors.find((item) => item.id === patient.preferred_doctor_id);
+        const occurrenceDates = listServiceSlotOccurrenceDates(patient.preferred_service_slot, start, end);
         return {
           source: "patient_status" as const,
           patientId: patient.id,
@@ -80,8 +132,9 @@ export function createStaffingRepository(
           doctorId: patient.preferred_doctor_id,
           doctorName: doctor?.name ?? patient.preferred_doctor_id,
           serviceSlot: patient.preferred_service_slot,
-          expectedVisitCount: countServiceSlotOccurrences(patient.preferred_service_slot, start, end),
-          reminderTags: patient.reminder_tags
+          expectedVisitCount: occurrenceDates.length,
+          reminderTags: patient.reminder_tags,
+          occurrenceDates
         };
       })
       .sort(
@@ -95,16 +148,18 @@ export function createStaffingRepository(
     db: AppDb,
     start: Date,
     end: Date,
+    cutoff: Date,
     excludedScheduleIds: Set<string>
   ) =>
     db.visit_schedules
       .filter((schedule) => {
         const scheduleStart = new Date(schedule.scheduled_start_at);
+        const isUnservedAfterDue = isUnservedAfterDueSchedule(db, schedule, cutoff);
         return (
-          schedule.status === "paused" &&
+          (isExplicitPatientSideUnavailableSchedule(schedule) || isUnservedAfterDue) &&
           scheduleStart >= start &&
           scheduleStart < end &&
-          !excludedScheduleIds.has(schedule.id)
+          (!excludedScheduleIds.has(schedule.id) || isUnservedAfterDue)
         );
       })
       .map((schedule) => {
@@ -229,23 +284,83 @@ export function createStaffingRepository(
     return db.visit_schedules.filter((schedule) => scheduleIds.has(schedule.id));
   };
 
-  const buildCompletionRecordStats = (
-    records: AppDb["route_completion_records"],
-    label: string,
-    pausedPatientExpectedCount = 0,
-    pausedTemporaryScheduleCount = 0
+  const getUnservedRouteSchedulesFromCompletionRecord = (
+    db: AppDb,
+    record: AppDb["route_completion_records"][number]
   ) => {
-    const completedRoutePausedCount = records.reduce((count, record) => count + record.paused_count, 0);
-    const pausedScheduledCount = completedRoutePausedCount + pausedTemporaryScheduleCount;
+    const routePlan = db.saved_route_plans.find((item) => item.id === record.route_plan_id);
+    if (!routePlan) {
+      return [];
+    }
+
+    const pausedScheduleIds = new Set(
+      routePlan.route_items
+        .filter((item) => !item.checked || item.status === "paused")
+        .map((item) => item.schedule_id)
+        .filter((scheduleId): scheduleId is string => Boolean(scheduleId))
+    );
+    return db.visit_schedules.filter(
+      (schedule) => pausedScheduleIds.has(schedule.id) && !isDoctorSideUnavailableSchedule(schedule)
+    );
+  };
+
+  const buildCompletionRecordStats = (input: {
+    db: AppDb;
+    records: AppDb["route_completion_records"];
+    label: string;
+    pausedPatients: ReturnType<typeof buildPausedPatientStats>;
+    temporaryPausedSchedules: ReturnType<typeof buildTemporaryPausedScheduleStats>;
+  }) => {
+    const pausedRecordKeys = new Set<string>();
+    input.records.forEach((record) => {
+      const pausedRecordSchedules = [
+        ...getSchedulesFromCompletionRecords(input.db, [record])
+          .filter((schedule) => isExplicitPatientSideUnavailableSchedule(schedule)),
+        ...getUnservedRouteSchedulesFromCompletionRecord(input.db, record)
+      ].filter(
+        (schedule, index, schedules) => schedules.findIndex((item) => item.id === schedule.id) === index
+      );
+      pausedRecordSchedules.forEach((schedule) => {
+        pausedRecordKeys.add(`${schedule.patient_id}:${schedule.scheduled_start_at.slice(0, 10)}`);
+      });
+
+      const missingPausedIdentities = Math.max(0, record.paused_count - pausedRecordSchedules.length);
+      for (let index = 0; index < missingPausedIdentities; index += 1) {
+        pausedRecordKeys.add(`route-record:${record.id}:${index + 1}:${record.route_date}`);
+      }
+    });
+    const temporaryPausedKeys = new Set(
+      input.temporaryPausedSchedules.map((schedule) =>
+        `${schedule.patientId}:${schedule.scheduledStartAt?.slice(0, 10) ?? schedule.scheduleId ?? "unknown"}`
+      )
+    );
+    const pausedScheduledKeys = new Set([
+      ...pausedRecordKeys,
+      ...temporaryPausedKeys
+    ]);
+    const unrepresentedPausedPatientKeys = new Set<string>();
+    input.pausedPatients.forEach((patient) => {
+      patient.occurrenceDates.forEach((date) => {
+        const key = `${patient.patientId}:${date}`;
+        if (!pausedScheduledKeys.has(key)) {
+          unrepresentedPausedPatientKeys.add(key);
+        }
+      });
+    });
+    const pausedKeys = new Set([
+      ...pausedScheduledKeys,
+      ...unrepresentedPausedPatientKeys
+    ]);
+
     return {
-      label,
-      executedVisitCount: records.reduce((count, record) => count + record.executed_visit_count, 0),
-      pausedCount: pausedScheduledCount + pausedPatientExpectedCount,
-      urgentCount: records.reduce((count, record) => count + record.urgent_count, 0),
-      routePlanCount: records.length,
-      pausedScheduledCount,
-      pausedPatientExpectedCount,
-      pausedTemporaryScheduleCount
+      label: input.label,
+      executedVisitCount: input.records.reduce((count, record) => count + record.executed_visit_count, 0),
+      pausedCount: pausedKeys.size,
+      urgentCount: input.records.reduce((count, record) => count + record.urgent_count, 0),
+      routePlanCount: input.records.length,
+      pausedScheduledCount: pausedScheduledKeys.size,
+      pausedPatientExpectedCount: unrepresentedPausedPatientKeys.size,
+      pausedTemporaryScheduleCount: temporaryPausedKeys.size
     };
   };
 
@@ -264,6 +379,7 @@ export function createStaffingRepository(
         completedRouteCount: number;
         executedVisitCount: number;
         pausedCount: number;
+        pausedKeys: Set<string>;
         urgentCount: number;
       }
     >();
@@ -281,6 +397,7 @@ export function createStaffingRepository(
         completedRouteCount: 0,
         executedVisitCount: 0,
         pausedCount: 0,
+        pausedKeys: new Set<string>(),
         urgentCount: 0
       };
       performanceByDoctorId.set(doctorId, nextPerformance);
@@ -296,22 +413,46 @@ export function createStaffingRepository(
       performance.routePlanCount += 1;
       performance.completedRouteCount += record.completed_at ? 1 : 0;
       performance.executedVisitCount += record.executed_visit_count;
-      performance.pausedCount += record.paused_count;
       performance.urgentCount += record.urgent_count;
+    });
+
+    input.records.forEach((record) => {
+      const pausedRecordSchedules = [
+        ...getSchedulesFromCompletionRecords(input.db, [record])
+          .filter((schedule) => isExplicitPatientSideUnavailableSchedule(schedule)),
+        ...getUnservedRouteSchedulesFromCompletionRecord(input.db, record)
+      ].filter(
+        (schedule, index, schedules) => schedules.findIndex((item) => item.id === schedule.id) === index
+      );
+      pausedRecordSchedules.forEach((schedule) => {
+        const performance = ensurePerformance(schedule.assigned_doctor_id);
+        performance.pausedKeys.add(`${schedule.patient_id}:${schedule.scheduled_start_at.slice(0, 10)}`);
+      });
+
+      const missingPausedIdentities = Math.max(0, record.paused_count - pausedRecordSchedules.length);
+      if (missingPausedIdentities > 0) {
+        const performance = ensurePerformance(record.doctor_id);
+        for (let index = 0; index < missingPausedIdentities; index += 1) {
+          performance.pausedKeys.add(`route-record:${record.id}:${index + 1}:${record.route_date}`);
+        }
+      }
     });
 
     input.pausedPatients.forEach((patient) => {
       const performance = ensurePerformance(patient.doctorId, patient.doctorName);
-      performance.pausedCount += patient.expectedVisitCount;
+      patient.occurrenceDates.forEach((date) => performance.pausedKeys.add(`${patient.patientId}:${date}`));
     });
 
     input.temporaryPausedSchedules.forEach((patient) => {
       const performance = ensurePerformance(patient.doctorId, patient.doctorName);
-      performance.pausedCount += 1;
+      performance.pausedKeys.add(
+        `${patient.patientId}:${patient.scheduledStartAt?.slice(0, 10) ?? patient.scheduleId ?? "unknown"}`
+      );
     });
 
     return Array.from(performanceByDoctorId.values())
       .map((performance) => {
+        const pausedCount = performance.pausedKeys.size;
         const completionRate =
           performance.routePlanCount > 0
             ? Math.round((performance.completedRouteCount / performance.routePlanCount) * 100)
@@ -319,10 +460,16 @@ export function createStaffingRepository(
         const score =
           performance.executedVisitCount * 10 +
           performance.completedRouteCount * 5 -
-          performance.pausedCount * 4 -
+          pausedCount * 4 -
           performance.urgentCount * 8;
         return {
-          ...performance,
+          doctorId: performance.doctorId,
+          doctorName: performance.doctorName,
+          routePlanCount: performance.routePlanCount,
+          completedRouteCount: performance.completedRouteCount,
+          executedVisitCount: performance.executedVisitCount,
+          pausedCount,
+          urgentCount: performance.urgentCount,
           completionRate,
           score
         };
@@ -339,6 +486,15 @@ export function createStaffingRepository(
         ...performance,
         rank: index + 1
       }));
+  };
+
+  const resolveStatsCutoff = (referenceDate: string, rangeEnd: Date) => {
+    const now = new Date();
+    const referenceEnd = new Date(`${referenceDate}T23:59:59.999`);
+    if (formatDateInputValue(now) === referenceDate) {
+      return now;
+    }
+    return referenceEnd < rangeEnd ? referenceEnd : rangeEnd;
   };
 
   return {
@@ -392,15 +548,20 @@ export function createStaffingRepository(
         )
       ];
       const currentMonthRange = buildMonthRange(referenceDate, 0);
-      const currentMonthPausedPatients = buildPausedPatientStats(
+      const isCurrentMonthRange = (() => {
+        const todayMonthRange = buildMonthRange(formatDateInputValue(), 0);
+        return currentMonthRange.label === todayMonthRange.label;
+      })();
+      const currentMonthPausedPatients = isCurrentMonthRange ? buildPausedPatientStats(
         db,
         currentMonthRange.start,
         currentMonthRange.end
-      );
+      ) : [];
       const currentMonthTemporaryPausedSchedules = buildTemporaryPausedScheduleStats(
         db,
         currentMonthRange.start,
         currentMonthRange.end,
+        resolveStatsCutoff(referenceDate, currentMonthRange.end),
         completedRecordScheduleIds
       );
       const currentMonthRecords = statisticalRecords.filter((record) => {
@@ -408,14 +569,11 @@ export function createStaffingRepository(
         return routeDate >= currentMonthRange.start && routeDate < currentMonthRange.end;
       });
       const previousMonthRange = buildMonthRange(referenceDate, -1);
-      const previousMonthPausedPatients = buildPausedPatientStats(
-        db,
-        previousMonthRange.start,
-        previousMonthRange.end
-      );
+      const previousMonthPausedPatients: ReturnType<typeof buildPausedPatientStats> = [];
       const previousMonthTemporaryPausedSchedules = buildTemporaryPausedScheduleStats(
         db,
         previousMonthRange.start,
+        previousMonthRange.end,
         previousMonthRange.end,
         completedRecordScheduleIds
       );
@@ -426,37 +584,42 @@ export function createStaffingRepository(
       const dailyStart = new Date(`${referenceDate}T00:00:00`);
       const dailyEnd = new Date(dailyStart);
       dailyEnd.setDate(dailyStart.getDate() + 1);
-      const dailyPausedPatients = buildPausedPatientStats(db, dailyStart, dailyEnd);
+      const dailyPausedPatients =
+        referenceDate === formatDateInputValue() ? buildPausedPatientStats(db, dailyStart, dailyEnd) : [];
       const dailyTemporaryPausedSchedules = buildTemporaryPausedScheduleStats(
         db,
         dailyStart,
         dailyEnd,
+        resolveStatsCutoff(referenceDate, dailyEnd),
         completedRecordScheduleIds
       );
 
       return {
         referenceDate,
         daily: {
-          ...buildCompletionRecordStats(
-            dailyRecords,
-            referenceDate,
-            dailyPausedPatients.reduce((count, patient) => count + patient.expectedVisitCount, 0),
-            dailyTemporaryPausedSchedules.length
-          ),
+          ...buildCompletionRecordStats({
+            db,
+            records: dailyRecords,
+            label: referenceDate,
+            pausedPatients: dailyPausedPatients,
+            temporaryPausedSchedules: dailyTemporaryPausedSchedules
+          }),
           date: referenceDate
         },
-        currentMonth: buildCompletionRecordStats(
-          currentMonthRecords,
-          currentMonthRange.label,
-          currentMonthPausedPatients.reduce((count, patient) => count + patient.expectedVisitCount, 0),
-          currentMonthTemporaryPausedSchedules.length
-        ),
-        previousMonth: buildCompletionRecordStats(
-          previousMonthRecords,
-          previousMonthRange.label,
-          previousMonthPausedPatients.reduce((count, patient) => count + patient.expectedVisitCount, 0),
-          previousMonthTemporaryPausedSchedules.length
-        ),
+        currentMonth: buildCompletionRecordStats({
+          db,
+          records: currentMonthRecords,
+          label: currentMonthRange.label,
+          pausedPatients: currentMonthPausedPatients,
+          temporaryPausedSchedules: currentMonthTemporaryPausedSchedules
+        }),
+        previousMonth: buildCompletionRecordStats({
+          db,
+          records: previousMonthRecords,
+          label: previousMonthRange.label,
+          pausedPatients: previousMonthPausedPatients,
+          temporaryPausedSchedules: previousMonthTemporaryPausedSchedules
+        }),
         draftRouteCount: draftRoutePlans.length,
         unrecordedCount: dailyRouteSchedules.filter(
           (schedule) =>

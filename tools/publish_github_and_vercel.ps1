@@ -24,6 +24,47 @@ if ([string]::IsNullOrWhiteSpace($currentHead)) {
   throw "Cannot resolve git HEAD. Publish aborted."
 }
 
+function Wait-GitHubRunQuietly {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$RunId,
+    [int]$MaxAttempts = 120,
+    [int]$IntervalSeconds = 5
+  )
+
+  $lastPrintedState = ""
+  for ($attempt = 1; $attempt -le $MaxAttempts; $attempt += 1) {
+    $runStatusJson = gh run view $RunId --json status,conclusion,url 2>$null
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($runStatusJson)) {
+      Write-Host "Deploy workflow status unavailable. Retry $attempt/$MaxAttempts..." -ForegroundColor DarkYellow
+      Start-Sleep -Seconds $IntervalSeconds
+      continue
+    }
+
+    $runStatus = $runStatusJson | ConvertFrom-Json
+    $state = "$($runStatus.status):$($runStatus.conclusion)"
+    if ($state -ne $lastPrintedState) {
+      $lastPrintedState = $state
+      $conclusionText = if ([string]::IsNullOrWhiteSpace($runStatus.conclusion)) { "pending" } else { $runStatus.conclusion }
+      Write-Host "Deploy workflow status: $($runStatus.status), conclusion: $conclusionText" -ForegroundColor Cyan
+    }
+
+    if ($runStatus.status -eq "completed") {
+      if ($runStatus.conclusion -eq "success") {
+        Write-Host "GitHub Actions Deploy to Vercel completed successfully." -ForegroundColor Green
+        return
+      }
+
+      $runUrl = if ([string]::IsNullOrWhiteSpace($runStatus.url)) { "GitHub Actions run $RunId" } else { $runStatus.url }
+      throw "GitHub Actions Deploy to Vercel failed with conclusion '$($runStatus.conclusion)'. Check $runUrl."
+    }
+
+    Start-Sleep -Seconds $IntervalSeconds
+  }
+
+  throw "GitHub Actions Deploy to Vercel did not complete within $($MaxAttempts * $IntervalSeconds) seconds."
+}
+
 $pendingChanges = (git status --porcelain)
 if ($pendingChanges) {
   if ($CommitPendingChanges) {
@@ -112,15 +153,10 @@ if ($WaitForGitHubActions) {
         Write-Warning "Deploy to Vercel workflow has not appeared in GitHub Actions yet."
       } else {
         Write-Host "Watching GitHub Actions run #$($run.databaseId)..." -ForegroundColor Cyan
-        gh run watch $run.databaseId --exit-status
-        if ($LASTEXITCODE -ne 0) {
-          throw "GitHub Actions Deploy to Vercel failed. Check run #$($run.databaseId)."
-        }
+        Wait-GitHubRunQuietly -RunId $run.databaseId
         $githubActionSucceeded = $true
         if ($workflowDispatched) {
           Write-Host "GitHub Actions Deploy to Vercel completed successfully after workflow_dispatch." -ForegroundColor Green
-        } else {
-          Write-Host "GitHub Actions Deploy to Vercel completed successfully." -ForegroundColor Green
         }
       }
     }
