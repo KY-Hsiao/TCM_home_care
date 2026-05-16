@@ -27,16 +27,17 @@ npm run publish:web
 powershell -ExecutionPolicy Bypass -File .\tools\publish_github_and_vercel.ps1 -CommitPendingChanges
 ```
 
-6. 發布流程會：
+6. `-SkipVercel` 模式只會推送目前 branch 到 GitHub，push 成功後直接結束；不要等待 GitHub Actions，也不要觸發 Vercel。
+7. 完整發布流程會：
    - 推送目前 branch 到 GitHub
    - 以低輸出輪詢等待 `deploy-vercel.yml` 的 `Deploy to Vercel` GitHub Actions run
    - 若 push 沒有產生新的 workflow run，會改用 `workflow_dispatch` 主動觸發一次
    - 若本機也設定 `VERCEL_DEPLOY_HOOK_URL`，會額外直接觸發 Vercel deploy hook
-7. 若 `VERCEL_DEPLOY_HOOK_URL` 未設定，需明確告知：
+8. 若 `VERCEL_DEPLOY_HOOK_URL` 未設定，需明確告知：
    - GitHub push 可以完成
    - GitHub Actions 若成功，代表線上 deploy hook 已被 workflow 呼叫
    - 但本機不能額外補打 Vercel deploy hook
-8. 發布完成後回報：
+9. 發布完成後回報：
    - 推送的 branch
    - 是否已成功 push GitHub
    - GitHub Actions `Deploy to Vercel` 是否成功

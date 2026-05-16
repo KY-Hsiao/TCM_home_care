@@ -99,6 +99,11 @@ if ($LASTEXITCODE -ne 0) {
   throw "git push failed. Publish aborted."
 }
 
+if ($SkipVercel) {
+  Write-Host "Skipped Vercel deployment and GitHub Actions waiting. GitHub push completed." -ForegroundColor Yellow
+  exit 0
+}
+
 $githubActionSucceeded = $false
 $workflowDispatched = $false
 if ($WaitForGitHubActions) {
@@ -161,11 +166,6 @@ if ($WaitForGitHubActions) {
       }
     }
   }
-}
-
-if ($SkipVercel) {
-  Write-Host "Skipped the local extra Vercel deploy hook trigger." -ForegroundColor Yellow
-  exit 0
 }
 
 $deployHookUrl = $env:VERCEL_DEPLOY_HOOK_URL

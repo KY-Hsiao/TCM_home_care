@@ -166,7 +166,8 @@ $env:VITE_TEAM_COMM_SYNC_MODE = "http"
 - 它只能重新部署 **已經在 GitHub 遠端上的版本**
 - 不能把你本機尚未 `git push` 的程式碼直接送上線
 - Codex 動作列的 `推送 GitHub` 與 `更新網頁` 是本機發布按鈕；若工作區有未提交修改，會先自動建立一筆發布 commit，再推送到 GitHub。
-- Codex 動作列的 `更新網頁` 會在 push 後以低輸出輪詢等待 `deploy-vercel.yml`；若沒有新的 push workflow run，會改用 GitHub `workflow_dispatch` 主動觸發一次 Vercel 部署。
+- `推送 GitHub` 只做 `git push`，不等待 GitHub Actions，也不觸發 Vercel。
+- `更新網頁` 會在 push 後以低輸出輪詢等待 `deploy-vercel.yml`；若沒有新的 push workflow run，會改用 GitHub `workflow_dispatch` 主動觸發一次 Vercel 部署。
 
 ### 本機一鍵推送 GitHub 並同步觸發 Vercel
 
@@ -201,6 +202,8 @@ powershell -ExecutionPolicy Bypass -File .\tools\publish_github_and_vercel.ps1 -
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\tools\publish_github_and_vercel.ps1 -SkipVercel
 ```
+
+這個模式會在 `git push` 成功後直接結束，不會等待 GitHub Actions，也不會補觸發 `workflow_dispatch`。
 
 若希望命令列也像 Codex 動作列一樣先提交目前工作區修改，可加上：
 
