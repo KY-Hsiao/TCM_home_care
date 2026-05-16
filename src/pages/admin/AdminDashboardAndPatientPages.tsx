@@ -84,37 +84,23 @@ type TrackingRouteDistributionOption = {
 function DashboardStatsBlock({
   title,
   stats,
-  action,
-  diagnostic
+  action
 }: {
   title: string;
   stats: AdminDashboardStats;
   action?: ReactNode;
-  diagnostic?: ReactNode;
 }) {
   return (
     <section className="rounded-2xl border border-slate-200 bg-white p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="text-base font-semibold text-brand-ink">{title}</h2>
-          <p className="mt-1 text-sm text-slate-500">{stats.label}</p>
-        </div>
+        <h2 className="text-base font-semibold text-brand-ink">{title}</h2>
         {action}
       </div>
       <div className="mt-4 grid gap-3 sm:grid-cols-3">
-        <StatCard label="執行人次" value={stats.executedVisitCount} hint="已實行路線中的執行案件" />
-        <StatCard
-          label="暫停人次"
-          value={stats.pausedCount}
-          hint={
-            stats.pausedPatientExpectedCount > 0
-              ? `含未排程暫停 ${stats.pausedPatientExpectedCount} 次`
-              : "已實行路線中的暫停案件"
-          }
-        />
-        <StatCard label="緊急處置人次" value={stats.urgentCount} hint="緊急回覆或緊急異常通知" />
+        <StatCard label="執行人次" value={stats.executedVisitCount} />
+        <StatCard label="暫停人次" value={stats.pausedCount} />
+        <StatCard label="緊急處置人次" value={stats.urgentCount} />
       </div>
-      {diagnostic ? <div className="mt-3 text-xs text-slate-500">{diagnostic}</div> : null}
     </section>
   );
 }
@@ -634,27 +620,19 @@ function buildPatientDraft(patient?: Patient): Patient {
 export function AdminDashboardPage() {
   const { repositories, db } = useAppContext();
   const [dashboardDate, setDashboardDate] = useState(() => formatDateInputValue());
-  const [pausedPatientSearch, setPausedPatientSearch] = useState("");
+  const [selectedPausedPatientKey, setSelectedPausedPatientKey] = useState("");
   const dashboard = repositories.staffingRepository.getAdminDashboard({
     referenceDate: dashboardDate
   });
-  const filteredPausedPatients = dashboard.pausedPatients.filter((patient) => {
-    const keyword = pausedPatientSearch.trim().toLocaleLowerCase("zh-TW");
-    if (!keyword) {
-      return true;
-    }
-    return [
-      maskPatientName(patient.patientName),
-      patient.patientName,
-      patient.doctorName,
-      patient.serviceSlot,
-      patient.note ?? "",
-      patient.reminderTags.join(" ")
-    ]
-      .join(" ")
-      .toLocaleLowerCase("zh-TW")
-      .includes(keyword);
-  });
+  const getPausedPatientOptionKey = (patient: (typeof dashboard.pausedPatients)[number]) =>
+    [patient.patientId, patient.source, patient.scheduledStartAt ?? "expected"].join(":");
+  const selectedPausedPatient =
+    dashboard.pausedPatients.find((patient) => getPausedPatientOptionKey(patient) === selectedPausedPatientKey) ??
+    dashboard.pausedPatients[0] ??
+    null;
+  const selectedPausedPatientValue = selectedPausedPatient
+    ? getPausedPatientOptionKey(selectedPausedPatient)
+    : "";
 
   return (
     <div className="space-y-6">
@@ -662,11 +640,6 @@ export function AdminDashboardPage() {
         <DashboardStatsBlock
           title="今日統計"
           stats={dashboard.daily}
-          diagnostic={
-            dashboard.daily.routePlanCount > 0
-              ? `此日期已實行路線 ${dashboard.daily.routePlanCount} 條。`
-              : "此日期尚無已實行路線；請到排程管理確認日期，並確認是否已按「實行路線」。"
-          }
           action={
             <label className="text-sm font-medium text-slate-600">
               統計日期
@@ -683,12 +656,6 @@ export function AdminDashboardPage() {
         <DashboardStatsBlock
           title="本月統計"
           stats={dashboard.currentMonth}
-          diagnostic={
-            dashboard.currentMonth.pausedPatientExpectedCount > 0 ||
-            dashboard.currentMonth.pausedTemporaryScheduleCount > 0
-              ? `暫停人次含 ${dashboard.currentMonth.pausedTemporaryScheduleCount} 筆臨時暫停，另有固定時段暫停個案估算 ${dashboard.currentMonth.pausedPatientExpectedCount} 次未排程暫停。`
-              : undefined
-          }
         />
         <DashboardStatsBlock title="上個月統計" stats={dashboard.previousMonth} />
       </div>
@@ -705,9 +672,6 @@ export function AdminDashboardPage() {
                   <div className="min-w-0">
                     <p className="font-semibold text-brand-ink">
                       #{doctor.rank} {doctor.doctorName}
-                    </p>
-                    <p className="mt-1 text-xs text-slate-500">
-                      完成率 {doctor.completionRate}% / 路線 {doctor.routePlanCount} 條
                     </p>
                   </div>
                   <Badge value={`分數 ${doctor.score}`} compact />
@@ -755,12 +719,6 @@ export function AdminDashboardPage() {
             <div className="rounded-2xl border border-slate-200 bg-white p-4">
               <p className="text-xs text-slate-500">暫停人次</p>
               <p className="mt-2 text-2xl font-semibold text-brand-ink">{dashboard.daily.pausedCount}</p>
-              {dashboard.daily.pausedPatientExpectedCount > 0 ||
-              dashboard.daily.pausedTemporaryScheduleCount > 0 ? (
-                <p className="mt-1 text-xs text-slate-500">
-                  含臨時暫停 {dashboard.daily.pausedTemporaryScheduleCount} 筆、固定時段暫停 {dashboard.daily.pausedPatientExpectedCount} 次
-                </p>
-              ) : null}
             </div>
             <div className="rounded-2xl border border-slate-200 bg-white p-4">
               <p className="text-xs text-slate-500">緊急處置人次</p>
@@ -780,8 +738,6 @@ export function AdminDashboardPage() {
                     <p className="font-semibold text-brand-ink">{patient ? maskPatientName(patient.name) : schedule.patient_id}</p>
                     <Badge value={schedule.status} compact />
                   </div>
-                  <p className="mt-2 text-slate-600">{formatDateTimeFull(schedule.scheduled_start_at)}</p>
-                  <p className="mt-1 text-slate-500">{schedule.note}</p>
                 </Link>
               );
             })}
@@ -797,14 +753,29 @@ export function AdminDashboardPage() {
           title="本月暫停名單"
           action={
             <label className="block text-sm">
-              <span className="sr-only">搜尋暫停個案</span>
-              <input
-                aria-label="搜尋暫停個案"
-                value={pausedPatientSearch}
-                onChange={(event) => setPausedPatientSearch(event.target.value)}
-                placeholder="搜尋姓名、醫師或時段"
-                className="w-full rounded-full border border-slate-200 bg-white px-3 py-2 text-sm"
-              />
+              <span className="sr-only">瀏覽暫停個案</span>
+              <select
+                aria-label="瀏覽暫停個案"
+                value={selectedPausedPatientValue}
+                onChange={(event) => setSelectedPausedPatientKey(event.target.value)}
+                className="w-full min-w-[14rem] rounded-full border border-slate-200 bg-white px-3 py-2 text-sm"
+              >
+                {dashboard.pausedPatients.length === 0 ? (
+                  <option value="">無暫停個案</option>
+                ) : null}
+                {dashboard.pausedPatients.map((patient) => {
+                  const optionKey = getPausedPatientOptionKey(patient);
+                  const statusLabel =
+                    patient.source === "temporary_schedule"
+                      ? "臨時暫停"
+                      : `本月 ${patient.expectedVisitCount} 次`;
+                  return (
+                    <option key={optionKey} value={optionKey}>
+                      {maskPatientName(patient.patientName)} / {patient.serviceSlot || "未設定服務時段"} / {statusLabel}
+                    </option>
+                  );
+                })}
+              </select>
             </label>
           }
         >
@@ -826,43 +797,37 @@ export function AdminDashboardPage() {
               </p>
             </div>
           </div>
-          <div className="mt-4 space-y-3">
-            {filteredPausedPatients.slice(0, 8).map((patient) => (
+          <div className="mt-4">
+            {selectedPausedPatient ? (
               <Link
-                key={patient.patientId}
-                to={`/admin/patients/${patient.patientId}`}
+                to={`/admin/patients/${selectedPausedPatient.patientId}`}
                 className="block rounded-2xl border border-slate-200 bg-white p-4 text-sm"
               >
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <p className="font-semibold text-brand-ink">{maskPatientName(patient.patientName)}</p>
+                  <p className="font-semibold text-brand-ink">{maskPatientName(selectedPausedPatient.patientName)}</p>
                   <Badge
                     value={
-                      patient.source === "temporary_schedule"
+                      selectedPausedPatient.source === "temporary_schedule"
                         ? "臨時暫停"
-                        : `本月 ${patient.expectedVisitCount} 次`
+                        : `本月 ${selectedPausedPatient.expectedVisitCount} 次`
                     }
                     compact
                   />
                 </div>
                 <p className="mt-2 text-slate-600">
-                  {patient.doctorName} / {patient.serviceSlot || "未設定服務時段"}
+                  {selectedPausedPatient.doctorName} / {selectedPausedPatient.serviceSlot || "未設定服務時段"}
                 </p>
-                {patient.scheduledStartAt ? (
+                {selectedPausedPatient.scheduledStartAt ? (
                   <p className="mt-1 text-xs text-slate-500">
-                    {formatDateTimeFull(patient.scheduledStartAt)}
+                    {formatDateTimeFull(selectedPausedPatient.scheduledStartAt)}
                   </p>
                 ) : null}
-                <p className="mt-1 text-xs text-slate-500">
-                  {patient.note ||
-                    (patient.reminderTags.length ? patient.reminderTags.join("、") : "無特殊提醒")}
-                </p>
               </Link>
-            ))}
-            {filteredPausedPatients.length === 0 ? (
+            ) : (
               <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
-                目前沒有符合搜尋條件的暫停個案。
+                目前沒有暫停個案。
               </div>
-            ) : null}
+            )}
           </div>
         </Panel>
 
@@ -889,7 +854,6 @@ export function AdminDashboardPage() {
             <div className="rounded-2xl border border-slate-200 bg-white p-4">
               <p className="text-xs text-slate-500">待補紀錄</p>
               <p className="mt-2 text-2xl font-semibold text-brand-ink">{dashboard.unrecordedCount}</p>
-              <p className="mt-1 text-xs text-slate-500">已完成但尚未建立病歷</p>
             </div>
           </div>
           <div className="mt-4 grid gap-3 md:grid-cols-2">
@@ -902,8 +866,6 @@ export function AdminDashboardPage() {
                       <p className="font-semibold text-brand-ink">{doctor?.name ?? leave.doctor_id}</p>
                       <Badge value={leave.status} compact />
                     </div>
-                    <p className="mt-2 text-slate-600">{leave.start_date} ~ {leave.end_date}</p>
-                    <p className="mt-1 text-slate-500">{leave.reason}</p>
                   </div>
                 );
               })}
@@ -925,8 +887,6 @@ export function AdminDashboardPage() {
                       <p className="font-semibold text-brand-ink">{patient ? maskPatientName(patient.name) : action.visit_schedule_id}</p>
                       <Badge value={action.status} compact />
                     </div>
-                    <p className="mt-2 text-slate-600">{formatDateTimeFull(action.new_start_at)}</p>
-                    <p className="mt-1 text-slate-500">{action.reason}</p>
                   </div>
                 );
               })}

@@ -175,7 +175,6 @@ export function AdminFamilyLinePage() {
       defaultTemplateDrafts
     )
   );
-  const [bulkLinkPatientId, setBulkLinkPatientId] = useState("");
   const [selectedTemplate, setSelectedTemplate] = useState<FamilyLineTemplateKey>("custom_notice");
   const [selectedSendTypes, setSelectedSendTypes] = useState<FamilyLineTemplateKey[]>(["custom_notice"]);
   const [selectedDoctorId, setSelectedDoctorId] = useState("all");
@@ -200,7 +199,6 @@ export function AdminFamilyLinePage() {
   const [isSyncingLineFriends, setIsSyncingLineFriends] = useState(false);
   const [activeLineTool, setActiveLineTool] = useState<"instant" | "single" | "automation" | "template" | null>(null);
   const [expandedManagedContactIds, setExpandedManagedContactIds] = useState<string[]>([]);
-  const [showAllContactsForFocusedPatient, setShowAllContactsForFocusedPatient] = useState(false);
 
   useEffect(() => {
     window.localStorage.removeItem(LEGACY_BINDINGS_STORAGE_KEY);
@@ -318,24 +316,20 @@ export function AdminFamilyLinePage() {
   const visibleManagedLineContacts = useMemo(
     () =>
       (focusedPatientId
-        ? showAllContactsForFocusedPatient
-          ? managedLineContacts
-          : managedLineContacts.filter((contact) => contact.linkedPatientIds.includes(focusedPatientId))
+        ? managedLineContacts.filter((contact) => contact.linkedPatientIds.includes(focusedPatientId))
         : selectedDoctorId === "all"
           ? managedLineContacts
           : managedLineContacts.filter((contact) => filteredRecipientByContactId.has(contact.id))
       ).filter(
         (contact) =>
           !focusedPatientId ||
-          showAllContactsForFocusedPatient ||
           filteredRecipientByContactId.has(contact.id)
       ),
     [
       filteredRecipientByContactId,
       focusedPatientId,
       managedLineContacts,
-      selectedDoctorId,
-      showAllContactsForFocusedPatient
+      selectedDoctorId
     ]
   );
 
@@ -427,7 +421,6 @@ export function AdminFamilyLinePage() {
       return;
     }
 
-    setShowAllContactsForFocusedPatient(false);
     const focusedRecipients = recipients.filter(
       (recipient) => recipient.linkedPatients.some((patient) => patient.id === focusedPatientId)
     );
@@ -435,7 +428,6 @@ export function AdminFamilyLinePage() {
     if (focusedDoctor) {
       setSelectedDoctorId(focusedDoctor.id);
     }
-    setBulkLinkPatientId(focusedPatientId);
     setSelectedRecipientIds(focusedRecipients.map((recipient) => recipient.id));
   }, [focusedPatientId, recipients]);
 
@@ -552,44 +544,6 @@ export function AdminFamilyLinePage() {
     if (updatedContact) {
       void persistManagedLineContact(updatedContact);
     }
-  };
-
-  const updateManagedContactPatientLink = async (
-    contactId: string,
-    patientId: string,
-    shouldLink: boolean
-  ) => {
-    if (!patientId) {
-      setSendFeedback({ tone: "error", message: "請先用下拉選單選擇要關聯的居家個案。" });
-      return;
-    }
-
-    const now = new Date().toISOString();
-    const sourceContact = managedLineContacts.find((contact) => contact.id === contactId);
-    if (!sourceContact) {
-      return;
-    }
-    const updatedContact: ManagedFamilyLineContact = {
-      ...sourceContact,
-      linkedPatientIds: shouldLink
-        ? sourceContact.linkedPatientIds.includes(patientId)
-          ? sourceContact.linkedPatientIds
-          : [...sourceContact.linkedPatientIds, patientId]
-        : sourceContact.linkedPatientIds.filter((linkedPatientId) => linkedPatientId !== patientId),
-      updatedAt: now
-    };
-    setManagedLineContacts((current) =>
-      current.map((contact) => (contact.id === contactId ? updatedContact : contact))
-    );
-
-    const targetPatient = db.patients.find((patient) => patient.id === patientId);
-    const persisted = await persistManagedLineContact(updatedContact);
-    setSendFeedback({
-      tone: persisted ? "success" : "error",
-      message: `${updatedContact.displayName} 已${shouldLink ? "關聯到" : "取消關聯"} ${
-        targetPatient ? maskPatientName(targetPatient.name) : "指定個案"
-      }。${persisted ? "已同步保存。" : "目前只保存在本機，後端名單同步失敗時請稍後再試。"}`
-    });
   };
 
   const updateManagedContactRole = async (
@@ -1381,24 +1335,8 @@ export function AdminFamilyLinePage() {
         </div>
 
         <div className="space-y-4">
-          <Panel title="關聯設定">
-            <div className="grid gap-3 text-sm sm:grid-cols-[minmax(180px,260px)_minmax(140px,180px)_auto] sm:items-end">
-              <label className="block">
-                <span className="mb-1 block font-medium text-brand-ink">關聯個案</span>
-                <select
-                  aria-label="批次關聯居家個案"
-                  value={bulkLinkPatientId}
-                  onChange={(event) => setBulkLinkPatientId(event.target.value)}
-                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2"
-                >
-                  <option value="">選擇個案</option>
-                  {db.patients.map((patient) => (
-                    <option key={patient.id} value={patient.id}>
-                      {maskPatientName(patient.name)}
-                    </option>
-                  ))}
-                </select>
-              </label>
+          <Panel title="LINE 好友篩選">
+            <div className="grid gap-3 text-sm sm:grid-cols-[minmax(140px,180px)_auto] sm:items-end">
               <label className="block">
                 <span className="mb-1 block font-medium text-brand-ink">篩選醫師</span>
                 <select
@@ -1424,9 +1362,6 @@ export function AdminFamilyLinePage() {
                 {isSyncingLineFriends ? "重新整理中" : "重新整理 LINE 好友"}
               </button>
             </div>
-            <p className="mt-2 text-xs text-slate-500">
-              選好個案後，直接在好友列勾選是否關聯；角色也改用每列下拉選單調整，舊式批次按鍵已隱藏。
-            </p>
           </Panel>
 
           <Panel title="LINE 好友名單">
@@ -1452,18 +1387,9 @@ export function AdminFamilyLinePage() {
               </div>
               {focusedPatientId ? (
                 <div className="space-y-2 rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
-                  <p>
-                    目前只顯示
-                    {focusedPatient ? ` ${maskPatientName(focusedPatient.name)} ` : "此個案"}
-                    已關聯的 LINE 好友名單。
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => setShowAllContactsForFocusedPatient((current) => !current)}
-                    className="rounded-full border border-emerald-200 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-700"
-                  >
-                    {showAllContactsForFocusedPatient ? "只看此個案關聯好友" : "顯示全部 LINE 好友以新增關聯"}
-                  </button>
+                  目前只顯示
+                  {focusedPatient ? ` ${maskPatientName(focusedPatient.name)} ` : "此個案"}
+                  已關聯的 LINE 好友名單。
                 </div>
               ) : null}
 
@@ -1475,18 +1401,9 @@ export function AdminFamilyLinePage() {
                 <div className="space-y-3 rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-8 text-center text-sm text-slate-500">
                   <p>
                     {focusedPatientId
-                      ? "目前此個案尚未關聯 LINE 好友。請先顯示全部好友，再勾選要關聯的名單。"
+                      ? "目前此個案尚未關聯 LINE 好友。"
                       : "目前篩選醫師沒有可發送的 LINE 好友。請確認右上方個案關聯是否已連到該醫師的居家個案。"}
                   </p>
-                  {focusedPatientId ? (
-                    <button
-                      type="button"
-                      onClick={() => setShowAllContactsForFocusedPatient(true)}
-                      className="rounded-full border border-emerald-200 bg-white px-4 py-2 text-xs font-semibold text-emerald-700"
-                    >
-                      顯示全部 LINE 好友以新增關聯
-                    </button>
-                  ) : null}
                 </div>
               ) : (
                 <div className="space-y-3">
@@ -1502,9 +1419,6 @@ export function AdminFamilyLinePage() {
                       .map((patientId) => db.patients.find((patient) => patient.id === patientId))
                       .filter((patient): patient is Patient => Boolean(patient))
                       .map((patient) => maskPatientName(patient.name));
-                    const isLinkedToSelectedPatient = bulkLinkPatientId
-                      ? contact.linkedPatientIds.includes(bulkLinkPatientId)
-                      : false;
                     return (
                       <div
                         key={contact.id}
@@ -1527,23 +1441,6 @@ export function AdminFamilyLinePage() {
                           </div>
 
                           <div className="flex flex-wrap gap-2">
-                            <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700">
-                              <input
-                                type="checkbox"
-                                aria-label={`${contact.displayName} 關聯所選個案`}
-                                checked={isLinkedToSelectedPatient}
-                                disabled={!bulkLinkPatientId}
-                                onChange={(event) =>
-                                  void updateManagedContactPatientLink(
-                                    contact.id,
-                                    bulkLinkPatientId,
-                                    event.target.checked
-                                  )
-                                }
-                                className="h-4 w-4 disabled:opacity-40"
-                              />
-                              <span>{bulkLinkPatientId ? "關聯個案" : "先選個案"}</span>
-                            </label>
                             <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700">
                               <input
                                 type="checkbox"

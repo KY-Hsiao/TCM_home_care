@@ -1310,8 +1310,7 @@ describe("AdminPages", () => {
 
     const currentMonthStats = screen.getByRole("heading", { name: "本月統計" }).closest("section");
     expect(currentMonthStats).not.toBeNull();
-    const dashboardMonthLabel = `${new Date(`${dashboardDate}T00:00:00`).getFullYear()}年${new Date(`${dashboardDate}T00:00:00`).getMonth() + 1}月`;
-    expect(currentMonthStats?.textContent).toContain(dashboardMonthLabel);
+    expect(within(currentMonthStats!).getByText("37")).toBeInTheDocument();
 
     expect(screen.getAllByText("緊急處置人次").length).toBeGreaterThan(0);
     expect(screen.getByRole("link", { name: new RegExp(maskPatientName(dashboardPatient.name)) })).toBeInTheDocument();
@@ -1396,7 +1395,6 @@ describe("AdminPages", () => {
 
     const dailyStats = screen.getByRole("heading", { name: "今日統計" }).closest("section");
     expect(dailyStats).not.toBeNull();
-    expect(within(dailyStats!).getByText("此日期已實行路線 2 條。")).toBeInTheDocument();
     expect(within(dailyStats!).getAllByText("1")).toHaveLength(3);
     const outOfRoutePatient = seededDb.patients.find((patient) => patient.id === outOfRouteSchedule.patient_id);
     expect(outOfRoutePatient).toBeDefined();
@@ -1469,7 +1467,6 @@ describe("AdminPages", () => {
 
     const dailyStats = screen.getByRole("heading", { name: "今日統計" }).closest("section");
     expect(dailyStats).not.toBeNull();
-    expect(dailyStats?.textContent).toContain("此日期已實行路線 1 條。");
     expect(dailyStats?.textContent).toContain("執行人次1");
     expect(dailyStats?.textContent).toContain("暫停人次1");
     expect(dailyStats?.textContent).toContain("緊急處置人次1");
@@ -1504,18 +1501,13 @@ describe("AdminPages", () => {
     const currentMonthStats = screen.getByRole("heading", { name: "本月統計" }).closest("section");
     expect(currentMonthStats).not.toBeNull();
     expect(currentMonthStats?.textContent).toContain("暫停人次4");
-    expect(currentMonthStats?.textContent).toContain("未排程暫停");
 
     const pausedPanel = screen.getByRole("heading", { name: "本月暫停名單" }).closest("section");
     expect(pausedPanel).not.toBeNull();
+    expect(screen.getByLabelText("瀏覽暫停個案")).toHaveValue("pat-001:patient_status:expected");
     expect(within(pausedPanel!).getByText("王○珠")).toBeInTheDocument();
     expect(within(pausedPanel!).getByText("蕭坤元醫師 / 星期三上午")).toBeInTheDocument();
     expect(within(pausedPanel!).getByText("本月 4 次")).toBeInTheDocument();
-
-    fireEvent.change(screen.getByLabelText("搜尋暫停個案"), {
-      target: { value: "星期三" }
-    });
-    expect(within(pausedPanel!).getByText("王○珠")).toBeInTheDocument();
   });
 
   it("AdminDashboardPage 本月暫停會納入臨時暫停排程並可查名單", () => {
@@ -1554,13 +1546,14 @@ describe("AdminPages", () => {
     const currentMonthStats = screen.getByRole("heading", { name: "本月統計" }).closest("section");
     expect(currentMonthStats).not.toBeNull();
     expect(currentMonthStats?.textContent).toContain("暫停人次1");
-    expect(currentMonthStats?.textContent).toContain("1 筆臨時暫停");
 
     const pausedPanel = screen.getByRole("heading", { name: "本月暫停名單" }).closest("section");
     expect(pausedPanel).not.toBeNull();
+    fireEvent.change(screen.getByLabelText("瀏覽暫停個案"), {
+      target: { value: "pat-002:temporary_schedule:2026-05-20T09:00:00+08:00" }
+    });
     expect(within(pausedPanel!).getByText("陳○雄")).toBeInTheDocument();
     expect(within(pausedPanel!).getByText("臨時暫停")).toBeInTheDocument();
-    expect(within(pausedPanel!).getByText("家屬臨時暫停一次")).toBeInTheDocument();
   });
 
   it("AdminDashboardPage 會顯示醫師本月綜合表現排行", () => {
@@ -1673,7 +1666,6 @@ describe("AdminPages", () => {
     const dailyStats = screen.getByRole("heading", { name: "今日統計" }).closest("section");
     expect(dailyStats).not.toBeNull();
     expect(within(dailyStats!).getAllByText("0")).toHaveLength(3);
-    expect(within(dailyStats!).getByText(/此日期尚無已實行路線/)).toBeInTheDocument();
   });
 
   it("AdminDashboardPage 的本月與上個月統計會跟隨日期選擇器基準", () => {
@@ -1760,9 +1752,7 @@ describe("AdminPages", () => {
     const previousMonthStats = screen.getByRole("heading", { name: "上個月統計" }).closest("section");
     expect(currentMonthStats).not.toBeNull();
     expect(previousMonthStats).not.toBeNull();
-    expect(currentMonthStats?.textContent).toContain("2026年4月");
     expect(within(currentMonthStats!).getByText("2")).toBeInTheDocument();
-    expect(previousMonthStats?.textContent).toContain("2026年3月");
     expect(within(previousMonthStats!).getByText("1")).toBeInTheDocument();
   });
 
@@ -1856,7 +1846,7 @@ describe("AdminPages", () => {
 
     let dailyStats = screen.getByRole("heading", { name: "今日統計" }).closest("section");
     expect(dailyStats).not.toBeNull();
-    expect(within(dailyStats!).getByText("2026-05-10")).toBeInTheDocument();
+    expect(screen.getByLabelText("今日統計日期")).toHaveValue("2026-05-10");
     expect(within(dailyStats!).getByText("1")).toBeInTheDocument();
     expect(screen.queryByText("緊急個案｜切換日期")).not.toBeInTheDocument();
 
@@ -1865,9 +1855,9 @@ describe("AdminPages", () => {
     });
 
     dailyStats = screen.getByRole("heading", { name: "今日統計" }).closest("section");
-    expect(within(dailyStats!).getByText("2026-05-11")).toBeInTheDocument();
+    expect(screen.getByLabelText("今日統計日期")).toHaveValue("2026-05-11");
     expect(within(dailyStats!).getAllByText("1")).toHaveLength(2);
-    expect(screen.getByRole("link", { name: /切換日期/ })).toBeInTheDocument();
+    expect(screen.getAllByRole("link").some((link) => link.getAttribute("href") === "/admin/patients/pat-002")).toBe(true);
   });
 
   it("AdminDashboardPage 會顯示回院病歷勾選異常後建立的通知中心案件", () => {
@@ -2430,12 +2420,11 @@ describe("AdminPages", () => {
 
     expect(screen.getByText("目前只顯示 王○珠 已關聯的 LINE 好友名單。")).toBeInTheDocument();
     expect(screen.queryByText("其他家屬 LINE")).not.toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: "批次關聯居家個案" })).toHaveValue("pat-001");
+    expect(screen.queryByRole("combobox", { name: "批次關聯居家個案" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "顯示詳細" }));
     expect(screen.getByLabelText("王先生 LINE 發送勾選")).toBeChecked();
     expect(screen.getByRole("combobox", { name: "篩選醫師" })).toHaveValue("doc-001");
-    fireEvent.click(screen.getByRole("button", { name: "顯示全部 LINE 好友以新增關聯" }));
-    expect(screen.getByText("其他家屬 LINE")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "顯示全部 LINE 好友以新增關聯" })).not.toBeInTheDocument();
   });
 
   it("AdminFamilyLinePage 可管理 webhook 收到的 LINE 好友並作為發送對象", () => {
@@ -2464,7 +2453,7 @@ describe("AdminPages", () => {
     expect(window.localStorage.getItem("tcm-family-line-managed-contacts")).toContain("主要照顧者");
   });
 
-  it("AdminFamilyLinePage 可批次選擇 LINE 好友並關聯到現有個案且重新開啟仍記得", async () => {
+  it("AdminFamilyLinePage 隱藏舊式關聯建立勾選與按鈕，但保留發送與角色功能", () => {
     window.localStorage.setItem(
       "tcm-family-line-managed-contacts",
       JSON.stringify([
@@ -2472,7 +2461,7 @@ describe("AdminPages", () => {
           id: "line-contact-a",
           displayName: "王先生 LINE",
           lineUserId: "Uaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-          linkedPatientIds: [],
+          linkedPatientIds: ["pat-001"],
           note: "",
           source: "official_friend",
           updatedAt: "2026-05-01T00:00:00.000Z"
@@ -2488,66 +2477,14 @@ describe("AdminPages", () => {
         }
       ])
     );
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ contact: {} })
-    });
-    vi.stubGlobal("fetch", fetchMock);
 
-    const { unmount } = renderWithProviders(<AdminFamilyLinePage />);
-
-    fireEvent.click(screen.getAllByRole("button", { name: "顯示詳細" })[0]);
-    fireEvent.change(screen.getByLabelText("批次關聯居家個案"), {
-      target: { value: "pat-001" }
-    });
-    fireEvent.click(screen.getByLabelText("王先生 LINE 關聯所選個案"));
-
-    await waitFor(() => {
-      expect(screen.getByRole("status")).toHaveTextContent("王先生 LINE 已關聯到 王○珠");
-      expect(screen.getByRole("status")).toHaveTextContent("已同步保存");
-    });
-    expect(window.localStorage.getItem("tcm-family-line-managed-contacts")).toContain("pat-001");
-    expect(fetchMock).toHaveBeenCalledWith(
-      "/api/admin/family-line/contacts",
-      expect.objectContaining({
-        method: "PATCH",
-        body: JSON.stringify({
-          lineUserId: "Uaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-          linkedPatientIds: ["pat-001"],
-          contactRole: "family",
-          note: ""
-        })
-      })
-    );
-
-    unmount();
     renderWithProviders(<AdminFamilyLinePage />);
     fireEvent.click(screen.getAllByRole("button", { name: "顯示詳細" })[0]);
+    expect(screen.queryByRole("combobox", { name: "批次關聯居家個案" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("王先生 LINE 關聯所選個案")).not.toBeInTheDocument();
     expect(screen.getByLabelText("王先生 LINE 發送勾選")).toBeInTheDocument();
+    expect(screen.getByLabelText("王先生 LINE LINE 角色")).toBeInTheDocument();
     expect(screen.getAllByText(/關聯個案：王○珠/).length).toBeGreaterThan(0);
-
-    fireEvent.change(screen.getByLabelText("批次關聯居家個案"), {
-      target: { value: "pat-001" }
-    });
-    fireEvent.click(screen.getByLabelText("王先生 LINE 關聯所選個案"));
-
-    await waitFor(() => {
-      expect(screen.getByRole("status")).toHaveTextContent("王先生 LINE 已取消關聯 王○珠");
-      expect(screen.getByRole("status")).toHaveTextContent("已同步保存");
-    });
-    expect(fetchMock).toHaveBeenLastCalledWith(
-      "/api/admin/family-line/contacts",
-      expect.objectContaining({
-        method: "PATCH",
-        body: JSON.stringify({
-          lineUserId: "Uaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-          linkedPatientIds: [],
-          contactRole: "family",
-          note: ""
-        })
-      })
-    );
-    expect(window.localStorage.getItem("tcm-family-line-managed-contacts")).not.toContain("pat-001");
   });
 
   it("AdminFamilyLinePage 可將 LINE 好友角色設為行政人員", async () => {
