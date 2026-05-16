@@ -141,6 +141,26 @@ function ConvertTo-BooleanOption {
   throw "Invalid boolean value '$Value' for WaitForGitHubActions. Use true/false, 1/0, yes/no, or on/off."
 }
 
+function Test-GitHubCliAuth {
+  $authResult = Invoke-NativeTextCommand `
+    -FilePath "gh" `
+    -Arguments @("auth", "status") `
+    -TimeoutSeconds $GitHubCliTimeoutSeconds `
+    -Description "gh auth status" `
+    -AllowFailure
+
+  if ($authResult.ExitCode -eq 0) {
+    return $true
+  }
+
+  $details = @($authResult.StdOut, $authResult.StdErr) -join "`n"
+  Write-Warning "本機 gh auth 無效，所以無法在本機確認 Actions 狀態。請在 Codex 外執行 gh auth login 後再重試，或設定 VERCEL_DEPLOY_HOOK_URL 讓本機直接觸發 Vercel。"
+  if (-not [string]::IsNullOrWhiteSpace($details)) {
+    Write-Warning $details.Trim()
+  }
+  return $false
+}
+
 $shouldWaitForGitHubActions = ConvertTo-BooleanOption -Value $WaitForGitHubActions -Default $true
 
 $currentBranch = (git branch --show-current).Trim()
@@ -252,10 +272,15 @@ if ($SkipVercel) {
 
 $githubActionSucceeded = $false
 $workflowDispatched = $false
+$githubActionsWatchSkippedReason = ""
 if ($shouldWaitForGitHubActions) {
   $ghCommand = Get-Command gh -ErrorAction SilentlyContinue
   if ($null -eq $ghCommand) {
     Write-Warning "GitHub CLI (gh) was not found. git push completed, but GitHub Actions cannot be watched locally."
+    $githubActionsWatchSkippedReason = "GitHub CLI (gh) was not found."
+  } elseif (-not (Test-GitHubCliAuth)) {
+    Write-Warning "Skipped GitHub Actions watch because local gh authentication is unavailable."
+    $githubActionsWatchSkippedReason = "本機 gh auth 無效，所以無法在本機確認 Actions 狀態。"
   } else {
     Write-Host "Waiting for GitHub Actions Deploy to Vercel..." -ForegroundColor Cyan
     $runJson = $null
@@ -341,6 +366,9 @@ if ([string]::IsNullOrWhiteSpace($deployHookUrl)) {
     Write-Host "Local VERCEL_DEPLOY_HOOK_URL is not set. GitHub Actions has already triggered the online deploy flow." -ForegroundColor Green
     Write-Host "Set local VERCEL_DEPLOY_HOOK_URL only if you also want this script to directly trigger the Vercel deploy hook." -ForegroundColor Yellow
     exit 0
+  }
+  if (-not [string]::IsNullOrWhiteSpace($githubActionsWatchSkippedReason)) {
+    throw "VERCEL_DEPLOY_HOOK_URL is not set and GitHub Actions success was not confirmed. $githubActionsWatchSkippedReason GitHub push may have completed, but this machine cannot confirm or trigger the Vercel deployment."
   }
   throw "VERCEL_DEPLOY_HOOK_URL is not set and GitHub Actions success was not confirmed. Cannot confirm Vercel trigger."
 }
