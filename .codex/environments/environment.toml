@@ -32,4 +32,4 @@ platform = "win32"
 [[actions]]
 name = "更新網頁"
 icon = "tool"
-command = "powershell -ExecutionPolicy Bypass -File .\\tools\\publish_github_and_vercel.ps1 -CommitPendingChanges"
+command = "powershell -ExecutionPolicy Bypass -File .\\.codex\\scripts\\update_web.ps1"

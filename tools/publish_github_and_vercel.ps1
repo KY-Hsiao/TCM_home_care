@@ -4,9 +4,11 @@ param(
   [switch]$AllowNonProductionBranch,
   [switch]$SkipVercel,
   [switch]$CommitPendingChanges,
+  [switch]$NoWaitForGitHubActions,
   [string]$CommitMessage = "",
   $WaitForGitHubActions = $true,
   [int]$GitPushTimeoutSeconds = 180,
+  [int]$GitLocalTimeoutSeconds = 60,
   [int]$GitHubCliTimeoutSeconds = 45,
   [int]$DeployHookTimeoutSeconds = 60
 )
@@ -20,98 +22,8 @@ $env:GH_PROMPT_DISABLED = "1"
 $env:GH_NO_UPDATE_NOTIFIER = "1"
 $env:SSH_ASKPASS = "echo"
 
-function ConvertTo-ProcessArgument {
-  param(
-    [AllowNull()]
-    [string]$Argument
-  )
-
-  if ($null -eq $Argument) {
-    return '""'
-  }
-
-  if ($Argument -notmatch '[\s"]') {
-    return $Argument
-  }
-
-  return '"' + ($Argument -replace '"', '\"') + '"'
-}
-
-function Invoke-NativeTextCommand {
-  param(
-    [Parameter(Mandatory = $true)]
-    [string]$FilePath,
-    [Parameter(Mandatory = $true)]
-    [string[]]$Arguments,
-    [Parameter(Mandatory = $true)]
-    [int]$TimeoutSeconds,
-    [Parameter(Mandatory = $true)]
-    [string]$Description,
-    [switch]$AllowFailure
-  )
-
-  $processInfo = [System.Diagnostics.ProcessStartInfo]::new()
-  $processInfo.FileName = $FilePath
-  $processInfo.WorkingDirectory = (Get-Location).Path
-  $processInfo.UseShellExecute = $false
-  $processInfo.RedirectStandardOutput = $true
-  $processInfo.RedirectStandardError = $true
-  $processInfo.Arguments = ($Arguments | ForEach-Object { ConvertTo-ProcessArgument -Argument $_ }) -join " "
-
-  $process = [System.Diagnostics.Process]::new()
-  $process.StartInfo = $processInfo
-  $stdoutBuilder = [System.Text.StringBuilder]::new()
-  $stderrBuilder = [System.Text.StringBuilder]::new()
-
-  $stdoutHandler = [System.Diagnostics.DataReceivedEventHandler]{
-    param($sender, $eventArgs)
-    if ($null -ne $eventArgs.Data) {
-      [void]$stdoutBuilder.AppendLine($eventArgs.Data)
-    }
-  }
-  $stderrHandler = [System.Diagnostics.DataReceivedEventHandler]{
-    param($sender, $eventArgs)
-    if ($null -ne $eventArgs.Data) {
-      [void]$stderrBuilder.AppendLine($eventArgs.Data)
-    }
-  }
-  $process.add_OutputDataReceived($stdoutHandler)
-  $process.add_ErrorDataReceived($stderrHandler)
-
-  if (-not $process.Start()) {
-    throw "$Description failed to start."
-  }
-
-  $process.BeginOutputReadLine()
-  $process.BeginErrorReadLine()
-
-  $completed = $process.WaitForExit($TimeoutSeconds * 1000)
-  if (-not $completed) {
-    try {
-      $process.Kill($true)
-    } catch {
-      $process.Kill()
-    }
-    throw "$Description timed out after $TimeoutSeconds seconds. Check network access and authentication, then retry."
-  }
-
-  $process.WaitForExit()
-  $stdout = $stdoutBuilder.ToString()
-  $stderr = $stderrBuilder.ToString()
-  $process.remove_OutputDataReceived($stdoutHandler)
-  $process.remove_ErrorDataReceived($stderrHandler)
-  $result = [pscustomobject]@{
-    ExitCode = $process.ExitCode
-    StdOut = $stdout
-    StdErr = $stderr
-  }
-
-  if (-not $AllowFailure -and $result.ExitCode -ne 0) {
-    $details = @($stdout, $stderr) -join "`n"
-    throw "$Description failed with exit code $($result.ExitCode). $details"
-  }
-
-  return $result
+foreach ($proxyVar in @("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "GIT_HTTP_PROXY", "GIT_HTTPS_PROXY")) {
+  Remove-Item "Env:$proxyVar" -ErrorAction SilentlyContinue
 }
 
 function ConvertTo-BooleanOption {
@@ -138,7 +50,77 @@ function ConvertTo-BooleanOption {
   if ($normalized -in @("true", "`$true", "1", "yes", "on")) {
     return $true
   }
-  throw "Invalid boolean value '$Value' for WaitForGitHubActions. Use true/false, 1/0, yes/no, or on/off."
+  throw "Invalid boolean value '$Value' for WaitForGitHubActions."
+}
+
+function ConvertTo-ProcessArgument {
+  param(
+    [AllowNull()]
+    [string]$Argument
+  )
+
+  if ($null -eq $Argument) {
+    return '""'
+  }
+  if ($Argument -notmatch '[\s"]') {
+    return $Argument
+  }
+  return '"' + ($Argument -replace '"', '\"') + '"'
+}
+
+function Invoke-NativeTextCommand {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$FilePath,
+    [Parameter(Mandatory = $true)]
+    [string[]]$Arguments,
+    [Parameter(Mandatory = $true)]
+    [int]$TimeoutSeconds,
+    [Parameter(Mandatory = $true)]
+    [string]$Description,
+    [switch]$AllowFailure
+  )
+
+  $processInfo = [System.Diagnostics.ProcessStartInfo]::new()
+  $processInfo.FileName = $FilePath
+  $processInfo.WorkingDirectory = (Get-Location).Path
+  $processInfo.UseShellExecute = $false
+  $processInfo.RedirectStandardOutput = $true
+  $processInfo.RedirectStandardError = $true
+  $processInfo.Arguments = ($Arguments | ForEach-Object { ConvertTo-ProcessArgument -Argument $_ }) -join " "
+
+  $process = [System.Diagnostics.Process]::new()
+  $process.StartInfo = $processInfo
+  if (-not $process.Start()) {
+    throw "$Description failed to start."
+  }
+
+  $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+  $stderrTask = $process.StandardError.ReadToEndAsync()
+  $completed = $process.WaitForExit($TimeoutSeconds * 1000)
+  if (-not $completed) {
+    try {
+      $process.Kill($true)
+    } catch {
+      $process.Kill()
+    }
+    throw "$Description timed out after $TimeoutSeconds seconds. Check network access and authentication, then retry."
+  }
+
+  $stdout = $stdoutTask.Result
+  $stderr = $stderrTask.Result
+  $result = [pscustomobject]@{
+    ExitCode = $process.ExitCode
+    StdOut = $stdout
+    StdErr = $stderr
+  }
+
+  if (-not $AllowFailure -and $result.ExitCode -ne 0) {
+    $details = @($stdout, $stderr) -join "`n"
+    throw "$Description failed with exit code $($result.ExitCode). $details"
+  }
+
+  return $result
 }
 
 function Test-GitHubCliAuth {
@@ -154,27 +136,11 @@ function Test-GitHubCliAuth {
   }
 
   $details = @($authResult.StdOut, $authResult.StdErr) -join "`n"
-  Write-Warning "本機 gh auth 無效，所以無法在本機確認 Actions 狀態。請在 Codex 外執行 gh auth login 後再重試，或設定 VERCEL_DEPLOY_HOOK_URL 讓本機直接觸發 Vercel。"
+  Write-Warning "Local gh auth is unavailable, so Actions status cannot be confirmed from this machine."
   if (-not [string]::IsNullOrWhiteSpace($details)) {
     Write-Warning $details.Trim()
   }
   return $false
-}
-
-$shouldWaitForGitHubActions = ConvertTo-BooleanOption -Value $WaitForGitHubActions -Default $true
-
-$currentBranch = (git branch --show-current).Trim()
-if ([string]::IsNullOrWhiteSpace($currentBranch)) {
-  throw "Cannot resolve current git branch. Publish aborted."
-}
-
-if (-not $AllowNonProductionBranch -and $currentBranch -ne $ProductionBranch) {
-  throw "Current branch '$currentBranch' is not production branch '$ProductionBranch'. Use -AllowNonProductionBranch to continue."
-}
-
-$currentHead = (git rev-parse HEAD).Trim()
-if ([string]::IsNullOrWhiteSpace($currentHead)) {
-  throw "Cannot resolve git HEAD. Publish aborted."
 }
 
 function Wait-GitHubRunQuietly {
@@ -193,41 +159,66 @@ function Wait-GitHubRunQuietly {
       -TimeoutSeconds $GitHubCliTimeoutSeconds `
       -Description "gh run view $RunId" `
       -AllowFailure
+
     $runStatusJson = $runStatusResult.StdOut
-    if ($runStatusResult.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($runStatusJson)) {
-      Write-Host "Deploy workflow status unavailable. Retry $attempt/$MaxAttempts..." -ForegroundColor DarkYellow
-      Start-Sleep -Seconds $IntervalSeconds
-      continue
+    if ($runStatusResult.ExitCode -eq 0 -and -not [string]::IsNullOrWhiteSpace($runStatusJson)) {
+      $runStatus = $runStatusJson | ConvertFrom-Json
+      $state = "$($runStatus.status):$($runStatus.conclusion)"
+      if ($state -ne $lastPrintedState) {
+        $lastPrintedState = $state
+        $conclusionText = if ([string]::IsNullOrWhiteSpace($runStatus.conclusion)) { "pending" } else { $runStatus.conclusion }
+        Write-Host "Deploy workflow status: $($runStatus.status), conclusion: $conclusionText" -ForegroundColor Cyan
+      }
+      if ($runStatus.status -eq "completed") {
+        if ($runStatus.conclusion -eq "success") {
+          Write-Host "GitHub Actions Deploy to Vercel completed successfully." -ForegroundColor Green
+          return
+        }
+        $runUrl = if ([string]::IsNullOrWhiteSpace($runStatus.url)) { "GitHub Actions run $RunId" } else { $runStatus.url }
+        throw "GitHub Actions Deploy to Vercel failed with conclusion '$($runStatus.conclusion)'. Check $runUrl."
+      }
     }
 
-    $runStatus = $runStatusJson | ConvertFrom-Json
-    $state = "$($runStatus.status):$($runStatus.conclusion)"
-    if ($state -ne $lastPrintedState) {
-      $lastPrintedState = $state
-      $conclusionText = if ([string]::IsNullOrWhiteSpace($runStatus.conclusion)) { "pending" } else { $runStatus.conclusion }
-      Write-Host "Deploy workflow status: $($runStatus.status), conclusion: $conclusionText" -ForegroundColor Cyan
-    } elseif ($attempt % 6 -eq 0) {
+    if ($attempt % 6 -eq 0) {
       Write-Host "Deploy workflow still running. Retry $attempt/$MaxAttempts..." -ForegroundColor DarkCyan
     }
-
-    if ($runStatus.status -eq "completed") {
-      if ($runStatus.conclusion -eq "success") {
-        Write-Host "GitHub Actions Deploy to Vercel completed successfully." -ForegroundColor Green
-        return
-      }
-
-      $runUrl = if ([string]::IsNullOrWhiteSpace($runStatus.url)) { "GitHub Actions run $RunId" } else { $runStatus.url }
-      throw "GitHub Actions Deploy to Vercel failed with conclusion '$($runStatus.conclusion)'. Check $runUrl."
-    }
-
     Start-Sleep -Seconds $IntervalSeconds
   }
 
   throw "GitHub Actions Deploy to Vercel did not complete within $($MaxAttempts * $IntervalSeconds) seconds."
 }
 
-$pendingChanges = (git status --porcelain)
+$shouldWaitForGitHubActions = (ConvertTo-BooleanOption -Value $WaitForGitHubActions -Default $true) -and -not $NoWaitForGitHubActions
+
+$currentBranch = (Invoke-NativeTextCommand `
+  -FilePath "git" `
+  -Arguments @("branch", "--show-current") `
+  -TimeoutSeconds $GitLocalTimeoutSeconds `
+  -Description "git branch --show-current").StdOut.Trim()
+if ([string]::IsNullOrWhiteSpace($currentBranch)) {
+  throw "Cannot resolve current git branch. Publish aborted."
+}
+
+if (-not $AllowNonProductionBranch -and $currentBranch -ne $ProductionBranch) {
+  throw "Current branch '$currentBranch' is not production branch '$ProductionBranch'. Use -AllowNonProductionBranch to continue."
+}
+
+$currentHead = (Invoke-NativeTextCommand `
+  -FilePath "git" `
+  -Arguments @("rev-parse", "HEAD") `
+  -TimeoutSeconds $GitLocalTimeoutSeconds `
+  -Description "git rev-parse HEAD").StdOut.Trim()
+
+$pendingChanges = (Invoke-NativeTextCommand `
+  -FilePath "git" `
+  -Arguments @("status", "--porcelain") `
+  -TimeoutSeconds $GitLocalTimeoutSeconds `
+  -Description "git status --porcelain").StdOut
 if ($pendingChanges) {
+  if (-not $CommitPendingChanges) {
+    Write-Warning "There are uncommitted changes. This publish only includes committed content."
+  }
+
   if ($CommitPendingChanges) {
     if ([string]::IsNullOrWhiteSpace($CommitMessage)) {
       $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm"
@@ -235,22 +226,22 @@ if ($pendingChanges) {
     }
 
     Write-Host "Committing pending changes before publish..." -ForegroundColor Cyan
-    git add -A
-    if ($LASTEXITCODE -ne 0) {
-      throw "git add failed. Publish aborted."
-    }
+    Invoke-NativeTextCommand `
+      -FilePath "git" `
+      -Arguments @("add", "-A") `
+      -TimeoutSeconds $GitLocalTimeoutSeconds `
+      -Description "git add" | Out-Null
+    Invoke-NativeTextCommand `
+      -FilePath "git" `
+      -Arguments @("commit", "-m", $CommitMessage) `
+      -TimeoutSeconds $GitLocalTimeoutSeconds `
+      -Description "git commit" | Out-Null
 
-    git commit -m $CommitMessage
-    if ($LASTEXITCODE -ne 0) {
-      throw "git commit failed. Check git user.name/user.email and the pending changes."
-    }
-
-    $currentHead = (git rev-parse HEAD).Trim()
-    if ([string]::IsNullOrWhiteSpace($currentHead)) {
-      throw "Cannot resolve git HEAD after commit. Publish aborted."
-    }
-  } else {
-    Write-Warning "There are uncommitted changes. This publish only includes committed content."
+    $currentHead = (Invoke-NativeTextCommand `
+      -FilePath "git" `
+      -Arguments @("rev-parse", "HEAD") `
+      -TimeoutSeconds $GitLocalTimeoutSeconds `
+      -Description "git rev-parse HEAD after commit").StdOut.Trim()
   }
 }
 
@@ -271,19 +262,23 @@ if ($SkipVercel) {
 }
 
 $githubActionSucceeded = $false
-$workflowDispatched = $false
 $githubActionsWatchSkippedReason = ""
 if ($shouldWaitForGitHubActions) {
   $ghCommand = Get-Command gh -ErrorAction SilentlyContinue
   if ($null -eq $ghCommand) {
-    Write-Warning "GitHub CLI (gh) was not found. git push completed, but GitHub Actions cannot be watched locally."
     $githubActionsWatchSkippedReason = "GitHub CLI (gh) was not found."
-  } elseif (-not (Test-GitHubCliAuth)) {
+    Write-Warning "$githubActionsWatchSkippedReason GitHub push completed, but Actions cannot be watched locally."
+  }
+
+  if ($null -ne $ghCommand -and -not (Test-GitHubCliAuth)) {
+    $githubActionsWatchSkippedReason = "Local gh auth is unavailable."
     Write-Warning "Skipped GitHub Actions watch because local gh authentication is unavailable."
-    $githubActionsWatchSkippedReason = "本機 gh auth 無效，所以無法在本機確認 Actions 狀態。"
-  } else {
+  }
+
+  if ($null -ne $ghCommand -and [string]::IsNullOrWhiteSpace($githubActionsWatchSkippedReason)) {
     Write-Host "Waiting for GitHub Actions Deploy to Vercel..." -ForegroundColor Cyan
-    $runJson = $null
+    $runJson = ""
+    $runListResult = $null
     for ($attempt = 1; $attempt -le 12; $attempt += 1) {
       Start-Sleep -Seconds 5
       $runListResult = Invoke-NativeTextCommand `
@@ -306,78 +301,47 @@ if ($shouldWaitForGitHubActions) {
       Write-Host "Deploy workflow is not visible yet. Retry $attempt/12..." -ForegroundColor DarkYellow
     }
 
-    if ($runListResult.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($runJson) -or $runJson -eq "[]") {
-      Write-Warning "No Deploy to Vercel workflow run was found for this commit. Triggering workflow_dispatch instead."
-      $dispatchResult = Invoke-NativeTextCommand `
-        -FilePath "gh" `
-        -Arguments @("workflow", "run", "deploy-vercel.yml", "--ref", $currentBranch) `
-        -TimeoutSeconds $GitHubCliTimeoutSeconds `
-        -Description "gh workflow run deploy-vercel.yml" `
-        -AllowFailure
-      if ($dispatchResult.ExitCode -ne 0) {
-        Write-Warning "Could not dispatch Deploy to Vercel workflow. GitHub push completed, but deployment was not confirmed."
-      } else {
-        $workflowDispatched = $true
-        for ($attempt = 1; $attempt -le 12; $attempt += 1) {
-          Start-Sleep -Seconds 5
-          $runListResult = Invoke-NativeTextCommand `
-            -FilePath "gh" `
-            -Arguments @(
-              "run", "list",
-              "--workflow", "deploy-vercel.yml",
-              "--branch", $currentBranch,
-              "--limit", "1",
-              "--json", "databaseId,status,conclusion,displayTitle"
-            ) `
-            -TimeoutSeconds $GitHubCliTimeoutSeconds `
-            -Description "gh run list after workflow_dispatch" `
-            -AllowFailure
-          $runJson = $runListResult.StdOut
-          if ($runListResult.ExitCode -eq 0 -and -not [string]::IsNullOrWhiteSpace($runJson) -and $runJson -ne "[]") {
-            break
-          }
-          Write-Host "Dispatched deploy workflow is not visible yet. Retry $attempt/12..." -ForegroundColor DarkYellow
-        }
-      }
-    }
-
-    if ($runListResult.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($runJson) -or $runJson -eq "[]") {
-      Write-Warning "Deploy to Vercel workflow run could not be found."
-    } else {
+    $runFound = $null -ne $runListResult -and $runListResult.ExitCode -eq 0 -and -not [string]::IsNullOrWhiteSpace($runJson) -and $runJson -ne "[]"
+    if ($runFound) {
       $runs = $runJson | ConvertFrom-Json
       $run = @($runs)[0]
-      if ($null -eq $run -or $null -eq $run.databaseId) {
-        Write-Warning "Deploy to Vercel workflow has not appeared in GitHub Actions yet."
-      } else {
+      if ($null -ne $run -and $null -ne $run.databaseId) {
         Write-Host "Watching GitHub Actions run #$($run.databaseId)..." -ForegroundColor Cyan
         Wait-GitHubRunQuietly -RunId $run.databaseId
         $githubActionSucceeded = $true
-        if ($workflowDispatched) {
-          Write-Host "GitHub Actions Deploy to Vercel completed successfully after workflow_dispatch." -ForegroundColor Green
-        }
       }
     }
+
+    if (-not $runFound) {
+      Write-Warning "Deploy to Vercel workflow run could not be found for this commit."
+    }
   }
+}
+
+if (-not $shouldWaitForGitHubActions) {
+  Write-Host "Skipped local GitHub Actions waiting. GitHub push completed. Repository push workflow can trigger Vercel online." -ForegroundColor Yellow
 }
 
 $deployHookUrl = $env:VERCEL_DEPLOY_HOOK_URL
 if ([string]::IsNullOrWhiteSpace($deployHookUrl)) {
   if ($githubActionSucceeded) {
     Write-Host "Local VERCEL_DEPLOY_HOOK_URL is not set. GitHub Actions has already triggered the online deploy flow." -ForegroundColor Green
-    Write-Host "Set local VERCEL_DEPLOY_HOOK_URL only if you also want this script to directly trigger the Vercel deploy hook." -ForegroundColor Yellow
+    exit 0
+  }
+  if (-not $shouldWaitForGitHubActions) {
+    Write-Host "Local VERCEL_DEPLOY_HOOK_URL is not set. Publish finished after GitHub push without local Actions waiting." -ForegroundColor Yellow
     exit 0
   }
   if (-not [string]::IsNullOrWhiteSpace($githubActionsWatchSkippedReason)) {
-    throw "VERCEL_DEPLOY_HOOK_URL is not set and GitHub Actions success was not confirmed. $githubActionsWatchSkippedReason GitHub push may have completed, but this machine cannot confirm or trigger the Vercel deployment."
+    Write-Warning "VERCEL_DEPLOY_HOOK_URL is not set and GitHub Actions success was not confirmed. $githubActionsWatchSkippedReason"
+    exit 0
   }
   throw "VERCEL_DEPLOY_HOOK_URL is not set and GitHub Actions success was not confirmed. Cannot confirm Vercel trigger."
 }
 
 Write-Host "Triggering Vercel deployment through local deploy hook..." -ForegroundColor Cyan
 $response = Invoke-RestMethod -Method Post -Uri $deployHookUrl -TimeoutSec $DeployHookTimeoutSeconds
-
 if ($null -ne $response) {
   $response | ConvertTo-Json -Depth 6
 }
-
 Write-Host "GitHub and Vercel publish action completed." -ForegroundColor Green

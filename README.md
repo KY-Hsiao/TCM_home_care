@@ -167,8 +167,8 @@ $env:VITE_TEAM_COMM_SYNC_MODE = "http"
 - 不能把你本機尚未 `git push` 的程式碼直接送上線
 - Codex 動作列的 `推送 GitHub` 與 `更新網頁` 是本機發布按鈕；若工作區有未提交修改，會先自動建立一筆發布 commit，再推送到 GitHub。
 - `推送 GitHub` 只做 `git push`，不等待 GitHub Actions，也不觸發 Vercel。
-- `更新網頁` 會在 push 後以低輸出輪詢等待 `deploy-vercel.yml`；若沒有新的 push workflow run，會改用 GitHub `workflow_dispatch` 主動觸發一次 Vercel 部署。
-- 發布腳本會停用 Git/GitHub CLI 的互動式提示；若認證失效，會直接失敗並提示先在 Codex 外修正 GitHub 登入，避免 Codex 動作卡在隱藏提示。
+- Codex 動作列的 `更新網頁` 會在 push 後直接結束，不在本機等待 GitHub Actions；`main` 的 push 會由 `.github/workflows/deploy-vercel.yml` 在線上觸發 Vercel。
+- 發布腳本會停用 Git/GitHub CLI 的互動式提示；若本機 `gh auth` 失效，會跳過本機 Actions 狀態確認，避免 Codex 動作卡在隱藏提示。
 
 ### 本機一鍵推送 GitHub 並同步觸發 Vercel
 
@@ -210,6 +210,12 @@ powershell -ExecutionPolicy Bypass -File .\tools\publish_github_and_vercel.ps1 -
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\tools\publish_github_and_vercel.ps1 -CommitPendingChanges
+```
+
+若要避免本機等待 GitHub Actions，可加上：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\publish_github_and_vercel.ps1 -CommitPendingChanges -NoWaitForGitHubActions
 ```
 
 ## 路徑注意事項
