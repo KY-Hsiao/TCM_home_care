@@ -10,6 +10,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+$env:GIT_TERMINAL_PROMPT = "0"
+$env:GCM_INTERACTIVE = "Never"
+$env:GH_PROMPT_DISABLED = "1"
+
 function ConvertTo-BooleanOption {
   param(
     [Parameter(Mandatory = $true)]
@@ -123,9 +127,9 @@ if ($pendingChanges) {
 }
 
 Write-Host "Pushing current branch to GitHub: $currentBranch" -ForegroundColor Cyan
-git push $Remote $currentBranch
+git -c credential.interactive=false push $Remote $currentBranch
 if ($LASTEXITCODE -ne 0) {
-  throw "git push failed. Publish aborted."
+  throw "git push failed. Publish aborted. Check GitHub authentication outside Codex, then retry."
 }
 
 if ($SkipVercel) {

@@ -1,5 +1,90 @@
 import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
+import type { IncomingMessage, ServerResponse } from "node:http";
+
+const ignoredWatchSegments = new Set([
+  ".codex",
+  ".git",
+  ".vercel",
+  "__pycache__",
+  "coverage",
+  "dist",
+  "node_modules",
+  "run_logs"
+]);
+
+function shouldIgnoreWatchPath(filePath: string) {
+  const normalizedPath = filePath.replace(/\\/g, "/");
+  return normalizedPath
+    .split("/")
+    .filter(Boolean)
+    .some((segment) => ignoredWatchSegments.has(segment));
+}
+
+function sendJson(response: ServerResponse, statusCode: number, payload: unknown) {
+  response.statusCode = statusCode;
+  response.setHeader("Content-Type", "application/json");
+  response.end(JSON.stringify(payload));
+}
+
+function sendRequestBodyError(response: ServerResponse, error: unknown) {
+  const message = error instanceof Error ? error.message : "";
+  if (message === "INVALID_JSON") {
+    sendJson(response, 400, { reason: "INVALID_JSON", error: "請求內容不是有效的 JSON。" });
+    return;
+  }
+  if (message === "REQUEST_BODY_TOO_LARGE") {
+    sendJson(response, 413, { reason: "REQUEST_BODY_TOO_LARGE", error: "請求內容過大。" });
+    return;
+  }
+  sendJson(response, 400, {
+    reason: "REQUEST_ERROR",
+    error: error instanceof Error ? error.message : "讀取請求內容失敗。"
+  });
+}
+
+function readJsonBody(request: IncomingMessage, maxBytes = 1024 * 1024) {
+  return new Promise<unknown>((resolve, reject) => {
+    let rawBody = "";
+    let receivedBytes = 0;
+    let settled = false;
+
+    const fail = (error: Error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      reject(error);
+    };
+
+    request.on("data", (chunk: Buffer | string) => {
+      if (settled) {
+        return;
+      }
+      const chunkText = chunk.toString();
+      receivedBytes += Buffer.byteLength(chunkText);
+      if (receivedBytes > maxBytes) {
+        fail(new Error("REQUEST_BODY_TOO_LARGE"));
+        return;
+      }
+      rawBody += chunkText;
+    });
+
+    request.on("error", fail);
+    request.on("end", () => {
+      if (settled) {
+        return;
+      }
+      try {
+        const parsedBody = rawBody.trim() ? JSON.parse(rawBody) : {};
+        settled = true;
+        resolve(parsedBody);
+      } catch {
+        fail(new Error("INVALID_JSON"));
+      }
+    });
+  });
+}
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
@@ -7,11 +92,7 @@ export default defineConfig(({ mode }) => {
   return {
     server: {
       watch: {
-        ignored: [
-          "**/.codex/**",
-          "**/dist/**",
-          "**/run_logs/**"
-        ]
+        ignored: shouldIgnoreWatchPath
       }
     },
     plugins: [
@@ -20,19 +101,12 @@ export default defineConfig(({ mode }) => {
         name: "local-geocode-api",
         configureServer(server) {
           server.middlewares.use("/api/maps/geocode", async (request, response) => {
-          if (request.method !== "POST") {
-            response.statusCode = 405;
-            response.setHeader("Allow", "POST");
-            response.setHeader("Content-Type", "application/json");
-            response.end(JSON.stringify({ error: "Method Not Allowed" }));
-            return;
-          }
+            if (request.method !== "POST") {
+              response.setHeader("Allow", "POST");
+              sendJson(response, 405, { error: "Method Not Allowed" });
+              return;
+            }
 
-          let rawBody = "";
-          request.on("data", (chunk) => {
-            rawBody += chunk;
-          });
-          request.on("end", async () => {
             const apiKey =
               process.env.GOOGLE_MAPS_API_KEY ||
               process.env.VITE_GOOGLE_MAPS_API_KEY ||
@@ -40,22 +114,24 @@ export default defineConfig(({ mode }) => {
               env.VITE_GOOGLE_MAPS_API_KEY ||
               "";
             if (!apiKey.trim()) {
-              response.statusCode = 503;
-              response.setHeader("Content-Type", "application/json");
-              response.end(
-                JSON.stringify({
-                  reason: "API_KEY_MISSING",
-                  error: "尚未設定 GOOGLE_MAPS_API_KEY 或 VITE_GOOGLE_MAPS_API_KEY，無法補座標。"
-                })
-              );
+              sendJson(response, 503, {
+                reason: "API_KEY_MISSING",
+                error: "尚未設定 GOOGLE_MAPS_API_KEY 或 VITE_GOOGLE_MAPS_API_KEY，無法補座標。"
+              });
               return;
             }
 
-            const address = String(JSON.parse(rawBody || "{}")?.address ?? "").trim();
+            let body: unknown;
+            try {
+              body = await readJsonBody(request);
+            } catch (error) {
+              sendRequestBodyError(response, error);
+              return;
+            }
+
+            const address = String((body as { address?: unknown })?.address ?? "").trim();
             if (!address) {
-              response.statusCode = 400;
-              response.setHeader("Content-Type", "application/json");
-              response.end(JSON.stringify({ reason: "ADDRESS_MISSING", error: "缺少地址，無法補座標。" }));
+              sendJson(response, 400, { reason: "ADDRESS_MISSING", error: "缺少地址，無法補座標。" });
               return;
             }
 
@@ -69,7 +145,6 @@ export default defineConfig(({ mode }) => {
               const payload = await googleResponse.json();
               const firstResult = payload.status === "OK" ? payload.results?.[0] : null;
               const location = firstResult?.geometry?.location;
-              response.setHeader("Content-Type", "application/json");
 
               if (
                 !googleResponse.ok ||
@@ -79,37 +154,26 @@ export default defineConfig(({ mode }) => {
                 !Number.isFinite(location.lng)
               ) {
                 const reason = payload.status || `HTTP_${googleResponse.status}`;
-                response.statusCode = googleResponse.ok ? 422 : 502;
-                response.end(
-                  JSON.stringify({
-                    reason,
-                    error: `Google Geocoding API 回傳 ${reason}${
-                      payload.error_message ? `：${payload.error_message}` : ""
-                    }`
-                  })
-                );
+                sendJson(response, googleResponse.ok ? 422 : 502, {
+                  reason,
+                  error: `Google Geocoding API 回傳 ${reason}${
+                    payload.error_message ? `：${payload.error_message}` : ""
+                  }`
+                });
                 return;
               }
 
-              response.statusCode = 200;
-              response.end(
-                JSON.stringify({
-                  latitude: location.lat,
-                  longitude: location.lng,
-                  formattedAddress: firstResult?.formatted_address ?? address
-                })
-              );
+              sendJson(response, 200, {
+                latitude: location.lat,
+                longitude: location.lng,
+                formattedAddress: firstResult?.formatted_address ?? address
+              });
             } catch (error) {
-              response.statusCode = 502;
-              response.setHeader("Content-Type", "application/json");
-              response.end(
-                JSON.stringify({
-                  reason: "NETWORK_ERROR",
-                  error: error instanceof Error ? error.message : "呼叫 Google Geocoding API 失敗。"
-                })
-              );
+              sendJson(response, 502, {
+                reason: "NETWORK_ERROR",
+                error: error instanceof Error ? error.message : "呼叫 Google Geocoding API 失敗。"
+              });
             }
-          });
           });
         }
       }

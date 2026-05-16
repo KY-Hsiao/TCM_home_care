@@ -168,6 +168,7 @@ $env:VITE_TEAM_COMM_SYNC_MODE = "http"
 - Codex 動作列的 `推送 GitHub` 與 `更新網頁` 是本機發布按鈕；若工作區有未提交修改，會先自動建立一筆發布 commit，再推送到 GitHub。
 - `推送 GitHub` 只做 `git push`，不等待 GitHub Actions，也不觸發 Vercel。
 - `更新網頁` 會在 push 後以低輸出輪詢等待 `deploy-vercel.yml`；若沒有新的 push workflow run，會改用 GitHub `workflow_dispatch` 主動觸發一次 Vercel 部署。
+- 發布腳本會停用 Git/GitHub CLI 的互動式提示；若認證失效，會直接失敗並提示先在 Codex 外修正 GitHub 登入，避免 Codex 動作卡在隱藏提示。
 
 ### 本機一鍵推送 GitHub 並同步觸發 Vercel
 
