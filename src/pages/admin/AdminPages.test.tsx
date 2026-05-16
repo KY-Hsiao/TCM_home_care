@@ -2479,6 +2479,11 @@ describe("AdminPages", () => {
     );
 
     renderWithProviders(<AdminFamilyLinePage />);
+    expect(screen.getByRole("heading", { name: "LINE 快速功能" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /即時群發訊息/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /單獨發訊息/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /LINE 自動發送設定/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /範本群發/ })).toBeInTheDocument();
     fireEvent.click(screen.getAllByRole("button", { name: "顯示詳細" })[0]);
     expect(screen.queryByRole("combobox", { name: "批次關聯居家個案" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("王先生 LINE 關聯所選個案")).not.toBeInTheDocument();

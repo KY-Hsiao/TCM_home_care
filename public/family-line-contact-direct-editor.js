@@ -224,6 +224,11 @@
 
   function shouldPreserveOriginalTool(text) {
     return [
+      'LINE 快速功能',
+      '即時群發訊息',
+      '單獨發訊息',
+      'LINE 自動發送設定',
+      '範本群發',
       '重新整理好友名單',
       '全選好友',
       '反選好友',
@@ -232,8 +237,19 @@
     ].some((label) => text.includes(clean(label)));
   }
 
+  function isProtectedLineQuickFunction(element) {
+    return Boolean(
+      element?.closest?.('[data-line-quick-functions="true"]') ||
+        element?.closest?.('[role="dialog"][aria-label="即時群發訊息"]') ||
+        element?.closest?.('[role="dialog"][aria-label="單獨發訊息"]') ||
+        element?.closest?.('[role="dialog"][aria-label="LINE 自動發送設定"]') ||
+        element?.closest?.('[role="dialog"][aria-label="範本群發"]')
+    );
+  }
+
   function isOriginalContactRowElement(element, contacts) {
     if (!element || element.id === PANEL_ID || element.closest?.(`#${PANEL_ID}`)) return false;
+    if (isProtectedLineQuickFunction(element)) return false;
     const text = clean(element.textContent);
     if (!text || shouldPreserveOriginalTool(text)) return false;
     const matchedContact = contacts.some((contact) =>
@@ -260,6 +276,7 @@
     const candidates = Array.from(document.querySelectorAll('li, tr, article, section, div'))
       .filter((node) => {
         if (node.id === PANEL_ID || node.closest?.(`#${PANEL_ID}`)) return false;
+        if (isProtectedLineQuickFunction(node)) return false;
         const text = clean(node.textContent);
         if (!text) return false;
         if (shouldPreserveOriginalTool(text)) return false;
@@ -297,6 +314,7 @@
 
     Array.from(document.querySelectorAll('button, label, select')).forEach((element) => {
       if (panel?.contains(element)) return;
+      if (isProtectedLineQuickFunction(element)) return;
       const text = clean(element.textContent);
       const parentText = clean(element.closest('div, label, section, fieldset')?.textContent || '');
       if (shouldPreserveOriginalTool(text) || shouldPreserveOriginalTool(parentText)) return;

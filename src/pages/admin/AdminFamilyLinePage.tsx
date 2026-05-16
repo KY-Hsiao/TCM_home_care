@@ -895,102 +895,104 @@ export function AdminFamilyLinePage() {
 
       <div className="grid gap-3 xl:grid-cols-[minmax(0,0.95fr)_minmax(420px,1.05fr)] xl:items-start">
         <div className="space-y-4">
-          <Panel title="LINE 快速功能">
-            <div className="grid gap-2 sm:grid-cols-2">
-              <button
-                type="button"
-                onClick={() => setActiveLineTool("instant")}
-                className={`flex min-h-[56px] items-center gap-2 rounded-xl border px-3 py-2 text-left transition ${
-                  activeLineTool === "instant"
-                    ? "border-brand-forest bg-emerald-50 shadow-sm"
-                    : "border-slate-200 bg-white hover:border-brand-forest hover:bg-emerald-50"
-                }`}
-              >
-                <span
-                  className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-xs font-bold ${
+          <div data-line-quick-functions="true">
+            <Panel title="LINE 快速功能">
+              <div className="grid gap-2 sm:grid-cols-2">
+                <button
+                  type="button"
+                  onClick={() => setActiveLineTool("instant")}
+                  className={`flex min-h-[56px] items-center gap-2 rounded-xl border px-3 py-2 text-left transition ${
                     activeLineTool === "instant"
-                      ? "bg-brand-forest text-white"
-                      : "bg-slate-100 text-brand-ink"
+                      ? "border-brand-forest bg-emerald-50 shadow-sm"
+                      : "border-slate-200 bg-white hover:border-brand-forest hover:bg-emerald-50"
                   }`}
                 >
-                  群發
-                </span>
-                <span className="min-w-0">
-                  <span className="block break-words text-sm font-semibold text-brand-ink">即時群發訊息</span>
-                  <span className="mt-0.5 block break-words text-xs text-slate-500">一次性推播</span>
-                </span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveLineTool("single")}
-                className={`flex min-h-[56px] items-center gap-2 rounded-xl border px-3 py-2 text-left transition ${
-                  activeLineTool === "single"
-                    ? "border-brand-forest bg-emerald-50 shadow-sm"
-                    : "border-slate-200 bg-white hover:border-brand-forest hover:bg-emerald-50"
-                }`}
-              >
-                <span
-                  className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-xs font-bold ${
+                  <span
+                    className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-xs font-bold ${
+                      activeLineTool === "instant"
+                        ? "bg-brand-forest text-white"
+                        : "bg-slate-100 text-brand-ink"
+                    }`}
+                  >
+                    群發
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block break-words text-sm font-semibold text-brand-ink">即時群發訊息</span>
+                    <span className="mt-0.5 block break-words text-xs text-slate-500">一次性推播</span>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveLineTool("single")}
+                  className={`flex min-h-[56px] items-center gap-2 rounded-xl border px-3 py-2 text-left transition ${
                     activeLineTool === "single"
-                      ? "bg-brand-forest text-white"
-                      : "bg-slate-100 text-brand-ink"
+                      ? "border-brand-forest bg-emerald-50 shadow-sm"
+                      : "border-slate-200 bg-white hover:border-brand-forest hover:bg-emerald-50"
                   }`}
                 >
-                  單發
-                </span>
-                <span className="min-w-0">
-                  <span className="block break-words text-sm font-semibold text-brand-ink">單獨發訊息</span>
-                  <span className="mt-0.5 block break-words text-xs text-slate-500">指定一位家屬</span>
-                </span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveLineTool("automation")}
-                className={`flex min-h-[56px] items-center gap-2 rounded-xl border px-3 py-2 text-left transition ${
-                  activeLineTool === "automation"
-                    ? "border-brand-forest bg-emerald-50 shadow-sm"
-                    : "border-slate-200 bg-white hover:border-brand-forest hover:bg-emerald-50"
-                }`}
-              >
-                <span
-                  className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-xs font-bold ${
+                  <span
+                    className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-xs font-bold ${
+                      activeLineTool === "single"
+                        ? "bg-brand-forest text-white"
+                        : "bg-slate-100 text-brand-ink"
+                    }`}
+                  >
+                    單發
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block break-words text-sm font-semibold text-brand-ink">單獨發訊息</span>
+                    <span className="mt-0.5 block break-words text-xs text-slate-500">指定一位家屬</span>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveLineTool("automation")}
+                  className={`flex min-h-[56px] items-center gap-2 rounded-xl border px-3 py-2 text-left transition ${
                     activeLineTool === "automation"
-                      ? "bg-brand-forest text-white"
-                      : "bg-slate-100 text-brand-ink"
+                      ? "border-brand-forest bg-emerald-50 shadow-sm"
+                      : "border-slate-200 bg-white hover:border-brand-forest hover:bg-emerald-50"
                   }`}
                 >
-                  自動
-                </span>
-                <span className="min-w-0">
-                  <span className="block break-words text-sm font-semibold text-brand-ink">LINE 自動發送設定</span>
-                  <span className="mt-0.5 block break-words text-xs text-slate-500">請假與提醒</span>
-                </span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveLineTool("template")}
-                className={`flex min-h-[56px] items-center gap-2 rounded-xl border px-3 py-2 text-left transition ${
-                  activeLineTool === "template"
-                    ? "border-brand-forest bg-emerald-50 shadow-sm"
-                    : "border-slate-200 bg-white hover:border-brand-forest hover:bg-emerald-50"
-                }`}
-              >
-                <span
-                  className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-xs font-bold ${
+                  <span
+                    className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-xs font-bold ${
+                      activeLineTool === "automation"
+                        ? "bg-brand-forest text-white"
+                        : "bg-slate-100 text-brand-ink"
+                    }`}
+                  >
+                    自動
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block break-words text-sm font-semibold text-brand-ink">LINE 自動發送設定</span>
+                    <span className="mt-0.5 block break-words text-xs text-slate-500">請假與提醒</span>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveLineTool("template")}
+                  className={`flex min-h-[56px] items-center gap-2 rounded-xl border px-3 py-2 text-left transition ${
                     activeLineTool === "template"
-                      ? "bg-brand-forest text-white"
-                      : "bg-slate-100 text-brand-ink"
+                      ? "border-brand-forest bg-emerald-50 shadow-sm"
+                      : "border-slate-200 bg-white hover:border-brand-forest hover:bg-emerald-50"
                   }`}
                 >
-                  範本
-                </span>
-                <span className="min-w-0">
-                  <span className="block break-words text-sm font-semibold text-brand-ink">範本群發</span>
-                  <span className="mt-0.5 block break-words text-xs text-slate-500">套用訊息範本</span>
-                </span>
-              </button>
-            </div>
-          </Panel>
+                  <span
+                    className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-xs font-bold ${
+                      activeLineTool === "template"
+                        ? "bg-brand-forest text-white"
+                        : "bg-slate-100 text-brand-ink"
+                    }`}
+                  >
+                    範本
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block break-words text-sm font-semibold text-brand-ink">範本群發</span>
+                    <span className="mt-0.5 block break-words text-xs text-slate-500">套用訊息範本</span>
+                  </span>
+                </button>
+              </div>
+            </Panel>
+          </div>
 
           {activeLineTool ? (
             <section

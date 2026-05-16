@@ -7,7 +7,7 @@ describe("maps url builder", () => {
     window.localStorage.clear();
   });
 
-  it("有自訂定位關鍵字時會優先使用關鍵字做 Google 地圖定位", () => {
+  it("有精確座標時導航會優先使用座標，避免定位關鍵字漂移", () => {
     const maps = createMapsUrlBuilder();
 
     const url = maps.buildNavigationUrl({
@@ -17,12 +17,12 @@ describe("maps url builder", () => {
       destinationLongitude: 120.48341
     });
 
-    expect(url).toContain(encodeURIComponent("旗山醫院後棟管理室"));
-    expect(url).not.toContain(encodeURIComponent("22.88794,120.48341"));
+    expect(url).toContain(encodeURIComponent("22.88794,120.48341"));
+    expect(url).not.toContain(encodeURIComponent("旗山醫院後棟管理室"));
     expect(url).toContain("travelmode=driving");
   });
 
-  it("Android 導航目標會產生 Google Maps app 導航網址", () => {
+  it("Android 導航目標會產生座標優先的 Google Maps app 導航網址", () => {
     const maps = createMapsUrlBuilder();
 
     const url = maps.buildNavigationUrl({
@@ -35,7 +35,7 @@ describe("maps url builder", () => {
       navigationTarget: "android"
     });
 
-    expect(url).toBe(`google.navigation:q=${encodeURIComponent("旗山醫院後棟管理室")}&mode=d`);
+    expect(url).toBe(`google.navigation:q=${encodeURIComponent("22.88794,120.48341")}&mode=d`);
     expect(url).not.toContain("origin=");
   });
 
@@ -197,7 +197,7 @@ describe("maps url builder", () => {
 
     expect(url).toContain("/internal-navigation-v2.html?");
     expect(url).toContain("key=general-map-key");
-    expect(url).toContain("v=nav-fixed-small-vector-20260506");
+    expect(url).toContain("v=nav-coordinate-priority-20260513");
     expect(url).toContain("dlat=22.886");
     expect(url).toContain("dlng=120.482");
     expect(url).toContain("olat=22.88794");

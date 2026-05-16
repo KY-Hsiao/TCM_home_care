@@ -206,9 +206,26 @@ describe("DoctorReturnRecordPage", () => {
 
   it("會帶入上一筆四診其他內容", () => {
     const seeded = createSeedDb();
+    const baseSchedule = seeded.visit_schedules.find((schedule) => schedule.patient_id === "pat-001");
+    if (!baseSchedule) {
+      throw new Error("找不到測試用個案排程");
+    }
+    seeded.visit_schedules.unshift({
+      ...baseSchedule,
+      id: "vs-return-seeded",
+      patient_id: "pat-001",
+      assigned_doctor_id: "doc-001",
+      scheduled_start_at: "2026-05-10T01:00:00.000Z",
+      scheduled_end_at: "2026-05-10T01:30:00.000Z",
+      service_time_slot: "回院病歷",
+      visit_type: "回院病歷",
+      route_group_id: "return-vs-024",
+      status: "completed",
+      updated_at: "2026-05-10T02:00:00.000Z"
+    });
     seeded.visit_records.unshift({
       id: "vr-return-seeded",
-      visit_schedule_id: "vs-024",
+      visit_schedule_id: "vs-return-seeded",
       departure_time: null,
       arrival_time: null,
       departure_from_patient_home_time: null,
@@ -356,7 +373,7 @@ describe("DoctorReturnRecordPage", () => {
     renderWithProviders(<DoctorReturnRecordPage />, "/doctor/return-records?patientId=pat-001");
 
     await waitFor(() => {
-      expect(screen.getByText(/請到 Vercel 改設定 GOOGLE_DRIVE_REFRESH_TOKEN/)).toBeInTheDocument();
+      expect(screen.getByText(/請到 Vercel 改用 Service Account 或 Refresh Token 設定/)).toBeInTheDocument();
     });
     expect(screen.queryByLabelText("選擇歷史病歷檔案")).not.toBeInTheDocument();
   });
@@ -372,23 +389,24 @@ describe("DoctorReturnRecordPage", () => {
       ...baseSchedule,
       id: "vs-home-latest",
       assigned_doctor_id: "doc-001",
-      scheduled_start_at: "2026-05-10T01:10:00.000Z",
-      scheduled_end_at: "2026-05-10T01:50:00.000Z",
-      tracking_stopped_at: "2026-05-10T01:55:00.000Z",
+      route_group_id: "route-home-latest",
+      scheduled_start_at: "2026-05-30T01:10:00.000Z",
+      scheduled_end_at: "2026-05-30T01:50:00.000Z",
+      tracking_stopped_at: "2026-05-30T01:55:00.000Z",
       status: "completed",
       visit_type: "居家訪視",
       service_time_slot: "上午",
-      updated_at: "2026-05-10T01:55:00.000Z"
+      updated_at: "2026-05-30T01:55:00.000Z"
     });
     seeded.visit_records.unshift({
       id: "vr-home-latest",
       visit_schedule_id: "vs-home-latest",
-      departure_time: "2026-05-10T00:55:00.000Z",
-      arrival_time: "2026-05-10T01:05:00.000Z",
-      departure_from_patient_home_time: "2026-05-10T01:55:00.000Z",
+      departure_time: "2026-05-30T00:55:00.000Z",
+      arrival_time: "2026-05-30T01:05:00.000Z",
+      departure_from_patient_home_time: "2026-05-30T01:55:00.000Z",
       stay_duration_minutes: 50,
-      treatment_start_time: "2026-05-10T01:10:00.000Z",
-      treatment_end_time: "2026-05-10T01:50:00.000Z",
+      treatment_start_time: "2026-05-30T01:10:00.000Z",
+      treatment_end_time: "2026-05-30T01:50:00.000Z",
       treatment_duration_minutes: 40,
       treatment_duration_manually_adjusted: true,
       chief_complaint: "治療後追蹤",
@@ -415,21 +433,24 @@ describe("DoctorReturnRecordPage", () => {
       generated_record_text: "",
       next_visit_suggestion_date: null,
       visit_feedback_code: "normal",
-      visit_feedback_at: "2026-05-10T01:50:00.000Z",
+      visit_feedback_at: "2026-05-30T01:50:00.000Z",
       family_followup_status: "not_needed",
       family_followup_sent_at: null,
-      created_at: "2026-05-10T00:55:00.000Z",
-      updated_at: "2026-05-10T01:55:00.000Z"
+      created_at: "2026-05-30T00:55:00.000Z",
+      updated_at: "2026-05-30T01:55:00.000Z"
     });
     window.localStorage.setItem("tcm-home-care-mvp-db", JSON.stringify(seeded));
 
-    renderWithProviders(<DoctorReturnRecordPage />, "/doctor/return-records?patientId=pat-001");
+    renderWithProviders(
+      <DoctorReturnRecordPage />,
+      "/doctor/return-records?routeKey=route-group:route-home-latest&patientId=pat-001"
+    );
 
     expect(screen.getByLabelText("開始治療時間")).toHaveValue(
-      toDateTimeLocalValue("2026-05-10T01:10:00.000Z")
+      toDateTimeLocalValue("2026-05-30T01:10:00.000Z")
     );
     expect(screen.getByLabelText("結束治療時間")).toHaveValue(
-      toDateTimeLocalValue("2026-05-10T01:50:00.000Z")
+      toDateTimeLocalValue("2026-05-30T01:50:00.000Z")
     );
     expect(screen.getByText(/已對應剛完成的居家訪視/)).toBeInTheDocument();
   });
@@ -445,21 +466,22 @@ describe("DoctorReturnRecordPage", () => {
       ...baseSchedule,
       id: "vs-home-derived-time",
       assigned_doctor_id: "doc-001",
-      scheduled_start_at: "2026-05-11T01:10:00.000Z",
-      scheduled_end_at: "2026-05-11T01:50:00.000Z",
+      route_group_id: "route-home-derived-time",
+      scheduled_start_at: "2026-05-31T01:10:00.000Z",
+      scheduled_end_at: "2026-05-31T01:50:00.000Z",
       estimated_treatment_minutes: 40,
-      tracking_stopped_at: "2026-05-11T02:00:00.000Z",
+      tracking_stopped_at: "2026-05-31T02:00:00.000Z",
       status: "completed",
       visit_type: "居家訪視",
       service_time_slot: "上午",
-      updated_at: "2026-05-11T02:00:00.000Z"
+      updated_at: "2026-05-31T02:00:00.000Z"
     });
     seeded.visit_records.unshift({
       id: "vr-home-derived-time",
       visit_schedule_id: "vs-home-derived-time",
-      departure_time: "2026-05-11T00:55:00.000Z",
-      arrival_time: "2026-05-11T01:15:00.000Z",
-      departure_from_patient_home_time: "2026-05-11T02:00:00.000Z",
+      departure_time: "2026-05-31T00:55:00.000Z",
+      arrival_time: "2026-05-31T01:15:00.000Z",
+      departure_from_patient_home_time: "2026-05-31T02:00:00.000Z",
       stay_duration_minutes: 45,
       treatment_start_time: null,
       treatment_end_time: null,
@@ -489,21 +511,24 @@ describe("DoctorReturnRecordPage", () => {
       generated_record_text: "",
       next_visit_suggestion_date: null,
       visit_feedback_code: "normal",
-      visit_feedback_at: "2026-05-11T01:50:00.000Z",
+      visit_feedback_at: "2026-05-31T01:50:00.000Z",
       family_followup_status: "not_needed",
       family_followup_sent_at: null,
-      created_at: "2026-05-11T00:55:00.000Z",
-      updated_at: "2026-05-11T02:00:00.000Z"
+      created_at: "2026-05-31T00:55:00.000Z",
+      updated_at: "2026-05-31T02:00:00.000Z"
     });
     window.localStorage.setItem("tcm-home-care-mvp-db", JSON.stringify(seeded));
 
-    renderWithProviders(<DoctorReturnRecordPage />, "/doctor/return-records?patientId=pat-001");
+    renderWithProviders(
+      <DoctorReturnRecordPage />,
+      "/doctor/return-records?routeKey=route-group:route-home-derived-time&patientId=pat-001"
+    );
 
     expect(screen.getByLabelText("開始治療時間")).toHaveValue(
-      toDateTimeLocalValue("2026-05-11T01:15:00.000Z")
+      toDateTimeLocalValue("2026-05-31T01:15:00.000Z")
     );
     expect(screen.getByLabelText("結束治療時間")).toHaveValue(
-      toDateTimeLocalValue("2026-05-11T01:50:00.000Z")
+      toDateTimeLocalValue("2026-05-31T01:50:00.000Z")
     );
   });
 
@@ -518,21 +543,22 @@ describe("DoctorReturnRecordPage", () => {
       ...baseSchedule,
       id: "vs-home-save-derived-time",
       assigned_doctor_id: "doc-001",
-      scheduled_start_at: "2026-05-11T01:10:00.000Z",
-      scheduled_end_at: "2026-05-11T01:50:00.000Z",
+      route_group_id: "route-home-save-derived-time",
+      scheduled_start_at: "2026-05-31T01:10:00.000Z",
+      scheduled_end_at: "2026-05-31T01:50:00.000Z",
       estimated_treatment_minutes: 40,
-      tracking_stopped_at: "2026-05-11T02:00:00.000Z",
+      tracking_stopped_at: "2026-05-31T02:00:00.000Z",
       status: "completed",
       visit_type: "居家訪視",
       service_time_slot: "上午",
-      updated_at: "2026-05-11T02:00:00.000Z"
+      updated_at: "2026-05-31T02:00:00.000Z"
     });
     seeded.visit_records.unshift({
       id: "vr-home-save-derived-time",
       visit_schedule_id: "vs-home-save-derived-time",
-      departure_time: "2026-05-11T00:55:00.000Z",
-      arrival_time: "2026-05-11T01:15:00.000Z",
-      departure_from_patient_home_time: "2026-05-11T02:00:00.000Z",
+      departure_time: "2026-05-31T00:55:00.000Z",
+      arrival_time: "2026-05-31T01:15:00.000Z",
+      departure_from_patient_home_time: "2026-05-31T02:00:00.000Z",
       stay_duration_minutes: 45,
       treatment_start_time: null,
       treatment_end_time: null,
@@ -562,22 +588,25 @@ describe("DoctorReturnRecordPage", () => {
       generated_record_text: "",
       next_visit_suggestion_date: null,
       visit_feedback_code: "normal",
-      visit_feedback_at: "2026-05-11T01:50:00.000Z",
+      visit_feedback_at: "2026-05-31T01:50:00.000Z",
       family_followup_status: "not_needed",
       family_followup_sent_at: null,
-      created_at: "2026-05-11T00:55:00.000Z",
-      updated_at: "2026-05-11T02:00:00.000Z"
+      created_at: "2026-05-31T00:55:00.000Z",
+      updated_at: "2026-05-31T02:00:00.000Z"
     });
     window.localStorage.setItem("tcm-home-care-mvp-db", JSON.stringify(seeded));
 
-    renderWithProviders(<DoctorReturnRecordPage />, "/doctor/return-records?patientId=pat-001");
+    renderWithProviders(
+      <DoctorReturnRecordPage />,
+      "/doctor/return-records?routeKey=route-group:route-home-save-derived-time&patientId=pat-001"
+    );
 
     await waitFor(() => {
       expect(screen.getByLabelText("開始治療時間")).toHaveValue(
-        toDateTimeLocalValue("2026-05-11T01:15:00.000Z")
+        toDateTimeLocalValue("2026-05-31T01:15:00.000Z")
       );
       expect(screen.getByLabelText("結束治療時間")).toHaveValue(
-        toDateTimeLocalValue("2026-05-11T01:50:00.000Z")
+        toDateTimeLocalValue("2026-05-31T01:50:00.000Z")
       );
       expect(screen.getByDisplayValue(/開始治療時間：0915/)).toBeInTheDocument();
       expect(screen.getByDisplayValue(/結束治療時間：0950/)).toBeInTheDocument();
@@ -597,8 +626,8 @@ describe("DoctorReturnRecordPage", () => {
 
       expect(savedReturnRecord).toEqual(
         expect.objectContaining({
-          treatment_start_time: "2026-05-11T01:15:00.000Z",
-          treatment_end_time: "2026-05-11T01:50:00.000Z",
+          treatment_start_time: "2026-05-31T01:15:00.000Z",
+          treatment_end_time: "2026-05-31T01:50:00.000Z",
           generated_record_text: expect.stringContaining("開始治療時間：0915")
         })
       );
@@ -616,23 +645,24 @@ describe("DoctorReturnRecordPage", () => {
       ...baseSchedule,
       id: "vs-home-just-finished",
       assigned_doctor_id: "doc-001",
-      scheduled_start_at: "2026-05-10T03:00:00.000Z",
-      scheduled_end_at: "2026-05-10T03:40:00.000Z",
-      tracking_stopped_at: "2026-05-10T03:45:00.000Z",
+      route_group_id: "route-home-just-finished",
+      scheduled_start_at: "2026-06-01T03:00:00.000Z",
+      scheduled_end_at: "2026-06-01T03:40:00.000Z",
+      tracking_stopped_at: "2026-06-01T03:45:00.000Z",
       status: "completed",
       visit_type: "疼痛照護追蹤",
       service_time_slot: "上午",
-      updated_at: "2026-05-10T03:45:00.000Z"
+      updated_at: "2026-06-01T03:45:00.000Z"
     });
     seeded.visit_records.unshift({
       id: "vr-home-just-finished",
       visit_schedule_id: "vs-home-just-finished",
-      departure_time: "2026-05-10T02:35:00.000Z",
-      arrival_time: "2026-05-10T02:55:00.000Z",
-      departure_from_patient_home_time: "2026-05-10T03:45:00.000Z",
+      departure_time: "2026-06-01T02:35:00.000Z",
+      arrival_time: "2026-06-01T02:55:00.000Z",
+      departure_from_patient_home_time: "2026-06-01T03:45:00.000Z",
       stay_duration_minutes: 50,
-      treatment_start_time: "2026-05-10T03:00:00.000Z",
-      treatment_end_time: "2026-05-10T03:40:00.000Z",
+      treatment_start_time: "2026-06-01T03:00:00.000Z",
+      treatment_end_time: "2026-06-01T03:40:00.000Z",
       treatment_duration_minutes: 40,
       treatment_duration_manually_adjusted: true,
       chief_complaint: "疼痛照護追蹤",
@@ -659,18 +689,18 @@ describe("DoctorReturnRecordPage", () => {
       generated_record_text: "",
       next_visit_suggestion_date: null,
       visit_feedback_code: "normal",
-      visit_feedback_at: "2026-05-10T03:40:00.000Z",
+      visit_feedback_at: "2026-06-01T03:40:00.000Z",
       family_followup_status: "not_needed",
       family_followup_sent_at: null,
-      created_at: "2026-05-10T02:35:00.000Z",
-      updated_at: "2026-05-10T03:45:00.000Z"
+      created_at: "2026-06-01T02:35:00.000Z",
+      updated_at: "2026-06-01T03:45:00.000Z"
     });
     window.localStorage.setItem("tcm-home-care-mvp-db", JSON.stringify(seeded));
 
-    renderWithProviders(<DoctorReturnRecordPage />, "/doctor/return-records");
+    renderWithProviders(<DoctorReturnRecordPage />, "/doctor/return-records?routeKey=route-group:route-home-just-finished");
 
     expect(screen.getByLabelText("選擇個案")).toHaveValue("pat-004");
-    expect(screen.getByText(/已對應剛完成案件：2026\/05\/10 11:00 ／周○德/)).toBeInTheDocument();
+    expect(screen.getByText(/已對應剛完成案件：2026\/06\/01 11:00 ／周○德/)).toBeInTheDocument();
   });
 
   it("會先載入路線，且個案下拉只顯示該路線內的患者", () => {
@@ -933,7 +963,7 @@ describe("DoctorReturnRecordPage", () => {
     );
     window.localStorage.setItem("tcm-home-care-mvp-db", JSON.stringify(seeded));
 
-    renderWithProviders(<DoctorReturnRecordPage />, "/doctor/return-records");
+    renderWithProviders(<DoctorReturnRecordPage />, "/doctor/return-records?routeKey=route-group:route-am-latest");
 
     const routeSelect = screen.getByLabelText("選擇路線");
     const routeOptionLabels = within(routeSelect)
@@ -1012,7 +1042,10 @@ describe("DoctorReturnRecordPage", () => {
   });
 
   it("勾選加入通知中心後會同步建立醫師與行政通知中心訊息", () => {
-    renderWithProviders(<DoctorReturnRecordPage />, "/doctor/return-records?patientId=pat-001");
+    renderWithProviders(
+      <DoctorReturnRecordPage />,
+      "/doctor/return-records?routeKey=route-group:route-export-20260510-am&patientId=pat-001"
+    );
 
     fireEvent.click(
       screen.getByRole("checkbox", { name: "加入通知中心，讓醫師與行政後續追蹤" })
@@ -1234,7 +1267,10 @@ describe("DoctorReturnRecordPage", () => {
     }) as typeof document.createElement);
     vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
 
-    renderWithProviders(<DoctorReturnRecordPage />, "/doctor/return-records?patientId=pat-001");
+    renderWithProviders(
+      <DoctorReturnRecordPage />,
+      "/doctor/return-records?routeKey=route-group:route-export-20260510-am&patientId=pat-001"
+    );
 
     fireEvent.change(screen.getByLabelText("主訴"), {
       target: { value: "其他" }

@@ -135,6 +135,16 @@ function openCurrentPatientDetail(patientName: string) {
   fireEvent.click(screen.getByRole("button", { name: new RegExp(maskPatientName(patientName)) }));
 }
 
+function expectDestinationCoordinate(href: string | null, schedule: { home_latitude_snapshot: number | null; home_longitude_snapshot: number | null }) {
+  if (schedule.home_latitude_snapshot === null || schedule.home_longitude_snapshot === null) {
+    throw new Error("測試排程缺少座標。");
+  }
+
+  expect(href ?? "").toContain(
+    `destination=${encodeURIComponent(`${schedule.home_latitude_snapshot},${schedule.home_longitude_snapshot}`)}`
+  );
+}
+
 describe("DoctorManualRouteContinuation", () => {
   beforeEach(() => {
     window.localStorage.clear();
@@ -155,9 +165,9 @@ describe("DoctorManualRouteContinuation", () => {
 
     const navigationWindow = screen.getByRole("dialog", { name: "Google 導航視窗" });
     expect(openSpy).not.toHaveBeenCalled();
-    expect(within(navigationWindow).getByRole("link", { name: /外部 Google 地圖/ })).toHaveAttribute(
-      "href",
-      expect.stringContaining(`destination=${encodeURIComponent(currentDetail.schedule.address_snapshot)}`)
+    expectDestinationCoordinate(
+      within(navigationWindow).getByRole("link", { name: /外部 Google 地圖/ }).getAttribute("href"),
+      currentDetail.schedule
     );
   });
 
@@ -189,12 +199,9 @@ describe("DoctorManualRouteContinuation", () => {
     const navigationWindow = screen.getByRole("dialog", { name: "Google 導航視窗" });
     const externalLink = within(navigationWindow).getByRole("link", { name: /外部 Google 地圖/ });
     expect(openSpy).not.toHaveBeenCalled();
-    expect(externalLink).toHaveAttribute(
-      "href",
-      expect.stringContaining(`destination=${encodeURIComponent(nextDetail.schedule.address_snapshot)}`)
-    );
+    expectDestinationCoordinate(externalLink.getAttribute("href"), nextDetail.schedule);
     expect(externalLink.getAttribute("href") ?? "").not.toContain(
-      `destination=${encodeURIComponent(currentDetail.schedule.address_snapshot)}`
+      `destination=${encodeURIComponent(`${currentDetail.schedule.home_latitude_snapshot},${currentDetail.schedule.home_longitude_snapshot}`)}`
     );
   });
 

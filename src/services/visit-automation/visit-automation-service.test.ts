@@ -117,7 +117,7 @@ describe("visit automation service", () => {
     expect(updatedSchedule.geofence_status).toBe("low_accuracy");
   });
 
-  it("離開前一站時會自動發送下一站家屬 LINE 抵達前提醒", async () => {
+  it("離開前一站時不再自動發送下一站家屬 LINE 抵達前提醒", async () => {
     const harness = createHarness();
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
@@ -150,40 +150,20 @@ describe("visit automation service", () => {
     harness.services.visitAutomation.confirmArrival("vs-015", "doctor");
     harness.services.visitAutomation.recordDoctorFeedback("vs-015", "normal");
     harness.services.visitAutomation.confirmDeparture("vs-015", "doctor");
-    await Promise.resolve();
-    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(0);
 
-    expect(fetchMock).toHaveBeenCalledWith(
-      "/api/admin/family-line/send",
-      expect.objectContaining({
-        method: "POST"
-      })
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(harness.repositories.contactRepository.getContactLogsByScheduleId("vs-016")).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          channel: "line",
+          outcome: "前一站離開後自動發送抵達前提醒"
+        })
+      ])
     );
-    const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body);
-    expect(requestBody.subject).toBe("醫師即將抵達提醒");
-    expect(requestBody.content).toContain("已完成前一站");
-    expect(requestBody.recipients).toEqual([
-      expect.objectContaining({
-        caregiverId: "line-contact-next",
-        patientId: "pat-007",
-        doctorId: "doc-001",
-        lineUserId: "Unextstopaaaaaaaaaaaaaaaaaaaaaaaaa"
-      })
-    ]);
-    expect(requestBody).not.toHaveProperty("lineChannelAccessToken");
-    await vi.waitFor(() => {
-      expect(harness.repositories.contactRepository.getContactLogsByScheduleId("vs-016")).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            channel: "line",
-            outcome: "前一站離開後自動發送抵達前提醒"
-          })
-        ])
-      );
-    });
   });
 
-  it("離開前一站時若本機沒有關聯名單，會先從後端 LINE 名單載入再自動發送", async () => {
+  it("離開前一站時若本機沒有關聯名單，也不會載入後端 LINE 名單自動發送", async () => {
     const harness = createHarness();
     const fetchMock = vi
       .fn()
@@ -221,24 +201,10 @@ describe("visit automation service", () => {
     harness.services.visitAutomation.recordDoctorFeedback("vs-015", "normal");
     harness.services.visitAutomation.confirmDeparture("vs-015", "doctor");
 
-    await vi.waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledTimes(2);
-    });
-    expect(fetchMock).toHaveBeenNthCalledWith(1, "/api/admin/family-line/contacts", { cache: "no-store" });
-    expect(fetchMock).toHaveBeenNthCalledWith(
-      2,
-      "/api/admin/family-line/send",
-      expect.objectContaining({ method: "POST" })
-    );
-    const requestBody = JSON.parse(fetchMock.mock.calls[1][1].body);
-    expect(requestBody.recipients).toEqual([
-      expect.objectContaining({
-        caregiverName: "後端保存家屬 LINE",
-        patientId: "pat-007",
-        lineUserId: "Uremotecontactaaaaaaaaaaaaaaaaaaa"
-      })
-    ]);
-    expect(window.localStorage.getItem("tcm-family-line-managed-contacts")).toContain("pat-007");
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(window.localStorage.getItem("tcm-family-line-managed-contacts")).toBeNull();
   });
 
   it("抵達回程終點時才會自動群發結束後關心", async () => {
