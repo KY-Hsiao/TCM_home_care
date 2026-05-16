@@ -320,6 +320,8 @@ if ($shouldWaitForGitHubActions) {
 
 if (-not $shouldWaitForGitHubActions) {
   Write-Host "Skipped local GitHub Actions waiting. GitHub push completed. Repository push workflow can trigger Vercel online." -ForegroundColor Yellow
+  Write-Host "Skipped local Vercel deploy hook in no-wait mode." -ForegroundColor Yellow
+  exit 0
 }
 
 $deployHookUrl = $env:VERCEL_DEPLOY_HOOK_URL

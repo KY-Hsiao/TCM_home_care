@@ -170,15 +170,9 @@ $env:VITE_TEAM_COMM_SYNC_MODE = "http"
 - Codex 動作列的 `更新網頁` 會在 push 後直接結束，不在本機等待 GitHub Actions；`main` 的 push 會由 `.github/workflows/deploy-vercel.yml` 在線上觸發 Vercel。
 - 發布腳本會停用 Git/GitHub CLI 的互動式提示；若本機 `gh auth` 失效，會跳過本機 Actions 狀態確認，避免 Codex 動作卡在隱藏提示。
 
-### 本機一鍵推送 GitHub 並同步觸發 Vercel
+### 本機一鍵推送 GitHub 並交由線上流程部署
 
-若你希望在本機直接完成「推 GitHub + 觸發 Vercel」，可先設定環境變數：
-
-```powershell
-$env:VERCEL_DEPLOY_HOOK_URL = "你的 deploy hook URL"
-```
-
-然後執行：
+若你希望在本機完成「推 GitHub，並讓 GitHub Actions 接續觸發 Vercel」，可執行：
 
 ```powershell
 npm run publish:web
@@ -189,6 +183,7 @@ npm run publish:web
 - 將目前 branch `git push` 到 GitHub
 - 不在本機等待 GitHub Actions，避免 Codex 動作列長時間卡住
 - `main` 的 push 會由 `.github/workflows/deploy-vercel.yml` 在線上接續觸發 Vercel
+- 不從本機直接呼叫 Vercel deploy hook
 
 預設只允許在 `main` 觸發這個流程，避免把非正式 branch 誤送到線上。  
 若你確定要從其他 branch 觸發，可加上：
@@ -217,7 +212,7 @@ powershell -ExecutionPolicy Bypass -File .\tools\publish_github_and_vercel.ps1 -
 powershell -ExecutionPolicy Bypass -File .\tools\publish_github_and_vercel.ps1 -CommitPendingChanges -NoWaitForGitHubActions
 ```
 
-若確定要從本機等待 GitHub Actions 並在必要時補觸發 workflow，可直接執行 `tools/publish_github_and_vercel.ps1`，不要加 `-NoWaitForGitHubActions`。這個模式會依賴本機 `gh auth`，不建議從 Codex 動作列使用。
+若確定要從本機等待 GitHub Actions，或用本機 `VERCEL_DEPLOY_HOOK_URL` 直接觸發 Vercel，可直接執行 `tools/publish_github_and_vercel.ps1`，不要加 `-NoWaitForGitHubActions`。這個模式會依賴本機 `gh auth` 或 Vercel hook，不建議從 Codex 動作列使用。
 
 ## 路徑注意事項
 
