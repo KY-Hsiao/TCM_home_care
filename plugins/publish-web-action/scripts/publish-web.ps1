@@ -31,7 +31,9 @@ $arguments = @(
   "-ExecutionPolicy",
   "Bypass",
   "-File",
-  ".\tools\publish_github_and_vercel.ps1"
+  ".\tools\publish_github_and_vercel.ps1",
+  "-CommitPendingChanges",
+  "-NoWaitForGitHubActions"
 )
 
 if ($AllowNonProductionBranch) {

@@ -10,7 +10,7 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "publish:web": "powershell -ExecutionPolicy Bypass -File .\\tools\\publish_github_and_vercel.ps1"
+    "publish:web": "powershell -ExecutionPolicy Bypass -File .\\.codex\\scripts\\update_web.ps1"
   },
   "dependencies": {
     "@hookform/resolvers": "^4.1.3",

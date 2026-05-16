@@ -187,9 +187,8 @@ npm run publish:web
 這個腳本會：
 
 - 將目前 branch `git push` 到 GitHub
-- 以低輸出輪詢等待 GitHub Actions 的 `deploy-vercel.yml`
-- 若 push 沒有產生新的 workflow run，會改用 `workflow_dispatch` 主動觸發
-- 若本機有設定 `VERCEL_DEPLOY_HOOK_URL`，成功後會再額外呼叫 Vercel deploy hook
+- 不在本機等待 GitHub Actions，避免 Codex 動作列長時間卡住
+- `main` 的 push 會由 `.github/workflows/deploy-vercel.yml` 在線上接續觸發 Vercel
 
 預設只允許在 `main` 觸發這個流程，避免把非正式 branch 誤送到線上。  
 若你確定要從其他 branch 觸發，可加上：
@@ -217,6 +216,8 @@ powershell -ExecutionPolicy Bypass -File .\tools\publish_github_and_vercel.ps1 -
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\tools\publish_github_and_vercel.ps1 -CommitPendingChanges -NoWaitForGitHubActions
 ```
+
+若確定要從本機等待 GitHub Actions 並在必要時補觸發 workflow，可直接執行 `tools/publish_github_and_vercel.ps1`，不要加 `-NoWaitForGitHubActions`。這個模式會依賴本機 `gh auth`，不建議從 Codex 動作列使用。
 
 ## 路徑注意事項
 
