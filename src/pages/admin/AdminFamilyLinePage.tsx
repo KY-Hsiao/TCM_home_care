@@ -907,11 +907,11 @@ export function AdminFamilyLinePage() {
         </div>
       ) : null}
 
-      <div className="grid gap-3 xl:grid-cols-[minmax(0,0.95fr)_minmax(420px,1.05fr)] xl:items-start">
+      <div className="grid gap-3 xl:grid-cols-[minmax(250px,0.45fr)_minmax(560px,1.55fr)] xl:items-start">
         <div className="space-y-4">
           <div data-line-quick-functions="true">
             <Panel title="LINE 快速功能">
-              <div className="grid gap-2 sm:grid-cols-2">
+              <div className="grid gap-2">
                 <button
                   type="button"
                   onClick={() => setActiveLineTool("instant")}
@@ -931,8 +931,8 @@ export function AdminFamilyLinePage() {
                     群發
                   </span>
                   <span className="min-w-0">
-                    <span className="block break-words text-sm font-semibold text-brand-ink">即時群發訊息</span>
-                    <span className="mt-0.5 block break-words text-xs text-slate-500">一次性推播</span>
+                    <span className="block text-sm font-semibold text-brand-ink">即時群發訊息</span>
+                    <span className="mt-0.5 block text-xs text-slate-500">一次性推播</span>
                   </span>
                 </button>
                 <button
@@ -954,8 +954,8 @@ export function AdminFamilyLinePage() {
                     單發
                   </span>
                   <span className="min-w-0">
-                    <span className="block break-words text-sm font-semibold text-brand-ink">單獨發訊息</span>
-                    <span className="mt-0.5 block break-words text-xs text-slate-500">指定一位家屬</span>
+                    <span className="block text-sm font-semibold text-brand-ink">單獨發訊息</span>
+                    <span className="mt-0.5 block text-xs text-slate-500">指定一位家屬</span>
                   </span>
                 </button>
                 <button
@@ -977,8 +977,8 @@ export function AdminFamilyLinePage() {
                     自動
                   </span>
                   <span className="min-w-0">
-                    <span className="block break-words text-sm font-semibold text-brand-ink">LINE 自動發送設定</span>
-                    <span className="mt-0.5 block break-words text-xs text-slate-500">請假與提醒</span>
+                    <span className="block text-sm font-semibold text-brand-ink">LINE 自動發送設定</span>
+                    <span className="mt-0.5 block text-xs text-slate-500">請假與提醒</span>
                   </span>
                 </button>
                 <button
@@ -1000,8 +1000,8 @@ export function AdminFamilyLinePage() {
                     範本
                   </span>
                   <span className="min-w-0">
-                    <span className="block break-words text-sm font-semibold text-brand-ink">範本群發</span>
-                    <span className="mt-0.5 block break-words text-xs text-slate-500">套用訊息範本</span>
+                    <span className="block text-sm font-semibold text-brand-ink">範本群發</span>
+                    <span className="mt-0.5 block text-xs text-slate-500">套用訊息範本</span>
                   </span>
                 </button>
               </div>
@@ -1380,7 +1380,7 @@ export function AdminFamilyLinePage() {
                 >
                   清除發送
                 </button>
-                <span className="text-xs text-slate-500">
+                <span className="whitespace-nowrap text-xs text-slate-500">
                   顯示 {visibleManagedLineContacts.length} 位，已選發送 {selectedRecipients.length} 位
                 </span>
               </div>
@@ -1425,10 +1425,12 @@ export function AdminFamilyLinePage() {
                           isSendSelected ? "border-brand-forest bg-emerald-50/70" : "border-slate-200 bg-white"
                         }`}
                       >
-                        <div className="grid gap-3 lg:grid-cols-[minmax(150px,1fr)_auto_minmax(120px,150px)_auto] lg:items-center">
+                        <div className="grid gap-3 lg:grid-cols-[minmax(220px,1fr)_auto_minmax(120px,150px)_auto] lg:items-center">
                           <div className="min-w-0">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <p className="break-words font-semibold text-brand-ink">{contact.displayName}</p>
+                            <div className="flex min-w-0 items-center gap-2">
+                              <p className="min-w-0 truncate whitespace-nowrap font-semibold text-brand-ink">
+                                {contact.displayName}
+                              </p>
                               <Badge
                                 value={contact.source === "official_friend" ? "官方好友" : "Webhook 收到"}
                                 compact
@@ -1510,7 +1512,7 @@ export function AdminFamilyLinePage() {
                                 </p>
                               </div>
 
-                              <div className="break-all rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700">
+                              <div className="overflow-x-auto whitespace-nowrap rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700">
                                 {contact.lineUserId}
                               </div>
                               <label className="block">
