@@ -175,7 +175,6 @@ export function AdminFamilyLinePage() {
       defaultTemplateDrafts
     )
   );
-  const [selectedManagedContactIds, setSelectedManagedContactIds] = useState<string[]>([]);
   const [bulkLinkPatientId, setBulkLinkPatientId] = useState("");
   const [selectedTemplate, setSelectedTemplate] = useState<FamilyLineTemplateKey>("custom_notice");
   const [selectedSendTypes, setSelectedSendTypes] = useState<FamilyLineTemplateKey[]>(["custom_notice"]);
@@ -555,147 +554,68 @@ export function AdminFamilyLinePage() {
     }
   };
 
-  const toggleManagedContactSelection = (contactId: string) => {
-    setSelectedManagedContactIds((current) =>
-      current.includes(contactId) ? current.filter((id) => id !== contactId) : [...current, contactId]
-    );
-  };
-
-  const selectAllManagedContacts = () => {
-    setSelectedManagedContactIds(visibleManagedLineContacts.map((contact) => contact.id));
-  };
-
-  const invertManagedContactSelection = () => {
-    setSelectedManagedContactIds((current) =>
-      visibleManagedLineContacts
-        .map((contact) => contact.id)
-        .filter((contactId) => !current.includes(contactId))
-    );
-  };
-
-  const linkSelectedContactsToPatient = async () => {
-    if (!selectedManagedContactIds.length || !bulkLinkPatientId) {
-      setSendFeedback({ tone: "error", message: "請先選擇 LINE 好友名單與要關聯的居家個案。" });
+  const updateManagedContactPatientLink = async (
+    contactId: string,
+    patientId: string,
+    shouldLink: boolean
+  ) => {
+    if (!patientId) {
+      setSendFeedback({ tone: "error", message: "請先用下拉選單選擇要關聯的居家個案。" });
       return;
     }
 
-    const targetPatient = db.patients.find((patient) => patient.id === bulkLinkPatientId);
     const now = new Date().toISOString();
-    const contactsToPersist = managedLineContacts
-      .filter((contact) => selectedManagedContactIds.includes(contact.id))
-      .map((contact) => ({
-        ...contact,
-        linkedPatientIds: contact.linkedPatientIds.includes(bulkLinkPatientId)
-          ? contact.linkedPatientIds
-          : [...contact.linkedPatientIds, bulkLinkPatientId],
-        updatedAt: now
-      }));
-    const contactToPersistById = new Map(contactsToPersist.map((contact) => [contact.id, contact]));
+    const sourceContact = managedLineContacts.find((contact) => contact.id === contactId);
+    if (!sourceContact) {
+      return;
+    }
+    const updatedContact: ManagedFamilyLineContact = {
+      ...sourceContact,
+      linkedPatientIds: shouldLink
+        ? sourceContact.linkedPatientIds.includes(patientId)
+          ? sourceContact.linkedPatientIds
+          : [...sourceContact.linkedPatientIds, patientId]
+        : sourceContact.linkedPatientIds.filter((linkedPatientId) => linkedPatientId !== patientId),
+      updatedAt: now
+    };
     setManagedLineContacts((current) =>
-      current.map((contact) => {
-        return contactToPersistById.get(contact.id) ?? contact;
-      })
+      current.map((contact) => (contact.id === contactId ? updatedContact : contact))
     );
-    const persistedResults = await Promise.all(
-      contactsToPersist.map((contact) => persistManagedLineContact(contact))
-    );
-    const failedPersistCount = persistedResults.filter((isPersisted) => !isPersisted).length;
+
+    const targetPatient = db.patients.find((patient) => patient.id === patientId);
+    const persisted = await persistManagedLineContact(updatedContact);
     setSendFeedback({
-      tone: failedPersistCount > 0 ? "error" : "success",
-      message: `已將 ${selectedManagedContactIds.length} 位 LINE 好友關聯到 ${
+      tone: persisted ? "success" : "error",
+      message: `${updatedContact.displayName} 已${shouldLink ? "關聯到" : "取消關聯"} ${
         targetPatient ? maskPatientName(targetPatient.name) : "指定個案"
-      }，下次開啟會自動帶入。${
-        failedPersistCount > 0
-          ? ` 其中 ${failedPersistCount} 位暫時只保存在本機，後端名單同步失敗時請稍後再按一次關聯。`
-          : " 已同步保存到 LINE 名單資料庫。"
-      }`
+      }。${persisted ? "已同步保存。" : "目前只保存在本機，後端名單同步失敗時請稍後再試。"}`
     });
   };
 
-  const unlinkSelectedContactsFromPatient = async () => {
-    if (!selectedManagedContactIds.length || !bulkLinkPatientId) {
-      setSendFeedback({ tone: "error", message: "請先選擇 LINE 好友名單與要取消關聯的居家個案。" });
-      return;
-    }
-
-    const targetPatient = db.patients.find((patient) => patient.id === bulkLinkPatientId);
+  const updateManagedContactRole = async (
+    contactId: string,
+    contactRole: ManagedFamilyLineContact["contactRole"]
+  ) => {
     const now = new Date().toISOString();
-    const contactsToPersist = managedLineContacts
-      .filter(
-        (contact) =>
-          selectedManagedContactIds.includes(contact.id) &&
-          contact.linkedPatientIds.includes(bulkLinkPatientId)
-      )
-      .map((contact) => ({
-        ...contact,
-        linkedPatientIds: contact.linkedPatientIds.filter((patientId) => patientId !== bulkLinkPatientId),
-        updatedAt: now
-      }));
-    if (contactsToPersist.length === 0) {
-      setSendFeedback({
-        tone: "error",
-        message: `所選 LINE 好友目前沒有關聯到 ${targetPatient ? maskPatientName(targetPatient.name) : "指定個案"}。`
-      });
+    const sourceContact = managedLineContacts.find((contact) => contact.id === contactId);
+    if (!sourceContact) {
       return;
     }
-
-    const contactToPersistById = new Map(contactsToPersist.map((contact) => [contact.id, contact]));
+    const updatedContact: ManagedFamilyLineContact = {
+      ...sourceContact,
+      contactRole,
+      updatedAt: now
+    };
     setManagedLineContacts((current) =>
-      current.map((contact) => {
-        return contactToPersistById.get(contact.id) ?? contact;
-      })
+      current.map((contact) => (contact.id === contactId ? updatedContact : contact))
     );
-    const persistedResults = await Promise.all(
-      contactsToPersist.map((contact) => persistManagedLineContact(contact))
-    );
-    const failedPersistCount = persistedResults.filter((isPersisted) => !isPersisted).length;
-    setSendFeedback({
-      tone: failedPersistCount > 0 ? "error" : "success",
-      message: `已將 ${contactsToPersist.length} 位 LINE 好友取消與 ${
-        targetPatient ? maskPatientName(targetPatient.name) : "指定個案"
-      } 的關聯，下次開啟會自動帶入。${
-        failedPersistCount > 0
-          ? ` 其中 ${failedPersistCount} 位暫時只保存在本機，後端名單同步失敗時請稍後再按一次取消關聯。`
-          : " 已同步保存到 LINE 名單資料庫。"
-      }`
-    });
-  };
 
-  const updateSelectedContactsRole = async (contactRole: ManagedFamilyLineContact["contactRole"]) => {
-    if (!selectedManagedContactIds.length) {
-      setSendFeedback({ tone: "error", message: "請先選擇要調整角色的 LINE 好友名單。" });
-      return;
-    }
-
-    const now = new Date().toISOString();
-    const contactsToPersist = managedLineContacts
-      .filter((contact) => selectedManagedContactIds.includes(contact.id))
-      .map((contact) => ({
-        ...contact,
-        contactRole,
-        updatedAt: now
-      }));
-    const contactToPersistById = new Map(contactsToPersist.map((contact) => [contact.id, contact]));
-    setManagedLineContacts((current) =>
-      current.map((contact) => {
-        return contactToPersistById.get(contact.id) ?? contact;
-      })
-    );
-    const persistedResults = await Promise.all(
-      contactsToPersist.map((contact) => persistManagedLineContact(contact))
-    );
-    const failedPersistCount = persistedResults.filter((isPersisted) => !isPersisted).length;
+    const persisted = await persistManagedLineContact(updatedContact);
     setSendFeedback({
-      tone: failedPersistCount > 0 ? "error" : "success",
-      message: `已將 ${selectedManagedContactIds.length} 位 LINE 好友設為${
+      tone: persisted ? "success" : "error",
+      message: `${updatedContact.displayName} 已設為${
         contactRole === "admin" ? "行政人員" : "家屬聯繫"
-      }角色。${
-        contactRole === "admin" ? "新公告建立時會推播給行政人員角色的 LINE 帳號。" : ""
-      }${
-        failedPersistCount > 0
-          ? ` 其中 ${failedPersistCount} 位暫時只保存在本機，後端名單同步失敗時請稍後再按一次角色設定。`
-          : " 已同步保存到 LINE 名單資料庫。"
-      }`
+      }。${persisted ? "已同步保存。" : "目前只保存在本機，後端名單同步失敗時請稍後再試。"}`
     });
   };
 
@@ -985,24 +905,24 @@ export function AdminFamilyLinePage() {
 
   return (
     <div className="space-y-4">
-      <div className="grid gap-3 md:grid-cols-4">
-        <div className="rounded-[1.25rem] border border-white/70 bg-white/90 p-4 shadow-card">
+      <div className="grid gap-2 sm:grid-cols-4">
+        <div className="rounded-2xl border border-white/70 bg-white/90 px-4 py-3 shadow-card">
           <p className="text-xs text-slate-500">可通知家屬</p>
-          <p className="mt-2 text-2xl font-semibold text-brand-ink">{recipients.length}</p>
+          <p className="mt-1 text-xl font-semibold text-brand-ink">{recipients.length}</p>
         </div>
-        <div className="rounded-[1.25rem] border border-white/70 bg-white/90 p-4 shadow-card">
+        <div className="rounded-2xl border border-white/70 bg-white/90 px-4 py-3 shadow-card">
           <p className="text-xs text-slate-500">已綁 LINE userId</p>
-          <p className="mt-2 text-2xl font-semibold text-brand-ink">
+          <p className="mt-1 text-xl font-semibold text-brand-ink">
             {recipients.filter((recipient) => recipient.lineUserId.trim()).length}
           </p>
         </div>
-        <div className="rounded-[1.25rem] border border-white/70 bg-white/90 p-4 shadow-card">
+        <div className="rounded-2xl border border-white/70 bg-white/90 px-4 py-3 shadow-card">
           <p className="text-xs text-slate-500">本次選擇</p>
-          <p className="mt-2 text-2xl font-semibold text-brand-ink">{selectedRecipients.length}</p>
+          <p className="mt-1 text-xl font-semibold text-brand-ink">{selectedRecipients.length}</p>
         </div>
-        <div className="rounded-[1.25rem] border border-white/70 bg-white/90 p-4 shadow-card">
+        <div className="rounded-2xl border border-white/70 bg-white/90 px-4 py-3 shadow-card">
           <p className="text-xs text-slate-500">可立即發送</p>
-          <p className="mt-2 text-2xl font-semibold text-brand-ink">{sendableRecipients.length}</p>
+          <p className="mt-1 text-xl font-semibold text-brand-ink">{sendableRecipients.length}</p>
         </div>
       </div>
 
@@ -1019,21 +939,21 @@ export function AdminFamilyLinePage() {
         </div>
       ) : null}
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.05fr)_minmax(380px,0.95fr)] xl:items-start">
+      <div className="grid gap-3 xl:grid-cols-[minmax(0,0.95fr)_minmax(420px,1.05fr)] xl:items-start">
         <div className="space-y-4">
           <Panel title="LINE 快速功能">
-            <div className="grid gap-2">
+            <div className="grid gap-2 sm:grid-cols-2">
               <button
                 type="button"
                 onClick={() => setActiveLineTool("instant")}
-                className={`flex min-h-[68px] items-center gap-3 rounded-2xl border px-3 py-2.5 text-left transition ${
+                className={`flex min-h-[56px] items-center gap-2 rounded-xl border px-3 py-2 text-left transition ${
                   activeLineTool === "instant"
                     ? "border-brand-forest bg-emerald-50 shadow-sm"
                     : "border-slate-200 bg-white hover:border-brand-forest hover:bg-emerald-50"
                 }`}
               >
                 <span
-                  className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-xs font-bold ${
+                  className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-xs font-bold ${
                     activeLineTool === "instant"
                       ? "bg-brand-forest text-white"
                       : "bg-slate-100 text-brand-ink"
@@ -1049,14 +969,14 @@ export function AdminFamilyLinePage() {
               <button
                 type="button"
                 onClick={() => setActiveLineTool("single")}
-                className={`flex min-h-[68px] items-center gap-3 rounded-2xl border px-3 py-2.5 text-left transition ${
+                className={`flex min-h-[56px] items-center gap-2 rounded-xl border px-3 py-2 text-left transition ${
                   activeLineTool === "single"
                     ? "border-brand-forest bg-emerald-50 shadow-sm"
                     : "border-slate-200 bg-white hover:border-brand-forest hover:bg-emerald-50"
                 }`}
               >
                 <span
-                  className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-xs font-bold ${
+                  className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-xs font-bold ${
                     activeLineTool === "single"
                       ? "bg-brand-forest text-white"
                       : "bg-slate-100 text-brand-ink"
@@ -1072,14 +992,14 @@ export function AdminFamilyLinePage() {
               <button
                 type="button"
                 onClick={() => setActiveLineTool("automation")}
-                className={`flex min-h-[68px] items-center gap-3 rounded-2xl border px-3 py-2.5 text-left transition ${
+                className={`flex min-h-[56px] items-center gap-2 rounded-xl border px-3 py-2 text-left transition ${
                   activeLineTool === "automation"
                     ? "border-brand-forest bg-emerald-50 shadow-sm"
                     : "border-slate-200 bg-white hover:border-brand-forest hover:bg-emerald-50"
                 }`}
               >
                 <span
-                  className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-xs font-bold ${
+                  className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-xs font-bold ${
                     activeLineTool === "automation"
                       ? "bg-brand-forest text-white"
                       : "bg-slate-100 text-brand-ink"
@@ -1095,14 +1015,14 @@ export function AdminFamilyLinePage() {
               <button
                 type="button"
                 onClick={() => setActiveLineTool("template")}
-                className={`flex min-h-[68px] items-center gap-3 rounded-2xl border px-3 py-2.5 text-left transition ${
+                className={`flex min-h-[56px] items-center gap-2 rounded-xl border px-3 py-2 text-left transition ${
                   activeLineTool === "template"
                     ? "border-brand-forest bg-emerald-50 shadow-sm"
                     : "border-slate-200 bg-white hover:border-brand-forest hover:bg-emerald-50"
                 }`}
               >
                 <span
-                  className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-xs font-bold ${
+                  className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-xs font-bold ${
                     activeLineTool === "template"
                       ? "bg-brand-forest text-white"
                       : "bg-slate-100 text-brand-ink"
@@ -1461,51 +1381,17 @@ export function AdminFamilyLinePage() {
         </div>
 
         <div className="space-y-4">
-          <Panel title="角色關聯操作">
-            <div className="space-y-3 text-sm">
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                  <p className="text-xs text-slate-500">關聯操作名單</p>
-                  <p className="mt-1 text-xl font-semibold text-brand-ink">{selectedManagedContactIds.length}</p>
-                </div>
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                  <p className="text-xs text-slate-500">目前顯示好友</p>
-                  <p className="mt-1 text-xl font-semibold text-brand-ink">{visibleManagedLineContacts.length}</p>
-                </div>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={() => void syncLineOfficialAccountFriends()}
-                  disabled={isSyncingLineFriends}
-                  className="rounded-full border border-emerald-200 bg-white px-4 py-2 text-xs font-semibold text-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {isSyncingLineFriends ? "重新整理中" : "重新整理 LINE 好友名單"}
-                </button>
-                <button
-                  type="button"
-                  onClick={selectAllManagedContacts}
-                  className="rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-brand-ink"
-                >
-                  全選好友
-                </button>
-                <button
-                  type="button"
-                  onClick={invertManagedContactSelection}
-                  className="rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-brand-ink"
-                >
-                  反選好友
-                </button>
-              </div>
+          <Panel title="關聯設定">
+            <div className="grid gap-3 text-sm sm:grid-cols-[minmax(180px,260px)_minmax(140px,180px)_auto] sm:items-end">
               <label className="block">
-                <span className="mb-1 block font-medium text-brand-ink">批次關聯到個案</span>
+                <span className="mb-1 block font-medium text-brand-ink">關聯個案</span>
                 <select
                   aria-label="批次關聯居家個案"
                   value={bulkLinkPatientId}
                   onChange={(event) => setBulkLinkPatientId(event.target.value)}
-                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-2.5"
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2"
                 >
-                  <option value="">請選擇個案</option>
+                  <option value="">選擇個案</option>
                   {db.patients.map((patient) => (
                     <option key={patient.id} value={patient.id}>
                       {maskPatientName(patient.name)}
@@ -1513,77 +1399,56 @@ export function AdminFamilyLinePage() {
                   ))}
                 </select>
               </label>
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={() => void linkSelectedContactsToPatient()}
-                  className="rounded-full bg-brand-forest px-4 py-2 text-xs font-semibold text-white"
+              <label className="block">
+                <span className="mb-1 block font-medium text-brand-ink">篩選醫師</span>
+                <select
+                  aria-label="篩選醫師"
+                  value={selectedDoctorId}
+                  onChange={(event) => setSelectedDoctorId(event.target.value)}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2"
                 >
-                  關聯所選好友
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void unlinkSelectedContactsFromPatient()}
-                  className="rounded-full border border-rose-200 bg-white px-4 py-2 text-xs font-semibold text-rose-700"
-                >
-                  取消所選關聯
-                </button>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={() => void updateSelectedContactsRole("admin")}
-                  className="rounded-full bg-brand-forest px-4 py-2 text-xs font-semibold text-white"
-                >
-                  設為行政人員
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void updateSelectedContactsRole("family")}
-                  className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-brand-ink"
-                >
-                  設為家屬聯繫
-                </button>
-              </div>
-              <p className="text-xs text-slate-500">
-                先在下方名單按「顯示詳細」勾選好友，再於此處關聯個案或設定 LINE 角色。行政人員角色不綁定個別行政帳號。
-              </p>
+                  <option value="all">全部醫師</option>
+                  {db.doctors.map((doctor) => (
+                    <option key={doctor.id} value={doctor.id}>
+                      {doctor.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button
+                type="button"
+                onClick={() => void syncLineOfficialAccountFriends()}
+                disabled={isSyncingLineFriends}
+                className="w-fit rounded-full border border-emerald-200 bg-white px-4 py-2 text-xs font-semibold text-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {isSyncingLineFriends ? "重新整理中" : "重新整理 LINE 好友"}
+              </button>
             </div>
+            <p className="mt-2 text-xs text-slate-500">
+              選好個案後，直接在好友列勾選是否關聯；角色也改用每列下拉選單調整，舊式批次按鍵已隱藏。
+            </p>
           </Panel>
 
           <Panel title="LINE 好友名單">
             <div className="space-y-3">
-              <div className="grid gap-3 md:grid-cols-[1fr_auto_auto] md:items-end">
-                <label className="block text-sm">
-                  <span className="mb-1 block font-medium text-brand-ink">篩選醫師</span>
-                  <select
-                    aria-label="篩選醫師"
-                    value={selectedDoctorId}
-                    onChange={(event) => setSelectedDoctorId(event.target.value)}
-                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
-                  >
-                    <option value="all">全部醫師</option>
-                    {db.doctors.map((doctor) => (
-                      <option key={doctor.id} value={doctor.id}>
-                        {doctor.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+              <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
                   onClick={selectAllFilteredRecipients}
-                  className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-brand-ink"
+                  className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-brand-ink"
                 >
-                  全選目前名單
+                  全選發送
                 </button>
                 <button
                   type="button"
                   onClick={clearSelectedRecipients}
-                  className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-brand-ink"
+                  className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-brand-ink"
                 >
-                  清除選擇
+                  清除發送
                 </button>
+                <span className="text-xs text-slate-500">
+                  顯示 {visibleManagedLineContacts.length} 位，已選發送 {selectedRecipients.length} 位
+                </span>
               </div>
               {focusedPatientId ? (
                 <div className="space-y-2 rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
@@ -1637,83 +1502,101 @@ export function AdminFamilyLinePage() {
                       .map((patientId) => db.patients.find((patient) => patient.id === patientId))
                       .filter((patient): patient is Patient => Boolean(patient))
                       .map((patient) => maskPatientName(patient.name));
+                    const isLinkedToSelectedPatient = bulkLinkPatientId
+                      ? contact.linkedPatientIds.includes(bulkLinkPatientId)
+                      : false;
                     return (
                       <div
                         key={contact.id}
-                        className={`rounded-2xl border p-4 text-sm ${
+                        className={`rounded-2xl border px-3 py-3 text-sm ${
                           isSendSelected ? "border-brand-forest bg-emerald-50/70" : "border-slate-200 bg-white"
                         }`}
                       >
-                        <div className="flex items-start justify-between gap-3">
+                        <div className="grid gap-3 lg:grid-cols-[minmax(150px,1fr)_auto_minmax(120px,150px)_auto] lg:items-center">
                           <div className="min-w-0">
-                            <p className="break-words font-semibold text-brand-ink">{contact.displayName}</p>
-                            <p className="mt-1 break-words text-sm text-slate-600">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <p className="break-words font-semibold text-brand-ink">{contact.displayName}</p>
+                              <Badge
+                                value={contact.source === "official_friend" ? "官方好友" : "Webhook 收到"}
+                                compact
+                              />
+                            </div>
+                            <p className="mt-1 card-clamp-1 text-xs text-slate-600">
                               關聯個案：{linkedNames.length ? linkedNames.join("、") : "尚未關聯"}
                             </p>
-                            <p className="mt-1 break-words text-sm text-slate-600">
-                              LINE 角色：{contact.contactRole === "admin" ? "行政人員" : "家屬聯繫"}
-                            </p>
                           </div>
+
+                          <div className="flex flex-wrap gap-2">
+                            <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700">
+                              <input
+                                type="checkbox"
+                                aria-label={`${contact.displayName} 關聯所選個案`}
+                                checked={isLinkedToSelectedPatient}
+                                disabled={!bulkLinkPatientId}
+                                onChange={(event) =>
+                                  void updateManagedContactPatientLink(
+                                    contact.id,
+                                    bulkLinkPatientId,
+                                    event.target.checked
+                                  )
+                                }
+                                className="h-4 w-4 disabled:opacity-40"
+                              />
+                              <span>{bulkLinkPatientId ? "關聯個案" : "先選個案"}</span>
+                            </label>
+                            <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700">
+                              <input
+                                type="checkbox"
+                                aria-label={`${contact.displayName} 發送勾選`}
+                                checked={isSendSelected}
+                                disabled={!recipient}
+                                onChange={() => {
+                                  if (recipient) {
+                                    toggleRecipient(recipient.id);
+                                  }
+                                }}
+                                className="h-4 w-4 disabled:opacity-40"
+                              />
+                              <span>發送</span>
+                            </label>
+                          </div>
+
+                          <label className="block">
+                            <span className="sr-only">{contact.displayName} LINE 角色</span>
+                            <select
+                              aria-label={`${contact.displayName} LINE 角色`}
+                              value={contact.contactRole}
+                              onChange={(event) =>
+                                void updateManagedContactRole(
+                                  contact.id,
+                                  event.target.value as ManagedFamilyLineContact["contactRole"]
+                                )
+                              }
+                              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"
+                            >
+                              <option value="family">家屬聯繫</option>
+                              <option value="admin">行政人員</option>
+                            </select>
+                          </label>
+
                           <button
                             type="button"
                             onClick={() => toggleManagedContactDetail(contact.id)}
                             aria-expanded={isDetailExpanded}
-                            className="shrink-0 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-brand-ink"
+                            aria-label={isDetailExpanded ? "收合詳細" : "顯示詳細"}
+                            className="w-fit rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-brand-ink"
                           >
-                            {isDetailExpanded ? "收合詳細" : "顯示詳細"}
+                            {isDetailExpanded ? "收合" : "詳細"}
                           </button>
                         </div>
 
                         {isDetailExpanded ? (
-                          <div className="mt-4 border-l-2 border-slate-200 pl-4">
-                            <div className="space-y-3 rounded-2xl bg-slate-50 px-4 py-3">
-                              <div className="flex flex-wrap items-center gap-2">
-                                <Badge
-                                  value={contact.source === "official_friend" ? "官方好友" : "Webhook 收到"}
-                                  compact
-                                />
-                                <span className="text-xs text-slate-500">
-                                  發送對象：{recipient ? resolveRecipientLineStatus(recipient.lineUserId) : "不符合目前醫師篩選"}
-                                </span>
-                                <Badge
-                                  value={contact.contactRole === "admin" ? "行政人員" : "家屬聯繫"}
-                                  compact
-                                />
-                              </div>
-
-                              <div className="grid gap-3 md:grid-cols-2">
-                                <label className="flex min-w-0 items-start gap-3 rounded-2xl border border-slate-200 bg-white px-3 py-2">
-                                  <input
-                                    type="checkbox"
-                                    aria-label={`${contact.displayName} 發送勾選`}
-                                    checked={isSendSelected}
-                                    disabled={!recipient}
-                                    onChange={() => {
-                                      if (recipient) {
-                                        toggleRecipient(recipient.id);
-                                      }
-                                    }}
-                                    className="mt-1 h-4 w-4 disabled:opacity-40"
-                                  />
-                                  <span className="min-w-0 text-xs text-slate-600">
-                                    選入左側群發收件人
-                                  </span>
-                                </label>
-                                <label className="flex min-w-0 items-start gap-3 rounded-2xl border border-slate-200 bg-white px-3 py-2">
-                                  <input
-                                    type="checkbox"
-                                    aria-label={`${contact.displayName} 批次關聯勾選`}
-                                    checked={selectedManagedContactIds.includes(contact.id)}
-                                    onChange={() => toggleManagedContactSelection(contact.id)}
-                                    className="mt-1 h-4 w-4"
-                                  />
-                                  <span className="min-w-0 text-xs text-slate-600">
-                                    選入右上方關聯操作
-                                  </span>
-                                </label>
-                              </div>
-
+                          <div className="mt-3 rounded-xl bg-slate-50 px-3 py-3">
+                            <div className="space-y-3">
                               <div className="space-y-1 text-xs text-slate-500">
+                                <p>
+                                  發送對象：{recipient ? resolveRecipientLineStatus(recipient.lineUserId) : "不符合目前醫師篩選"}
+                                </p>
                                 <p>
                                   關聯醫師：{recipient?.linkedDoctors.length
                                     ? recipient.linkedDoctors.map((doctor) => doctor.name).join("、")
@@ -1730,7 +1613,7 @@ export function AdminFamilyLinePage() {
                                 </p>
                               </div>
 
-                              <div className="break-all rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-xs text-slate-700">
+                              <div className="break-all rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700">
                                 {contact.lineUserId}
                               </div>
                               <label className="block">
@@ -1740,7 +1623,7 @@ export function AdminFamilyLinePage() {
                                   value={contact.note}
                                   onChange={(event) => updateManagedContactNote(contact.id, event.target.value)}
                                   placeholder="例如：主要照顧者、可接收公告"
-                                  className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm"
+                                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
                                 />
                               </label>
                             </div>

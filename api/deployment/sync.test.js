@@ -59,6 +59,7 @@ function createMinimalDb() {
     admin_users: [],
     visit_schedules: [],
     saved_route_plans: [],
+    route_completion_records: [],
     visit_records: [],
     contact_logs: [],
     notification_templates: [],
@@ -106,6 +107,46 @@ describe("/api/deployment/sync?resource=app-db", () => {
     });
   });
 
+  it("GET 舊快照缺少路線歷史紀錄時會自動補空清單並回寫", async () => {
+    vi.stubEnv("DATABASE_URL", "postgres://example");
+    const legacyDb = createMinimalDb();
+    delete legacyDb.route_completion_records;
+    const queryMock = vi.fn(async (sql, params) => {
+      if (String(sql).includes("SELECT data")) {
+        return {
+          rows: [
+            {
+              data: legacyDb,
+              updated_at: "2026-05-05T08:00:00.000Z"
+            }
+          ]
+        };
+      }
+      if (String(sql).includes("INSERT INTO app_db_snapshots")) {
+        return {
+          rows: [
+            {
+              data: JSON.parse(params[1]),
+              updated_at: "2026-05-05T08:05:00.000Z"
+            }
+          ]
+        };
+      }
+      return { rows: [] };
+    });
+    const handler = await importHandlerWithQuery(queryMock);
+
+    const result = await callAppDb(handler, "GET");
+
+    expect(result.statusCode).toBe(200);
+    expect(result.body.db.route_completion_records).toEqual([]);
+    expect(result.body.updatedAt).toBe("2026-05-05T08:05:00.000Z");
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining("INSERT INTO app_db_snapshots"),
+      expect.arrayContaining(["default", JSON.stringify({ ...legacyDb, route_completion_records: [] })])
+    );
+  });
+
   it("PUT 會寫入資料快照", async () => {
     vi.stubEnv("DATABASE_URL", "postgres://example");
     const db = createMinimalDb();
@@ -135,6 +176,35 @@ describe("/api/deployment/sync?resource=app-db", () => {
     expect(queryMock).toHaveBeenCalledWith(
       expect.stringContaining("INSERT INTO app_db_snapshots"),
       expect.arrayContaining(["default", JSON.stringify(db)])
+    );
+  });
+
+  it("PUT 舊快照缺少路線歷史紀錄時會補空清單後保存", async () => {
+    vi.stubEnv("DATABASE_URL", "postgres://example");
+    const legacyDb = createMinimalDb();
+    delete legacyDb.route_completion_records;
+    const queryMock = vi.fn(async (sql, params) => {
+      if (String(sql).includes("INSERT INTO app_db_snapshots")) {
+        return {
+          rows: [
+            {
+              data: JSON.parse(params[1]),
+              updated_at: "2026-05-05T08:10:00.000Z"
+            }
+          ]
+        };
+      }
+      return { rows: [] };
+    });
+    const handler = await importHandlerWithQuery(queryMock);
+
+    const result = await callAppDb(handler, "PUT", { db: legacyDb });
+
+    expect(result.statusCode).toBe(200);
+    expect(result.body.db.route_completion_records).toEqual([]);
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining("INSERT INTO app_db_snapshots"),
+      expect.arrayContaining(["default", JSON.stringify({ ...legacyDb, route_completion_records: [] })])
     );
   });
 

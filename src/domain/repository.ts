@@ -100,6 +100,37 @@ export type AdminDashboardStats = {
   executedVisitCount: number;
   pausedCount: number;
   urgentCount: number;
+  routePlanCount: number;
+  pausedScheduledCount: number;
+  pausedPatientExpectedCount: number;
+  pausedTemporaryScheduleCount: number;
+};
+
+export type AdminDashboardPausedPatient = {
+  source: "patient_status" | "temporary_schedule";
+  patientId: string;
+  patientName: string;
+  doctorId: string;
+  doctorName: string;
+  serviceSlot: string;
+  expectedVisitCount: number;
+  reminderTags: string[];
+  scheduleId?: string;
+  scheduledStartAt?: string;
+  note?: string;
+};
+
+export type AdminDashboardDoctorPerformance = {
+  doctorId: string;
+  doctorName: string;
+  rank: number;
+  score: number;
+  routePlanCount: number;
+  completedRouteCount: number;
+  executedVisitCount: number;
+  pausedCount: number;
+  urgentCount: number;
+  completionRate: number;
 };
 
 export type AdminDashboard = {
@@ -116,6 +147,8 @@ export type AdminDashboard = {
   pendingRescheduleActions: RescheduleAction[];
   draftRoutePlans: SavedRoutePlan[];
   exceptionSchedules: VisitSchedule[];
+  pausedPatients: AdminDashboardPausedPatient[];
+  doctorPerformance: AdminDashboardDoctorPerformance[];
 };
 
 export interface PatientRepository {

@@ -18,6 +18,7 @@ import {
   buildNotificationCenterItemFromReminder,
   upsertNotificationCenterItem
 } from "./notificationCenter";
+import { upsertRouteCompletionRecord } from "../routeCompletionRecords";
 
 function sortSchedules<T extends { scheduled_start_at: string; route_order?: number }>(items: T[]): T[] {
   return [...items].sort((left, right) => {
@@ -357,7 +358,10 @@ function completeRoutePlanInDb(db: AppDb, routePlanId: string) {
   return {
     db: {
       ...db,
-      saved_route_plans: nextSavedRoutePlans
+      saved_route_plans: nextSavedRoutePlans,
+      route_completion_records: completedRoutePlan
+        ? upsertRouteCompletionRecord(db, completedRoutePlan, now)
+        : db.route_completion_records
     },
     completedRoutePlan
   };
@@ -602,7 +606,10 @@ function executeRoutePlanInDb(db: AppDb, routePlanId: string) {
         (record) => !routeScheduleIds.has(record.visit_schedule_id)
       ),
       visit_schedules: nextSchedules,
-      saved_route_plans: nextSavedRoutePlans
+      saved_route_plans: nextSavedRoutePlans,
+      route_completion_records: executedRoutePlan
+        ? upsertRouteCompletionRecord(db, executedRoutePlan, now)
+        : db.route_completion_records
     },
     executedRoutePlan
   };

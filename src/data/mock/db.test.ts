@@ -94,6 +94,7 @@ describe("mock db loader", () => {
       route_group_id: "route-expired-001",
       route_name: "過期路線",
       route_date: "2026-03-20",
+      execution_status: "completed" as const,
       saved_at: "2026-03-20T08:00:00+08:00",
       created_at: "2026-03-20T08:00:00+08:00",
       updated_at: "2026-03-20T08:00:00+08:00"
@@ -104,6 +105,7 @@ describe("mock db loader", () => {
       route_group_id: "route-fresh-001",
       route_name: "保留路線",
       route_date: "2026-04-15",
+      execution_status: "completed" as const,
       saved_at: "2026-04-15T08:00:00+08:00",
       created_at: "2026-04-15T08:00:00+08:00",
       updated_at: "2026-04-15T08:00:00+08:00"
@@ -125,6 +127,12 @@ describe("mock db loader", () => {
     expect(persistedDb.saved_route_plans.map((routePlan: { id: string }) => routePlan.id)).toEqual([
       "route-fresh-001"
     ]);
+    expect(db.route_completion_records.map((record) => record.route_plan_id)).toEqual(
+      expect.arrayContaining(["route-expired-001", "route-fresh-001"])
+    );
+    expect(persistedDb.route_completion_records.map((record: { route_plan_id: string }) => record.route_plan_id)).toEqual(
+      expect.arrayContaining(["route-expired-001", "route-fresh-001"])
+    );
   });
 
   it("會自動修正既有旗山醫院路線起終點舊座標", () => {

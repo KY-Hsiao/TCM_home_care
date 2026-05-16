@@ -2483,7 +2483,7 @@ export function AdminSchedulesPage() {
               突發出巡事件
             </button>
           </div>
-          <div className="grid gap-3 lg:grid-cols-[220px_220px_180px_140px_auto]">
+          <div className="grid gap-2 md:grid-cols-[minmax(150px,180px)_minmax(190px,260px)_minmax(130px,150px)_minmax(110px,130px)] md:items-end">
             <label className="block text-sm">
               <span className="mb-1 block font-medium text-brand-ink">先選醫師</span>
               <select
@@ -2496,7 +2496,7 @@ export function AdminSchedulesPage() {
                   setSelectedWeekday("");
                   setSelectedTimeSlot("");
                 }}
-                className="w-full rounded-2xl border border-slate-200 px-4 py-3"
+                className="w-full rounded-xl border border-slate-200 px-3 py-2"
               >
                 <option value="">請選擇醫師</option>
                 {doctors.map((doctor) => (
@@ -2527,7 +2527,7 @@ export function AdminSchedulesPage() {
                         : routeTimeSlotOptions[0]
                     );
                   }}
-                  className="w-full rounded-2xl border border-slate-200 px-4 py-3"
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2"
                 />
               ) : (
                 <select
@@ -2548,7 +2548,7 @@ export function AdminSchedulesPage() {
                     setSelectedWeekday(matchedRouteDateOption.preferredWeekday);
                     setSelectedTimeSlot(matchedRouteDateOption.preferredTimeSlot);
                   }}
-                  className="w-full rounded-2xl border border-slate-200 px-4 py-3"
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2"
                 >
                   <option value="">請選擇日期</option>
                   {availableRouteDateOptions.map((option) => (
@@ -2580,7 +2580,7 @@ export function AdminSchedulesPage() {
                     setSelectedTimeSlot(matchedTimeSlots?.[0] ?? "");
                   }
                 }}
-                className="w-full rounded-2xl border border-slate-200 px-4 py-3"
+                className="w-full rounded-xl border border-slate-200 px-3 py-2"
               >
                 <option value="">請選擇星期</option>
                 {(selectedRouteDateOption?.weekdayOptions ?? availableWeekdays).map((weekday) => (
@@ -2602,7 +2602,7 @@ export function AdminSchedulesPage() {
                   setSelectedSavedRoutePlanId("");
                   setSelectedTimeSlot(event.target.value as RouteTimeSlot | "");
                 }}
-                className="w-full rounded-2xl border border-slate-200 px-4 py-3"
+                className="w-full rounded-xl border border-slate-200 px-3 py-2"
               >
                 <option value="">請選擇時段</option>
                 {availableTimeSlots.map((option) => (
@@ -2612,7 +2612,6 @@ export function AdminSchedulesPage() {
                 ))}
               </select>
             </label>
-            <div className="flex items-end" />
           </div>
 
           <div

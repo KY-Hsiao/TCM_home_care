@@ -28,6 +28,7 @@ export function createSeedDb(): AppDb {
     admin_users: adminUsersSeed,
     visit_schedules: visitSchedulesSeed,
     saved_route_plans: savedRoutePlansSeed,
+    route_completion_records: [],
     visit_records: visitRecordsSeed,
     contact_logs: contactLogsSeed,
     notification_templates: notificationTemplatesSeed,

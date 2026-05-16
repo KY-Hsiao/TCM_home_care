@@ -193,6 +193,27 @@ export const savedRoutePlanSchema = z.object({
 
 export type SavedRoutePlan = z.infer<typeof savedRoutePlanSchema>;
 
+export const routeCompletionRecordSchema = z.object({
+  id: z.string(),
+  route_plan_id: z.string(),
+  doctor_id: z.string(),
+  route_date: z.string(),
+  route_weekday: z.string(),
+  service_time_slot: z.enum(["上午", "下午"] as const),
+  route_name: z.string(),
+  executed_visit_count: z.number(),
+  paused_count: z.number(),
+  urgent_count: z.number(),
+  schedule_ids: z.array(z.string()),
+  route_item_keys: z.array(z.string()),
+  source_execution_status: z.enum(routeExecutionStatusValues),
+  recorded_at: z.string(),
+  completed_at: z.string().nullable(),
+  ...baseTimestamps
+});
+
+export type RouteCompletionRecord = z.infer<typeof routeCompletionRecordSchema>;
+
 export const visitRecordSchema = z.object({
   id: z.string(),
   visit_schedule_id: z.string(),
@@ -392,6 +413,7 @@ export const appDbSchema = z.object({
   admin_users: z.array(adminUserSchema),
   visit_schedules: z.array(visitScheduleSchema),
   saved_route_plans: z.array(savedRoutePlanSchema),
+  route_completion_records: z.array(routeCompletionRecordSchema).default([]),
   visit_records: z.array(visitRecordSchema),
   contact_logs: z.array(contactLogSchema),
   notification_templates: z.array(notificationTemplateSchema),

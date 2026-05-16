@@ -129,6 +129,89 @@ function syncRemainingScheduleRouteOrders(
   );
 }
 
+function cancelDoctorSchedulesOutsideSlots(
+  db: AppDb,
+  doctor: Doctor,
+  now: string
+): AppDb {
+  const availableSlots = new Set(doctor.available_service_slots ?? []);
+  const cancelledScheduleIds = new Set<string>();
+  const nextSchedules = db.visit_schedules.map((schedule) => {
+    if (
+      schedule.assigned_doctor_id !== doctor.id ||
+      ["completed", "cancelled"].includes(schedule.status) ||
+      availableSlots.has(schedule.service_time_slot)
+    ) {
+      return schedule;
+    }
+
+    cancelledScheduleIds.add(schedule.id);
+    return {
+      ...schedule,
+      status: "cancelled" as const,
+      route_order: 0,
+      note: schedule.note.includes("醫師服務時段異動")
+        ? schedule.note
+        : `${schedule.note}｜取消：醫師服務時段異動`,
+      updated_at: now
+    };
+  });
+
+  if (cancelledScheduleIds.size === 0) {
+    return {
+      ...db,
+      doctors: db.doctors
+    };
+  }
+
+  return {
+    ...db,
+    visit_schedules: nextSchedules,
+    saved_route_plans: db.saved_route_plans.map((routePlan) => {
+      let didChange = false;
+      const nextRouteItems = routePlan.route_items.map((item) => {
+        if (!item.schedule_id || !cancelledScheduleIds.has(item.schedule_id)) {
+          return item;
+        }
+        didChange = true;
+        return {
+          ...item,
+          checked: false,
+          route_order: null,
+          status: "paused" as const
+        };
+      });
+      return didChange
+        ? {
+            ...routePlan,
+            route_items: nextRouteItems,
+            schedule_ids: routePlan.schedule_ids.filter((scheduleId) => !cancelledScheduleIds.has(scheduleId)),
+            updated_at: now
+          }
+        : routePlan;
+    }),
+    reminders: db.reminders.map((reminder) =>
+      reminder.related_visit_schedule_id && cancelledScheduleIds.has(reminder.related_visit_schedule_id)
+        ? {
+            ...reminder,
+            status: "dismissed" as const,
+            updated_at: now
+          }
+        : reminder
+    ),
+    notification_center_items: db.notification_center_items.map((item) =>
+      item.linked_visit_schedule_id && cancelledScheduleIds.has(item.linked_visit_schedule_id)
+        ? {
+            ...item,
+            status: "closed",
+            is_unread: false,
+            updated_at: now
+          }
+        : item
+    )
+  };
+}
+
 function removePatientFromDb(
   db: AppDb,
   patientId: string
@@ -294,10 +377,14 @@ export function createPatientRepository(
           });
         }
 
-        return {
-          ...db,
-          doctors: nextDoctors
-        };
+        return cancelDoctorSchedulesOutsideSlots(
+          {
+            ...db,
+            doctors: nextDoctors
+          },
+          normalizedDoctor,
+          now
+        );
       });
     },
     removeDoctor(doctorId: string) {

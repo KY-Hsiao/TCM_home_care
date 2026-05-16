@@ -47,6 +47,7 @@ function createMinimalDb(updatedAt: string): AppDb {
     admin_users: [],
     visit_schedules: [],
     saved_route_plans: [],
+    route_completion_records: [],
     visit_records: [],
     contact_logs: [],
     notification_templates: [],

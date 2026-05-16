@@ -72,7 +72,6 @@ export function RoleSelectPage() {
         .getNotificationCenterItems(selectedAccount.role, selectedAccount.userId)
         .filter((item) => item.is_unread && item.role === selectedAccount.role).length
     : 0;
-
   const handleLogin = () => {
     if (!selectedAccount) {
       setMessage("找不到可登入的帳號，請先建立醫師或行政帳號。");
@@ -102,7 +101,10 @@ export function RoleSelectPage() {
 
   return (
     <div className="mx-auto flex min-h-screen max-w-4xl items-center px-3 py-4 sm:px-4 lg:px-6">
-      <Panel title="登入系統" className="w-full">
+      <Panel
+        title="登入系統"
+        className="w-full"
+      >
         <div className="grid gap-0 overflow-hidden rounded-[1.35rem] lg:grid-cols-[0.85fr_1.15fr] lg:rounded-[1.75rem]">
           <div className="bg-[linear-gradient(140deg,#0f172a_0%,#1e293b_62%,#14532d_100%)] px-5 py-5 text-white lg:px-6 lg:py-6">
             <p className="text-xs font-semibold tracking-[0.18em] text-brand-sand/70">
@@ -146,12 +148,8 @@ export function RoleSelectPage() {
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 className="w-full rounded-2xl border border-slate-200 px-4 py-3"
-                placeholder="請輸入登入密碼"
               />
             </label>
-            <p className="text-xs text-slate-500">
-              登入後可在系統內修改密碼。若忘記密碼，請由系統管理者重設。
-            </p>
             {selectedAccount?.role === "doctor" ? (
               <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
                 醫師登入後會立即要求手機瀏覽器定位分享。若未允許或未取得定位，系統會明確顯示目前未取得定位分享，行政端也無法看到即時位置。

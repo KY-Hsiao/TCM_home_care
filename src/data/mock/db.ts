@@ -1,5 +1,6 @@
 import { appDbSchema, type AppDb } from "../../domain/models";
 import { createSeedDb } from "../seed";
+import { backfillRouteCompletionRecords } from "./routeCompletionRecords";
 
 export const MOCK_DB_STORAGE_KEY = "tcm-home-care-mvp-db";
 const RECOVERY_KEY_PREFIX = "tcm-home-care-mvp-db-recovery";
@@ -92,6 +93,11 @@ function removeLegacyDoctorSeed(db: AppDb): AppDb {
         !removedDoctorIds.has(routePlan.doctor_id) &&
         !routePlan.schedule_ids.some((scheduleId) => removedScheduleIds.has(scheduleId))
     ),
+    route_completion_records: db.route_completion_records.filter(
+      (record) =>
+        !removedDoctorIds.has(record.doctor_id) &&
+        !record.schedule_ids.some((scheduleId) => removedScheduleIds.has(scheduleId))
+    ),
     visit_records: db.visit_records.filter((record) => !removedScheduleIds.has(record.visit_schedule_id)),
     contact_logs: db.contact_logs.filter(
       (log) =>
@@ -165,7 +171,9 @@ function normalizeHospitalRoutePlanEndpoints(db: AppDb): AppDb {
 }
 
 export function normalizeAppDbForCurrentVersion(db: AppDb): AppDb {
-  return normalizeHospitalRoutePlanEndpoints(removeExpiredSavedRoutePlans(removeLegacyDoctorSeed(db)));
+  return removeExpiredSavedRoutePlans(
+    normalizeHospitalRoutePlanEndpoints(backfillRouteCompletionRecords(removeLegacyDoctorSeed(db)))
+  );
 }
 
 function seedAndPersistDb(): AppDb {

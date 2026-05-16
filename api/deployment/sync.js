@@ -12,6 +12,7 @@ const REQUIRED_APP_DB_ARRAY_KEYS = [
   "admin_users",
   "visit_schedules",
   "saved_route_plans",
+  "route_completion_records",
   "visit_records",
   "contact_logs",
   "notification_templates",
@@ -24,6 +25,7 @@ const REQUIRED_APP_DB_ARRAY_KEYS = [
 ];
 const REMOVED_LEGACY_DOCTOR_ID = "doc-002";
 const REMOVED_LEGACY_DOCTOR_NAMES = new Set(["林若謙醫師", "支援醫師"]);
+const STATISTICAL_ROUTE_STATUSES = new Set(["executing", "archived", "completed"]);
 
 function buildTaipeiDateRange(dateValue) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dateValue)) {
@@ -81,6 +83,94 @@ function validateAppDbPayload(value) {
   return null;
 }
 
+function buildRouteCompletionRecordId(routePlan) {
+  return `route-completion-${routePlan.id}-${routePlan.route_date}-${routePlan.service_time_slot}`;
+}
+
+function resolveRouteUrgentCount(db, routePlan) {
+  const scheduleIds = new Set(
+    Array.isArray(routePlan.route_items)
+      ? routePlan.route_items.map((item) => item.schedule_id).filter(Boolean)
+      : []
+  );
+  const urgentScheduleIds = new Set(
+    db.visit_schedules
+      .filter((schedule) => scheduleIds.has(schedule.id) && schedule.last_feedback_code === "urgent")
+      .map((schedule) => schedule.id)
+  );
+  db.notification_center_items.forEach((item) => {
+    if (
+      item.linked_visit_schedule_id &&
+      scheduleIds.has(item.linked_visit_schedule_id) &&
+      item.status === "pending" &&
+      item.source_type === "patient_exception" &&
+      (String(item.title ?? "").includes("urgent") ||
+        String(item.content ?? "").includes("urgent") ||
+        String(item.title ?? "").includes("緊急"))
+    ) {
+      urgentScheduleIds.add(item.linked_visit_schedule_id);
+    }
+  });
+  return urgentScheduleIds.size;
+}
+
+function buildRouteCompletionRecord(db, routePlan, recordedAt) {
+  const routeItems = Array.isArray(routePlan.route_items) ? routePlan.route_items : [];
+  const now = recordedAt || new Date().toISOString();
+  const completedAt =
+    routePlan.execution_status === "completed" || routePlan.execution_status === "archived" ? now : null;
+  return {
+    id: buildRouteCompletionRecordId(routePlan),
+    route_plan_id: routePlan.id,
+    doctor_id: routePlan.doctor_id,
+    route_date: routePlan.route_date,
+    route_weekday: routePlan.route_weekday,
+    service_time_slot: routePlan.service_time_slot,
+    route_name: routePlan.route_name,
+    executed_visit_count: routeItems.filter((item) => item.checked && item.status !== "paused").length,
+    paused_count: routeItems.filter((item) => !item.checked || item.status === "paused").length,
+    urgent_count: resolveRouteUrgentCount(db, routePlan),
+    schedule_ids: routeItems.map((item) => item.schedule_id).filter(Boolean),
+    route_item_keys: routeItems.map((item, index) => item.schedule_id || `${item.patient_id}:${index + 1}`),
+    source_execution_status: routePlan.execution_status,
+    recorded_at: routePlan.executed_at || routePlan.updated_at || now,
+    completed_at: completedAt,
+    created_at: routePlan.created_at || now,
+    updated_at: now
+  };
+}
+
+function backfillRouteCompletionRecords(db) {
+  const recordById = new Map(
+    (Array.isArray(db.route_completion_records) ? db.route_completion_records : []).map((record) => [
+      record.id,
+      record
+    ])
+  );
+  const savedRoutePlans = Array.isArray(db.saved_route_plans) ? db.saved_route_plans : [];
+  const backfillDb = {
+    ...db,
+    visit_schedules: Array.isArray(db.visit_schedules) ? db.visit_schedules : [],
+    notification_center_items: Array.isArray(db.notification_center_items) ? db.notification_center_items : []
+  };
+  savedRoutePlans
+    .filter(
+      (routePlan) =>
+        STATISTICAL_ROUTE_STATUSES.has(routePlan.execution_status) &&
+        Array.isArray(routePlan.route_items) &&
+        routePlan.route_items.length > 0
+    )
+    .forEach((routePlan) => {
+      const nextRecord = buildRouteCompletionRecord(backfillDb, routePlan, routePlan.updated_at);
+      const existing = recordById.get(nextRecord.id);
+      recordById.set(nextRecord.id, existing ? { ...nextRecord, created_at: existing.created_at } : nextRecord);
+    });
+  return {
+    ...db,
+    route_completion_records: Array.from(recordById.values())
+  };
+}
+
 function isRemovedLegacyDoctor(doctor) {
   return (
     doctor?.id === REMOVED_LEGACY_DOCTOR_ID ||
@@ -89,6 +179,10 @@ function isRemovedLegacyDoctor(doctor) {
 }
 
 function normalizeAppDbPayload(db) {
+  db = backfillRouteCompletionRecords({
+    ...db,
+    route_completion_records: Array.isArray(db.route_completion_records) ? db.route_completion_records : []
+  });
   const doctors = Array.isArray(db.doctors) ? db.doctors : [];
   const removedDoctorIds = new Set(
     doctors.filter((doctor) => isRemovedLegacyDoctor(doctor)).map((doctor) => doctor.id)
@@ -128,6 +222,11 @@ function normalizeAppDbPayload(db) {
       (routePlan) =>
         !removedDoctorIds.has(routePlan.doctor_id) &&
         !routePlan.schedule_ids.some((scheduleId) => removedScheduleIds.has(scheduleId))
+    ),
+    route_completion_records: db.route_completion_records.filter(
+      (record) =>
+        !removedDoctorIds.has(record.doctor_id) &&
+        !record.schedule_ids.some((scheduleId) => removedScheduleIds.has(scheduleId))
     ),
     visit_records: db.visit_records.filter((record) => !removedScheduleIds.has(record.visit_schedule_id)),
     contact_logs: db.contact_logs.filter(
@@ -198,7 +297,11 @@ async function handleAppDbSync(request, response) {
 
     const body = normalizeBody(request);
     const db = body.db ?? body;
-    const validationError = validateAppDbPayload(db);
+    const dbWithCurrentSchema = {
+      ...db,
+      route_completion_records: Array.isArray(db?.route_completion_records) ? db.route_completion_records : []
+    };
+    const validationError = validateAppDbPayload(dbWithCurrentSchema);
     if (validationError) {
       setJson(response, 400, {
         reason: "INVALID_APP_DB",
@@ -207,7 +310,7 @@ async function handleAppDbSync(request, response) {
       return;
     }
 
-    const normalizedDb = normalizeAppDbPayload(db);
+    const normalizedDb = normalizeAppDbPayload(dbWithCurrentSchema);
     const snapshot = await upsertAppDbSnapshot(normalizedDb);
     setJson(response, 200, {
       ok: true,

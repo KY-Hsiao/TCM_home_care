@@ -554,7 +554,7 @@ describe("AppShell", () => {
       .getAllByRole("link")
       .map((link) => link.querySelector("div")?.textContent?.trim());
 
-    expect(navLabels).toEqual(["即時導航", "回院病歷", "請假申請"]);
+    expect(navLabels).toEqual(["即時導航", "LINE QR", "回院病歷", "請假申請"]);
 
     expect(screen.queryByLabelText("請假原因")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "提出請假申請" }));

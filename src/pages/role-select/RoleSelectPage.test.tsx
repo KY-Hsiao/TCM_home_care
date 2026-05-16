@@ -26,7 +26,7 @@ describe("RoleSelectPage", () => {
     );
   }
 
-  it("會顯示單一帳號下拉與單一密碼欄位，且預設密碼提示為 0000", () => {
+  it("會顯示單一帳號下拉與單一密碼欄位，且不顯示密碼提示", () => {
     renderRoleSelect();
 
     expect(screen.getByText("登入系統")).toBeInTheDocument();
@@ -37,8 +37,28 @@ describe("RoleSelectPage", () => {
     expect(
       screen.getByText(/醫師登入後會立即要求手機瀏覽器定位分享/)
     ).toBeInTheDocument();
-    expect(screen.getByText(/預設密碼為 `0000`/)).toBeInTheDocument();
+    expect(screen.getByLabelText("登入密碼")).not.toHaveAttribute("placeholder");
     expect(screen.getAllByRole("button", { name: "登入並進入" })).toHaveLength(1);
+    expect(screen.queryByText("直接進入")).not.toBeInTheDocument();
+  });
+
+  it("醫師已登入狀態回到登入頁時不顯示直接進入按鈕", () => {
+    window.localStorage.setItem(
+      SESSION_STORAGE_KEY,
+      JSON.stringify({
+        role: "doctor",
+        activeDoctorId: "doc-001",
+        activeAdminId: "admin-001",
+        authenticatedDoctorId: "doc-001",
+        authenticatedAdminId: null
+      })
+    );
+
+    renderRoleSelect();
+
+    expect(screen.getByText("登入系統")).toBeInTheDocument();
+    expect(screen.queryByText("直接進入")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "登入並進入" })).toBeInTheDocument();
   });
 
   it("密碼錯誤時會顯示錯誤訊息", () => {
