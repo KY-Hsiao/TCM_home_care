@@ -249,6 +249,16 @@ describe("visit automation service", () => {
           note: "主要照顧者",
           source: "webhook",
           updatedAt: "2026-05-01T00:00:00.000Z"
+        },
+        {
+          id: "line-contact-doctor",
+          displayName: "醫師 LINE",
+          lineUserId: "Udoctorcontactaaaaaaaaaaaaaaaaaa",
+          linkedPatientIds: ["pat-006"],
+          contactRole: "doctor",
+          note: "醫師本人",
+          source: "webhook",
+          updatedAt: "2026-05-01T00:00:00.000Z"
         }
       ])
     );
@@ -284,6 +294,14 @@ describe("visit automation service", () => {
         lineUserId: "Usecondstopaaaaaaaaaaaaaaaaaaaaaa"
       })
     ]);
+    expect(requestBody.recipients).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          caregiverId: "line-contact-doctor",
+          lineUserId: "Udoctorcontactaaaaaaaaaaaaaaaaaa"
+        })
+      ])
+    );
     expect(requestBody).not.toHaveProperty("lineChannelAccessToken");
     expect(harness.repositories.contactRepository.getContactLogsByScheduleId("vs-015")).toEqual(
       expect.arrayContaining([

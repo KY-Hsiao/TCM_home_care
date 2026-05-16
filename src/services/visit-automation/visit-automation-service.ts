@@ -17,6 +17,7 @@ type ManagedFamilyLineContact = {
   displayName: string;
   lineUserId: string;
   linkedPatientIds: string[];
+  contactRole?: "family" | "admin" | "doctor";
   note: string;
   source: "webhook" | "official_friend";
   updatedAt: string;
@@ -70,12 +71,19 @@ function isAfterReturnCareEnabled() {
   }
 }
 
+function normalizeContactRole(value: unknown): ManagedFamilyLineContact["contactRole"] {
+  return value === "admin" || value === "doctor" ? value : "family";
+}
+
 function loadManagedLineContacts() {
-  return loadArrayStorage<ManagedFamilyLineContact>(MANAGED_CONTACTS_STORAGE_KEY).filter(
+  return normalizeManagedLineContacts(
+    loadArrayStorage<Partial<ManagedFamilyLineContact>>(MANAGED_CONTACTS_STORAGE_KEY)
+  ).filter(
     (contact) =>
       (contact.source === "webhook" || contact.source === "official_friend") &&
       typeof contact.lineUserId === "string" &&
-      Array.isArray(contact.linkedPatientIds)
+      Array.isArray(contact.linkedPatientIds) &&
+      contact.contactRole === "family"
   );
 }
 
@@ -94,6 +102,7 @@ function normalizeManagedLineContacts(
         linkedPatientIds: Array.isArray(contact.linkedPatientIds)
           ? contact.linkedPatientIds.map((patientId) => String(patientId ?? "").trim()).filter(Boolean)
           : [],
+        contactRole: normalizeContactRole(contact.contactRole),
         note: String(contact.note ?? ""),
         source,
         updatedAt: String(contact.updatedAt ?? new Date().toISOString())
@@ -236,7 +245,10 @@ export class MockVisitAutomationService implements VisitAutomationService {
   private async loadLineContactsForPatient(patientId: string) {
     const localContacts = loadManagedLineContacts();
     const localMatchedContacts = localContacts.filter(
-      (contact) => contact.linkedPatientIds.includes(patientId) && contact.lineUserId.trim()
+      (contact) =>
+        contact.contactRole === "family" &&
+        contact.linkedPatientIds.includes(patientId) &&
+        contact.lineUserId.trim()
     );
     if (localMatchedContacts.length > 0 || typeof fetch !== "function") {
       return localMatchedContacts;
@@ -259,7 +271,10 @@ export class MockVisitAutomationService implements VisitAutomationService {
       const normalizedContacts = normalizeManagedLineContacts(contacts);
       saveManagedLineContacts(normalizedContacts);
       return normalizedContacts.filter(
-        (contact) => contact.linkedPatientIds.includes(patientId) && contact.lineUserId.trim()
+        (contact) =>
+          contact.contactRole === "family" &&
+          contact.linkedPatientIds.includes(patientId) &&
+          contact.lineUserId.trim()
       );
     } catch {
       return localMatchedContacts;

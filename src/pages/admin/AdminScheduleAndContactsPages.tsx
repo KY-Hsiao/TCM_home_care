@@ -57,7 +57,7 @@ type ManagedFamilyLineContactSnapshot = {
   displayName: string;
   lineUserId?: string;
   linkedPatientIds: string[];
-  contactRole?: "family" | "admin";
+  contactRole?: "family" | "admin" | "doctor";
   note?: string;
   source?: "webhook" | "official_friend";
   updatedAt?: string;
@@ -521,7 +521,9 @@ function normalizeManagedFamilyLineContacts(
     .map((contact) => {
       const lineUserId = String(contact.lineUserId ?? contact.userId ?? "").trim();
       const contactRole: ManagedFamilyLineContactSnapshot["contactRole"] =
-        contact.contactRole === "admin" ? "admin" : "family";
+        contact.contactRole === "admin" || contact.contactRole === "doctor"
+          ? contact.contactRole
+          : "family";
       return {
         ...contact,
         id: contact.id || `line-contact-${lineUserId}`,
@@ -550,7 +552,7 @@ function buildLeaveLineRecipients(input: {
   const recipientByLineUserId = new Map<string, LeaveLineRecipient>();
   input.contacts.forEach((contact) => {
     const lineUserId = String(contact.lineUserId ?? contact.userId ?? "").trim();
-    if (!lineUserId) {
+    if (!lineUserId || contact.contactRole !== "family") {
       return;
     }
     const matchedPatientIds = contact.linkedPatientIds.filter((patientId) =>

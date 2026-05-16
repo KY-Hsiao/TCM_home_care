@@ -103,7 +103,7 @@
       displayName: contact.displayName || lineUserId || "LINE 家屬",
       lineUserId,
       linkedPatientIds: Array.isArray(contact.linkedPatientIds) ? contact.linkedPatientIds.map((id) => String(id || "").trim()).filter(Boolean) : [],
-      contactRole: contact.contactRole === "admin" ? "admin" : "family"
+      contactRole: contact.contactRole === "admin" || contact.contactRole === "doctor" ? contact.contactRole : "family"
     };
   }
 
@@ -168,7 +168,7 @@
     const doctor = (db.doctors || []).find((item) => item.id === schedule.assigned_doctor_id);
     const recipients = (Array.isArray(contacts) ? contacts : [])
       .map(normalizeContact)
-      .filter((contact) => contact.contactRole !== "admin")
+      .filter((contact) => contact.contactRole === "family")
       .filter((contact) => contact.lineUserId)
       .filter((contact) => contact.linkedPatientIds.includes(schedule.patient_id))
       .map((contact) => ({

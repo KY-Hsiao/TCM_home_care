@@ -37,7 +37,7 @@ type ManagedFamilyLineContact = {
   displayName: string;
   lineUserId: string;
   linkedPatientIds: string[];
-  contactRole: "family" | "admin";
+  contactRole: "family" | "admin" | "doctor";
   note: string;
   source: "webhook" | "official_friend";
   updatedAt: string;
@@ -49,7 +49,7 @@ type LineFriendProfile = {
   note?: string;
   source?: "webhook" | "official_friend";
   linkedPatientIds?: string[];
-  contactRole?: "family" | "admin";
+  contactRole?: "family" | "admin" | "doctor";
   updatedAt?: string;
 };
 
@@ -95,6 +95,20 @@ const defaultTemplateDrafts: Record<FamilyLineTemplateKey, FamilyLineTemplateDra
   }
 };
 
+function normalizeContactRole(value: unknown): ManagedFamilyLineContact["contactRole"] {
+  return value === "admin" || value === "doctor" ? value : "family";
+}
+
+function getContactRoleLabel(contactRole: ManagedFamilyLineContact["contactRole"]) {
+  if (contactRole === "admin") {
+    return "行政人員";
+  }
+  if (contactRole === "doctor") {
+    return "醫師";
+  }
+  return "家屬聯繫";
+}
+
 function loadJsonStorage<T>(key: string, fallback: T): T {
   if (typeof window === "undefined") {
     return fallback;
@@ -130,7 +144,7 @@ function normalizeManagedLineContacts(
       linkedPatientIds: Array.isArray(contact.linkedPatientIds)
         ? contact.linkedPatientIds.map((patientId) => String(patientId ?? "").trim()).filter(Boolean)
         : [],
-      contactRole: contact.contactRole === "admin" ? "admin" : "family",
+      contactRole: normalizeContactRole(contact.contactRole),
       source: contact.source === "official_friend" ? "official_friend" : "webhook"
     }));
 }
@@ -247,7 +261,7 @@ export function AdminFamilyLinePage() {
       nextRecipients.push({
         id: `line-contact:${contact.id}`,
         displayName: contact.displayName,
-        relationshipLabel: contact.note || (contact.contactRole === "admin" ? "行政人員" : "LINE 名單"),
+        relationshipLabel: contact.note || getContactRoleLabel(contact.contactRole),
         patient: primaryPatient,
         linkedPatients,
         schedules,
@@ -568,7 +582,7 @@ export function AdminFamilyLinePage() {
     setSendFeedback({
       tone: persisted ? "success" : "error",
       message: `${updatedContact.displayName} 已設為${
-        contactRole === "admin" ? "行政人員" : "家屬聯繫"
+        getContactRoleLabel(contactRole)
       }。${persisted ? "已同步保存。" : "目前只保存在本機，後端名單同步失敗時請稍後再試。"}`
     });
   };
@@ -619,7 +633,7 @@ export function AdminFamilyLinePage() {
             displayName: friend.displayName || existing?.displayName || friend.userId,
             lineUserId: friend.userId,
             linkedPatientIds: friend.linkedPatientIds ?? existing?.linkedPatientIds ?? [],
-            contactRole: friend.contactRole === "admin" ? "admin" : existing?.contactRole ?? "family",
+            contactRole: normalizeContactRole(friend.contactRole ?? existing?.contactRole),
             note: friend.note ?? existing?.note ?? "",
             source: friend.source === "official_friend" ? "official_friend" : "webhook",
             updatedAt: friend.updatedAt ?? now
@@ -1458,6 +1472,7 @@ export function AdminFamilyLinePage() {
                             >
                               <option value="family">家屬聯繫</option>
                               <option value="admin">行政人員</option>
+                              <option value="doctor">醫師</option>
                             </select>
                           </label>
 

@@ -5,10 +5,39 @@ param(
   [switch]$SkipVercel,
   [switch]$CommitPendingChanges,
   [string]$CommitMessage = "",
-  [bool]$WaitForGitHubActions = $true
+  $WaitForGitHubActions = $true
 )
 
 $ErrorActionPreference = "Stop"
+
+function ConvertTo-BooleanOption {
+  param(
+    [Parameter(Mandatory = $true)]
+    [object]$Value,
+    [bool]$Default = $true
+  )
+
+  if ($Value -is [bool]) {
+    return $Value
+  }
+  if ($Value -is [int]) {
+    return $Value -ne 0
+  }
+  $text = [string]$Value
+  if ([string]::IsNullOrWhiteSpace($text)) {
+    return $Default
+  }
+  $normalized = $text.Trim().ToLowerInvariant()
+  if ($normalized -in @("false", "`$false", "0", "no", "off")) {
+    return $false
+  }
+  if ($normalized -in @("true", "`$true", "1", "yes", "on")) {
+    return $true
+  }
+  throw "Invalid boolean value '$Value' for WaitForGitHubActions. Use true/false, 1/0, yes/no, or on/off."
+}
+
+$shouldWaitForGitHubActions = ConvertTo-BooleanOption -Value $WaitForGitHubActions -Default $true
 
 $currentBranch = (git branch --show-current).Trim()
 if ([string]::IsNullOrWhiteSpace($currentBranch)) {
@@ -106,7 +135,7 @@ if ($SkipVercel) {
 
 $githubActionSucceeded = $false
 $workflowDispatched = $false
-if ($WaitForGitHubActions) {
+if ($shouldWaitForGitHubActions) {
   $ghCommand = Get-Command gh -ErrorAction SilentlyContinue
   if ($null -eq $ghCommand) {
     Write-Warning "GitHub CLI (gh) was not found. git push completed, but GitHub Actions cannot be watched locally."

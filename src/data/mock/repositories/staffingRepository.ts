@@ -42,15 +42,47 @@ export function createStaffingRepository(
     };
   };
 
-  const parseServiceSlotWeekday = (serviceSlot: string) => {
+  const parseServiceSlot = (serviceSlot: string) => {
     const normalizedSlot = serviceSlot.replace(/\s/g, "").replace("星期天", "星期日");
     const matchedWeekday = Object.keys(weekdayToIndex).find((weekday) =>
       normalizedSlot.startsWith(weekday)
     );
-    return matchedWeekday ? weekdayToIndex[matchedWeekday] : null;
+    if (!matchedWeekday) {
+      return null;
+    }
+    const dayPart = normalizedSlot.includes("下午")
+      ? "下午"
+      : normalizedSlot.includes("上午")
+        ? "上午"
+        : null;
+    return {
+      weekday: weekdayToIndex[matchedWeekday],
+      dayPart
+    };
   };
 
-  const listServiceSlotOccurrenceDates = (serviceSlot: string, start: Date, end: Date) => {
+  const parseServiceSlotWeekday = (serviceSlot: string) => {
+    const parsed = parseServiceSlot(serviceSlot);
+    return parsed ? parsed.weekday : null;
+  };
+
+  const isServiceSlotOccurrenceDue = (serviceSlot: string, date: string, cutoff?: Date) => {
+    if (!cutoff) {
+      return true;
+    }
+
+    const parsed = parseServiceSlot(serviceSlot);
+    const occurrenceEnd = new Date(`${date}T23:59:59.999`);
+    if (parsed?.dayPart === "上午") {
+      occurrenceEnd.setHours(13, 0, 0, 0);
+    }
+    if (parsed?.dayPart === "下午") {
+      occurrenceEnd.setHours(18, 0, 0, 0);
+    }
+    return occurrenceEnd <= cutoff;
+  };
+
+  const listServiceSlotOccurrenceDates = (serviceSlot: string, start: Date, end: Date, cutoff?: Date) => {
     const targetWeekday = parseServiceSlotWeekday(serviceSlot);
     if (targetWeekday === null) {
       return [];
@@ -61,7 +93,10 @@ export function createStaffingRepository(
     cursor.setHours(0, 0, 0, 0);
     while (cursor < end) {
       if (cursor.getDay() === targetWeekday) {
-        dates.push(formatDateInputValue(cursor));
+        const date = formatDateInputValue(cursor);
+        if (isServiceSlotOccurrenceDue(serviceSlot, date, cutoff)) {
+          dates.push(date);
+        }
       }
       cursor.setDate(cursor.getDate() + 1);
     }
@@ -119,12 +154,17 @@ export function createStaffingRepository(
     return true;
   };
 
-  const buildPausedPatientStats = (db: AppDb, start: Date, end: Date) =>
+  const buildPausedPatientStats = (db: AppDb, start: Date, end: Date, cutoff?: Date) =>
     db.patients
       .filter((patient) => patient.status === "paused")
       .map((patient) => {
         const doctor = db.doctors.find((item) => item.id === patient.preferred_doctor_id);
-        const occurrenceDates = listServiceSlotOccurrenceDates(patient.preferred_service_slot, start, end);
+        const occurrenceDates = listServiceSlotOccurrenceDates(
+          patient.preferred_service_slot,
+          start,
+          end,
+          cutoff
+        );
         return {
           source: "patient_status" as const,
           patientId: patient.id,
@@ -548,6 +588,7 @@ export function createStaffingRepository(
         )
       ];
       const currentMonthRange = buildMonthRange(referenceDate, 0);
+      const currentMonthCutoff = resolveStatsCutoff(referenceDate, currentMonthRange.end);
       const isCurrentMonthRange = (() => {
         const todayMonthRange = buildMonthRange(formatDateInputValue(), 0);
         return currentMonthRange.label === todayMonthRange.label;
@@ -555,13 +596,14 @@ export function createStaffingRepository(
       const currentMonthPausedPatients = isCurrentMonthRange ? buildPausedPatientStats(
         db,
         currentMonthRange.start,
-        currentMonthRange.end
+        currentMonthRange.end,
+        currentMonthCutoff
       ) : [];
       const currentMonthTemporaryPausedSchedules = buildTemporaryPausedScheduleStats(
         db,
         currentMonthRange.start,
         currentMonthRange.end,
-        resolveStatsCutoff(referenceDate, currentMonthRange.end),
+        currentMonthCutoff,
         completedRecordScheduleIds
       );
       const currentMonthRecords = statisticalRecords.filter((record) => {
@@ -584,13 +626,14 @@ export function createStaffingRepository(
       const dailyStart = new Date(`${referenceDate}T00:00:00`);
       const dailyEnd = new Date(dailyStart);
       dailyEnd.setDate(dailyStart.getDate() + 1);
+      const dailyCutoff = resolveStatsCutoff(referenceDate, dailyEnd);
       const dailyPausedPatients =
-        referenceDate === formatDateInputValue() ? buildPausedPatientStats(db, dailyStart, dailyEnd) : [];
+        referenceDate === formatDateInputValue() ? buildPausedPatientStats(db, dailyStart, dailyEnd, dailyCutoff) : [];
       const dailyTemporaryPausedSchedules = buildTemporaryPausedScheduleStats(
         db,
         dailyStart,
         dailyEnd,
-        resolveStatsCutoff(referenceDate, dailyEnd),
+        dailyCutoff,
         completedRecordScheduleIds
       );
 

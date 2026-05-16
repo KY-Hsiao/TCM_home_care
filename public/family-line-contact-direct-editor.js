@@ -40,7 +40,7 @@
       linkedPatientIds: Array.isArray(contact?.linkedPatientIds)
         ? contact.linkedPatientIds.map((id) => String(id || '').trim()).filter(Boolean)
         : [],
-      contactRole: contact?.contactRole === 'admin' ? 'admin' : 'family',
+      contactRole: contact?.contactRole === 'admin' || contact?.contactRole === 'doctor' ? contact.contactRole : 'family',
       note: String(contact?.note || ''),
       source: contact?.source === 'official_friend' ? 'official_friend' : 'webhook',
       updatedAt: String(contact?.updatedAt || new Date().toISOString())
@@ -262,6 +262,7 @@
       '缺LINEuserId',
       'LINE名單',
       '行政人員',
+      '醫師',
       '家屬聯繫',
       '關聯',
       '取消關聯',
@@ -304,6 +305,7 @@
       '批次取消',
       '取消關聯',
       '設為行政人員',
+      '設為醫師',
       '設為家屬',
       '家屬聯繫角色',
       '關聯到指定個案',
@@ -368,7 +370,7 @@
       <div class="line-direct-head">
         <div>
           <h3>簡易 LINE 名單關聯</h3>
-          <p class="line-direct-help">每位 LINE 好友直接選擇所屬患者；勾選「行政人員」後，該名單不作為家屬提醒對象。</p>
+          <p class="line-direct-help">每位 LINE 好友直接選擇所屬患者與類型；設為「行政人員」或「醫師」後，該名單不作為家屬提醒對象。</p>
         </div>
         <button type="button" class="line-direct-refresh">重新整理本區</button>
       </div>
@@ -421,21 +423,28 @@
         });
       });
 
-      const adminLabel = document.createElement('label');
-      const checkbox = document.createElement('input');
-      checkbox.type = 'checkbox';
-      checkbox.checked = contact.contactRole === 'admin';
-      checkbox.addEventListener('change', () => {
+      const roleSelect = document.createElement('select');
+      roleSelect.setAttribute('aria-label', `${contact.displayName} LINE 類型`);
+      [
+        ['family', '家屬聯繫'],
+        ['admin', '行政人員'],
+        ['doctor', '醫師']
+      ].forEach(([value, label]) => {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = label;
+        roleSelect.appendChild(option);
+      });
+      roleSelect.value = contact.contactRole;
+      roleSelect.addEventListener('change', () => {
         updateContact(contact.id, {
-          contactRole: checkbox.checked ? 'admin' : 'family'
+          contactRole: roleSelect.value
         });
       });
-      adminLabel.appendChild(checkbox);
-      adminLabel.appendChild(document.createTextNode('行政人員'));
 
       row.appendChild(nameCell);
       row.appendChild(select);
-      row.appendChild(adminLabel);
+      row.appendChild(roleSelect);
       list.appendChild(row);
     });
     hideOriginalContactRows(contacts);

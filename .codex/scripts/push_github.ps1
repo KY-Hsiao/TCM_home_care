@@ -7,7 +7,7 @@ foreach ($proxyVar in @("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "GIT_HTTP_PROX
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")
 Set-Location $repoRoot
 
-& powershell -ExecutionPolicy Bypass -File ".\tools\publish_github_and_vercel.ps1" -SkipVercel -CommitPendingChanges -WaitForGitHubActions:$false
+& ".\tools\publish_github_and_vercel.ps1" -SkipVercel -CommitPendingChanges -WaitForGitHubActions:$false
 
 if ($LASTEXITCODE -ne 0) {
     throw "Git push failed. Check authentication or remote settings."

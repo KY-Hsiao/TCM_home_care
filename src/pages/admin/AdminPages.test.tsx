@@ -1474,7 +1474,7 @@ describe("AdminPages", () => {
     expect(dailyStats?.textContent).toContain("緊急處置人次1");
   });
 
-  it("AdminDashboardPage 本月暫停會納入固定時段但未排程的暫停個案，並可查名單", () => {
+  it("AdminDashboardPage 本月暫停只納入固定時段已到期且未排程的暫停個案，並可查名單", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-05-16T08:00:00+08:00"));
     const seededDb = createSeedDb();
@@ -1502,7 +1502,7 @@ describe("AdminPages", () => {
 
     const currentMonthStats = screen.getByRole("heading", { name: "本月統計" }).closest("section");
     expect(currentMonthStats).not.toBeNull();
-    expect(currentMonthStats?.textContent).toContain("暫停人次6");
+    expect(currentMonthStats?.textContent).toContain("暫停人次4");
 
     const pausedPanel = screen.getByRole("heading", { name: "本月暫停名單" }).closest("section");
     expect(pausedPanel).not.toBeNull();
@@ -1511,7 +1511,7 @@ describe("AdminPages", () => {
     });
     expect(within(pausedPanel!).getByText("王○珠")).toBeInTheDocument();
     expect(within(pausedPanel!).getByText("蕭坤元醫師 / 星期三上午")).toBeInTheDocument();
-    expect(within(pausedPanel!).getByText("長期暫停 / 本月 4 次")).toBeInTheDocument();
+    expect(within(pausedPanel!).getByText("長期暫停 / 本月 2 次")).toBeInTheDocument();
   });
 
   it("AdminDashboardPage 長期暫停與路線暫停同一天同患者不會重複計算", () => {
@@ -1581,12 +1581,12 @@ describe("AdminPages", () => {
 
     const currentMonthStats = screen.getByRole("heading", { name: "本月統計" }).closest("section");
     expect(currentMonthStats).not.toBeNull();
-    expect(currentMonthStats?.textContent).toContain("暫停人次4");
+    expect(currentMonthStats?.textContent).toContain("暫停人次2");
 
     const pausedPanel = screen.getByRole("heading", { name: "本月暫停名單" }).closest("section");
     expect(pausedPanel).not.toBeNull();
     expect(within(pausedPanel!).getByText("暫停個案").nextElementSibling?.textContent).toBe("1");
-    expect(within(pausedPanel!).getByText("本月未排程暫停").nextElementSibling?.textContent).toBe("3");
+    expect(within(pausedPanel!).getByText("本月未排程暫停").nextElementSibling?.textContent).toBe("1");
     expect(within(pausedPanel!).getByText("臨時/已排程暫停").nextElementSibling?.textContent).toBe("1");
   });
 
@@ -2799,6 +2799,55 @@ describe("AdminPages", () => {
       })
     );
     expect(screen.getByLabelText("行政 LINE LINE 角色")).toHaveValue("admin");
+  });
+
+  it("AdminFamilyLinePage 可將 LINE 好友角色設為醫師", async () => {
+    window.localStorage.setItem(
+      "tcm-family-line-managed-contacts",
+      JSON.stringify([
+        {
+          id: "line-contact-doctor-a",
+          displayName: "醫師 LINE",
+          lineUserId: "Udoctor1234567890abcdef1234567890",
+          linkedPatientIds: [],
+          contactRole: "family",
+          note: "",
+          source: "official_friend",
+          updatedAt: "2026-05-01T00:00:00.000Z"
+        }
+      ])
+    );
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ contact: {} })
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderWithProviders(<AdminFamilyLinePage />);
+
+    fireEvent.click(screen.getByRole("button", { name: "顯示詳細" }));
+    fireEvent.change(screen.getByLabelText("醫師 LINE LINE 角色"), {
+      target: { value: "doctor" }
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole("status")).toHaveTextContent("醫師 LINE 已設為醫師");
+      expect(screen.getByRole("status")).toHaveTextContent("已同步保存");
+    });
+    expect(window.localStorage.getItem("tcm-family-line-managed-contacts")).toContain("\"contactRole\":\"doctor\"");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/admin/family-line/contacts",
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({
+          lineUserId: "Udoctor1234567890abcdef1234567890",
+          linkedPatientIds: [],
+          contactRole: "doctor",
+          note: ""
+        })
+      })
+    );
+    expect(screen.getByLabelText("醫師 LINE LINE 角色")).toHaveValue("doctor");
   });
 
   it("AdminFamilyLinePage 可勾選抵達前提醒與結束後關心並編輯範本後確認送出", async () => {

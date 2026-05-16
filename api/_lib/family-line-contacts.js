@@ -65,7 +65,10 @@ function normalizeLinkedPatientIds(value) {
 }
 
 function normalizeContactRole(value) {
-  return value === "admin" ? "admin" : "family";
+  if (value === "admin" || value === "doctor") {
+    return value;
+  }
+  return "family";
 }
 
 export function mapFamilyLineContactRow(row) {
