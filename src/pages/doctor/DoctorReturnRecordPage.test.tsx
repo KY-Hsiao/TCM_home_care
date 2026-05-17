@@ -25,12 +25,46 @@ const emptyTreatmentFields = {
   treatment_topical_medication_note: ""
 };
 
+function fillMinimumReturnRecordRequiredFields(options?: {
+  skipChiefComplaint?: boolean;
+  skipFourDiagnosis?: boolean;
+  skipTreatment?: boolean;
+}) {
+  if (!options?.skipChiefComplaint) {
+    fireEvent.change(screen.getByLabelText("主訴"), {
+      target: { value: "其他" }
+    });
+    fireEvent.change(screen.getByLabelText("主訴其他內容"), {
+      target: { value: "測試主訴" }
+    });
+  }
+
+  if (!options?.skipFourDiagnosis) {
+    const inspectionFieldset = screen.getByText("望").closest("fieldset");
+    if (!inspectionFieldset) {
+      throw new Error("找不到望診區塊");
+    }
+    const inspectionCheckbox = within(inspectionFieldset).getByLabelText("少神") as HTMLInputElement;
+    if (!inspectionCheckbox.checked) {
+      fireEvent.click(inspectionCheckbox);
+    }
+  }
+
+  if (!options?.skipTreatment) {
+    const treatmentCheckbox = screen.getByRole("checkbox", { name: "中藥" }) as HTMLInputElement;
+    if (!treatmentCheckbox.checked) {
+      fireEvent.click(treatmentCheckbox);
+    }
+  }
+}
+
 describe("DoctorReturnRecordPage", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
     window.localStorage.clear();
     vi.spyOn(window, "alert").mockImplementation(() => undefined);
+    vi.stubGlobal("fetch", vi.fn(() => new Promise(() => undefined)));
   });
 
   it("直接進入回院病歷時會用頁內嵌視窗操作，不會關閉瀏覽器視窗", () => {
@@ -90,6 +124,7 @@ describe("DoctorReturnRecordPage", () => {
   it("建立回院病歷時會儲存勾選處置與各項文字內容", async () => {
     renderWithProviders(<DoctorReturnRecordPage />, "/doctor/return-records?patientId=pat-001");
 
+    fillMinimumReturnRecordRequiredFields({ skipTreatment: true });
     fireEvent.click(screen.getByRole("checkbox", { name: "中藥" }));
     fireEvent.change(screen.getByLabelText("中藥處置內容"), {
       target: { value: "補陽還五湯 7 日份" }
@@ -130,6 +165,33 @@ describe("DoctorReturnRecordPage", () => {
           treatment_provided: expect.stringContaining("處置：中藥：補陽還五湯 7 日份")
         })
       );
+    });
+  });
+
+  it("建立回院病歷前會一次提示缺漏與異常欄位", async () => {
+    const seeded = createSeedDb();
+    seeded.visit_records = [];
+    window.localStorage.setItem("tcm-home-care-mvp-db", JSON.stringify(seeded));
+    renderWithProviders(<DoctorReturnRecordPage />, "/doctor/return-records?patientId=pat-001");
+
+    fireEvent.change(screen.getByLabelText("開始治療時間"), {
+      target: { value: "2026-05-17T09:00" }
+    });
+    fireEvent.change(screen.getByLabelText("結束治療時間"), {
+      target: { value: "2026-05-17T14:30" }
+    });
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "加入通知中心，讓醫師與行政後續追蹤" })
+    );
+    fireEvent.click(screen.getByRole("button", { name: "建立回院病歷" }));
+
+    await waitFor(() => {
+      expect(window.alert).toHaveBeenCalledWith(expect.stringContaining("建立回院病歷前請先確認："));
+      expect(window.alert).toHaveBeenCalledWith(expect.stringContaining("主訴未填"));
+      expect(window.alert).toHaveBeenCalledWith(expect.stringContaining("四診全空"));
+      expect(window.alert).toHaveBeenCalledWith(expect.stringContaining("治療時間異常"));
+      expect(window.alert).toHaveBeenCalledWith(expect.stringContaining("未選療法"));
+      expect(window.alert).toHaveBeenCalledWith(expect.stringContaining("提醒事項有勾但內容空白"));
     });
   });
 
@@ -612,6 +674,7 @@ describe("DoctorReturnRecordPage", () => {
       expect(screen.getByDisplayValue(/結束治療時間：0950/)).toBeInTheDocument();
     });
 
+    fillMinimumReturnRecordRequiredFields();
     fireEvent.click(screen.getByRole("button", { name: "建立回院病歷" }));
 
     await waitFor(() => {
@@ -620,7 +683,7 @@ describe("DoctorReturnRecordPage", () => {
         .reverse()
         .find(
           (record: { treatment_provided?: string; visit_schedule_id?: string }) =>
-            record.treatment_provided === "已由醫師回院病歷頁建立病歷。" &&
+            record.treatment_provided?.includes("已由醫師回院病歷頁建立病歷。") &&
             typeof record.visit_schedule_id === "string"
         );
 
@@ -1015,6 +1078,7 @@ describe("DoctorReturnRecordPage", () => {
     fireEvent.change(screen.getByLabelText("主訴其他內容"), {
       target: { value: "治療後出現明顯頭暈與虛弱" }
     });
+    fillMinimumReturnRecordRequiredFields({ skipChiefComplaint: true });
     fireEvent.click(screen.getByRole("button", { name: "建立回院病歷" }));
 
     return waitFor(() => {
@@ -1053,6 +1117,7 @@ describe("DoctorReturnRecordPage", () => {
     fireEvent.change(screen.getByLabelText("提醒內容"), {
       target: { value: "請於下次回診前追蹤睡眠與吞嚥變化" }
     });
+    fillMinimumReturnRecordRequiredFields();
     fireEvent.click(screen.getByRole("button", { name: "建立回院病歷" }));
 
     return waitFor(() => {

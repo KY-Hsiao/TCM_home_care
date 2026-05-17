@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useAppContext } from "../../app/use-app-context";
 import type { SavedRoutePlan } from "../../domain/models";
+import type { VisitExceptionReason } from "../../domain/repository";
 import type { RouteMapInput } from "../../services/types";
 import { VisitAutomationPanel } from "../../modules/maps/VisitAutomationPanel";
 import { RouteMapPreviewCard } from "../../modules/maps/RouteMapPreviewCard";
@@ -28,6 +29,48 @@ type EmbeddedNavigationWindow = {
 };
 
 type DoctorNavigationUrls = Pick<EmbeddedNavigationWindow, "embedUrl" | "externalUrl">;
+
+const VISIT_EXCEPTION_ACTIONS: Array<{
+  reason: VisitExceptionReason;
+  label: string;
+  tone: "default" | "urgent";
+}> = [
+  { reason: "family_absent", label: "家屬不在", tone: "default" },
+  { reason: "patient_status_abnormal", label: "個案狀態異常", tone: "default" },
+  { reason: "address_error", label: "地址錯誤", tone: "default" },
+  { reason: "urgent_report", label: "急件回報", tone: "urgent" }
+];
+
+function VisitExceptionActionGroup({
+  onReport,
+  disabled = false
+}: {
+  onReport: (reason: VisitExceptionReason) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="rounded-[1rem] border border-rose-100 bg-rose-50/80 p-3 lg:rounded-[1.25rem]">
+      <p className="text-xs font-semibold text-rose-700">訪視異常處理</p>
+      <div className="mt-2 grid gap-2 sm:grid-cols-2">
+        {VISIT_EXCEPTION_ACTIONS.map((action) => (
+          <button
+            key={action.reason}
+            type="button"
+            disabled={disabled}
+            onClick={() => onReport(action.reason)}
+            className={`inline-flex min-h-[40px] items-center justify-center rounded-full px-3 py-2 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
+              action.tone === "urgent"
+                ? "bg-rose-600 text-white hover:bg-rose-700"
+                : "border border-rose-200 bg-white text-rose-700 hover:border-rose-300 hover:bg-rose-100"
+            }`}
+          >
+            {action.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function EmbeddedNavigationDialog({
   windowState,
@@ -797,6 +840,18 @@ function DoctorRouteSelector({ embedded = false }: { embedded?: boolean }) {
     setPatientDetailScheduleId(null);
     setEmbeddedNavigationWindow(null);
   };
+  const handlePatientDetailReportException = (reason: VisitExceptionReason) => {
+    if (!patientDetail) {
+      return;
+    }
+    services.visitAutomation.resetTracking(patientDetail.schedule.id);
+    repositories.visitRepository.reportVisitException({
+      visitScheduleId: patientDetail.schedule.id,
+      reason
+    });
+    setPatientDetailScheduleId(null);
+    setEmbeddedNavigationWindow(null);
+  };
 
   const routeListContent = (
     <div className="space-y-4">
@@ -1052,6 +1107,11 @@ function DoctorRouteSelector({ embedded = false }: { embedded?: boolean }) {
                       目前患者暫停
                     </button>
                   ) : null}
+                  {patientDetailUnlocked && !patientDetailVisitFinished ? (
+                    <div className="sm:col-span-2">
+                      <VisitExceptionActionGroup onReport={handlePatientDetailReportException} />
+                    </div>
+                  ) : null}
                   {!patientDetailVisitFinished &&
                   patientDetail.record?.departure_time &&
                   !patientDetail.record?.arrival_time ? (
@@ -1238,6 +1298,14 @@ export function DoctorLocationPage() {
       "醫師導航途中標記目前患者暫停",
       "醫師端導航途中臨時暫停本次訪視"
     );
+    setEmbeddedNavigationWindow(null);
+  };
+  const reportRouteException = (scheduleId: string, reason: VisitExceptionReason) => {
+    services.visitAutomation.resetTracking(scheduleId);
+    repositories.visitRepository.reportVisitException({
+      visitScheduleId: scheduleId,
+      reason
+    });
     setEmbeddedNavigationWindow(null);
   };
   const currentMapUrl = currentRouteContext
@@ -1464,6 +1532,9 @@ export function DoctorLocationPage() {
             >
               目前患者暫停
             </button>
+            <VisitExceptionActionGroup
+              onReport={(reason) => reportRouteException(navigatingContext.schedule.id, reason)}
+            />
           </div>
         </section>
       ) : null}
@@ -1486,6 +1557,11 @@ export function DoctorLocationPage() {
           >
             {nextRouteContext ? "完成治療，前往下一家" : "完成治療，返回醫院"}
           </button>
+          <div className="mt-3 lg:mt-5">
+            <VisitExceptionActionGroup
+              onReport={(reason) => reportRouteException(treatmentContext.schedule.id, reason)}
+            />
+          </div>
         </section>
       ) : null}
 
@@ -1505,6 +1581,11 @@ export function DoctorLocationPage() {
           >
             開始出發
           </button>
+          <div className="mt-3 lg:mt-5">
+            <VisitExceptionActionGroup
+              onReport={(reason) => reportRouteException(readyContext.schedule.id, reason)}
+            />
+          </div>
         </section>
       ) : null}
 

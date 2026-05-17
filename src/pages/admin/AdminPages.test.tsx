@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import type { ReactNode } from "react";
 import * as XLSX from "xlsx";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { SESSION_STORAGE_KEY } from "../../app/auth-storage";
 import { AppProviders } from "../../app/providers";
 import { MOCK_DB_STORAGE_KEY } from "../../data/mock/db";
@@ -15,6 +15,7 @@ import {
   AdminDoctorTrackingPage,
   AdminFamilyLinePage,
   AdminLeaveRequestsPage,
+  AdminPatientDetailPage,
   AdminPatientsPage,
   AdminRemindersPage,
   AdminSchedulesPage,
@@ -49,11 +50,13 @@ async function readBlobAsBytes(blob: Blob) {
 }
 
 function selectScheduleFilters(routeDate = "2026-05-06") {
-  fireEvent.change(screen.getByRole("combobox", { name: "篩選醫師" }), {
-    target: { value: "doc-001" }
-  });
-  fireEvent.change(screen.getByLabelText("路線日期"), {
-    target: { value: routeDate }
+  act(() => {
+    fireEvent.change(screen.getByRole("combobox", { name: "篩選醫師" }), {
+      target: { value: "doc-001" }
+    });
+    fireEvent.change(screen.getByLabelText("路線日期"), {
+      target: { value: routeDate }
+    });
   });
 }
 
@@ -79,9 +82,25 @@ function createXlsxFile(sheets: Array<{ name: string; rows: string[][] }>, filen
   });
 }
 
+function openRouteToolsDialog() {
+  fireEvent.click(screen.getByRole("button", { name: "路線工具" }));
+  return screen.getByRole("dialog", { name: "路線工具" });
+}
+
 function openRouteEndpointsDialog() {
-  fireEvent.click(screen.getByRole("button", { name: "設定起終點" }));
+  const routeToolsDialog = openRouteToolsDialog();
+  fireEvent.click(within(routeToolsDialog).getByRole("button", { name: "設定起終點" }));
   return screen.getByRole("dialog", { name: "起終點設定視窗" });
+}
+
+function openPatientImportDialog() {
+  fireEvent.click(screen.getByRole("button", { name: "匯入工具" }));
+  return screen.getByRole("dialog", { name: "CSV / Excel 匯入" });
+}
+
+function openPatientBatchActionsDialog() {
+  fireEvent.click(screen.getByRole("button", { name: "批次操作" }));
+  return screen.getByRole("dialog", { name: /已勾選 \d+ 位個案/ });
 }
 
 function expectRouteStopLabel(label: string) {
@@ -112,9 +131,14 @@ describe("AdminPages", () => {
     vi.unstubAllGlobals();
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue({
-        ok: false,
-        json: async () => ({ status: "ZERO_RESULTS", results: [] })
+      vi.fn((url) => {
+        if (String(url).includes("/api/deployment/sync?resource=calendar-events")) {
+          return new Promise(() => undefined);
+        }
+        return Promise.resolve({
+          ok: false,
+          json: async () => ({ status: "ZERO_RESULTS", results: [] })
+        });
       })
     );
     vi.useRealTimers();
@@ -124,7 +148,8 @@ describe("AdminPages", () => {
     renderWithProviders(<AdminSchedulesPage />);
 
     expect(screen.getByText("起點：旗山醫院｜終點：旗山醫院")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /全部排程清單/ }));
+    const routeToolsDialog = openRouteToolsDialog();
+    fireEvent.click(within(routeToolsDialog).getByRole("button", { name: "全部排程清單" }));
     const allSchedulesDialog = screen.getByRole("dialog", { name: "全部排程清單視窗" });
     expect(within(allSchedulesDialog).getByText("排程 vs-002")).toBeInTheDocument();
     expect(within(allSchedulesDialog).getAllByText("蕭坤元醫師").length).toBeGreaterThan(0);
@@ -143,7 +168,24 @@ describe("AdminPages", () => {
     expect(within(slotPatientDialog).getAllByRole("button", { name: "結案" })).toHaveLength(8);
   });
 
-  it("AdminSchedulesPage 選醫師後只顯示該醫師可用日期，並在選日期後帶入星期與時段", () => {
+  it("AdminSchedulesPage 今日行程風險提示預設收合，可手動展開", () => {
+    renderWithProviders(<AdminSchedulesPage />);
+
+    const riskPanel = screen.getByRole("heading", { name: "今日行程風險提示" }).closest("section");
+    expect(riskPanel).not.toBeNull();
+    const expandButton = within(riskPanel!).getByRole("button", { name: "展開" });
+    const detailId = expandButton.getAttribute("aria-controls");
+    expect(expandButton).toHaveAttribute("aria-expanded", "false");
+    expect(detailId).toBeTruthy();
+    expect(document.getElementById(detailId!)).toHaveClass("hidden");
+
+    fireEvent.click(expandButton);
+
+    expect(within(riskPanel!).getByRole("button", { name: "收合" })).toHaveAttribute("aria-expanded", "true");
+    expect(document.getElementById(detailId!)).not.toHaveClass("hidden");
+  });
+
+  it("AdminSchedulesPage 選醫師後只顯示該醫師可用日期，並在選日期後帶入星期與時段", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-30T09:00:00+08:00"));
 
@@ -163,6 +205,7 @@ describe("AdminPages", () => {
     expect(routeDateOptions.some((option) => option?.includes("2026/05/06"))).toBe(true);
     expect(routeDateOptions.some((option) => option?.includes("2026/05/07"))).toBe(true);
     expect(routeDateOptions.some((option) => option?.includes("2026/06/04"))).toBe(false);
+    await act(async () => undefined);
     expect(routeDateSelect).toHaveValue("2026-04-30");
     expect(screen.getByRole("combobox", { name: "篩選星期" })).toHaveValue("星期四");
     expect(screen.getByRole("combobox", { name: "篩選時段" })).toHaveValue("下午");
@@ -473,7 +516,7 @@ describe("AdminPages", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "同意排入" }));
 
-    expect(screen.getByRole("status")).toHaveTextContent("已沿用 7 天前同時段路線");
+    expect(screen.getByRole("status")).toHaveTextContent("已沿用 7 天前路線");
     expect(screen.getByLabelText("路線日期")).toHaveValue("2026-04-29");
     expectRouteStopLabel("第 1 站 王○珠");
 
@@ -580,16 +623,18 @@ describe("AdminPages", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     await waitFor(() => expect(screen.getByText(/已由 Google Map 補上/)).toBeInTheDocument());
     expect(screen.getByRole("img", { name: /頁內路線圖預覽/ })).toBeInTheDocument();
-    const storedDb = JSON.parse(window.localStorage.getItem(MOCK_DB_STORAGE_KEY) ?? "{}");
-    const updatedPatient = storedDb.patients.find((patient: { id: string }) => patient.id === "pat-001");
-    const updatedSchedule = storedDb.visit_schedules.find(
-      (schedule: { patient_id: string; status: string }) =>
-        schedule.patient_id === "pat-001" && !["completed", "cancelled"].includes(schedule.status)
-    );
-    expect(updatedPatient.home_latitude).toBe(22.88612);
-    expect(updatedPatient.home_longitude).toBe(120.48234);
-    expect(updatedSchedule.home_latitude_snapshot).toBe(22.88612);
-    expect(updatedSchedule.home_longitude_snapshot).toBe(120.48234);
+    await waitFor(() => {
+      const storedDb = JSON.parse(window.localStorage.getItem(MOCK_DB_STORAGE_KEY) ?? "{}");
+      const updatedPatient = storedDb.patients.find((patient: { id: string }) => patient.id === "pat-001");
+      const updatedSchedule = storedDb.visit_schedules.find(
+        (schedule: { patient_id: string; status: string }) =>
+          schedule.patient_id === "pat-001" && !["completed", "cancelled"].includes(schedule.status)
+      );
+      expect(updatedPatient.home_latitude).toBe(22.88612);
+      expect(updatedPatient.home_longitude).toBe(120.48234);
+      expect(updatedSchedule.home_latitude_snapshot).toBe(22.88612);
+      expect(updatedSchedule.home_longitude_snapshot).toBe(120.48234);
+    });
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/maps/geocode",
       expect.objectContaining({
@@ -694,9 +739,7 @@ describe("AdminPages", () => {
     fireEvent.click(screen.getByRole("button", { name: "自動排序" }));
 
     await waitFor(() =>
-      expect(screen.getByRole("status")).toHaveTextContent(
-        "選出預估交通時間最短的自動排序。"
-      )
+      expect(screen.getByRole("status")).toHaveTextContent("選出較短路線。")
     );
     expect(screen.getAllByText(/上一點到此站：約 \d+ 分鐘/).length).toBeGreaterThan(0);
     expect(routeLink.getAttribute("href")).not.toBe(initialHref);
@@ -732,7 +775,8 @@ describe("AdminPages", () => {
     expect(screen.getByRole("status")).toHaveTextContent("已儲存路線");
     expect(screen.getByRole("combobox", { name: "已儲存的路線" })).toHaveValue(expectedRouteId);
 
-    fireEvent.click(screen.getByRole("button", { name: "清除" }));
+    const routeToolsDialog = openRouteToolsDialog();
+    fireEvent.click(within(routeToolsDialog).getByRole("button", { name: "清除" }));
 
     expect(screen.getByRole("combobox", { name: "篩選醫師" })).toHaveValue("");
     expect(screen.getByRole("combobox", { name: "篩選星期" })).toHaveValue("");
@@ -760,7 +804,8 @@ describe("AdminPages", () => {
     renderWithProviders(<AdminSchedulesPage />);
 
     selectScheduleFilters();
-    fireEvent.click(screen.getByRole("button", { name: "清除" }));
+    const routeToolsDialog = openRouteToolsDialog();
+    fireEvent.click(within(routeToolsDialog).getByRole("button", { name: "清除" }));
 
     expect(screen.getByRole("status")).toHaveTextContent("已清除排程管理頁面內容");
     expect(screen.getByRole("combobox", { name: "篩選醫師" })).toHaveValue("");
@@ -787,7 +832,7 @@ describe("AdminPages", () => {
     fireEvent.click(screen.getByRole("button", { name: "實行路線" }));
 
     await waitFor(() =>
-      expect(screen.getByRole("status")).toHaveTextContent("醫師端會以這條路線作為本次執行清單")
+      expect(screen.getByRole("status")).toHaveTextContent("已實行")
     );
 
     const storedDb = JSON.parse(window.localStorage.getItem(MOCK_DB_STORAGE_KEY) ?? "{}");
@@ -871,10 +916,12 @@ describe("AdminPages", () => {
     renderWithProviders(<AdminSchedulesPage />);
 
     expect(screen.getByRole("combobox", { name: "已儲存的路線" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "套用前次路線" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "路線工具" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "標示已完成" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "刪除這條路線" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "批次刪除路線" })).toBeInTheDocument();
+    const routeToolsDialog = openRouteToolsDialog();
+    expect(within(routeToolsDialog).getByRole("button", { name: "套用前次路線" })).toBeInTheDocument();
   });
 
   it("AdminSchedulesPage 可將已儲存路線標示為已完成", () => {
@@ -916,10 +963,11 @@ describe("AdminPages", () => {
 
     selectScheduleFilters();
     const selectedRouteDate = (screen.getByLabelText("路線日期") as HTMLSelectElement).value;
-    fireEvent.click(screen.getByRole("button", { name: "套用前次路線" }));
+    const routeToolsDialog = openRouteToolsDialog();
+    fireEvent.click(within(routeToolsDialog).getByRole("button", { name: "套用前次路線" }));
 
     expect(screen.getByRole("status")).toHaveTextContent("已套用前次路線");
-    expect(screen.getByRole("status")).toHaveTextContent("本次日期與時段維持目前設定");
+    expect(screen.getByRole("status")).toHaveTextContent("05/14上午路線");
     fireEvent.click(screen.getByRole("button", { name: "儲存路線" }));
 
     const savedRouteSelect = screen.getByRole("combobox", { name: "已儲存的路線" }) as HTMLSelectElement;
@@ -1046,7 +1094,8 @@ describe("AdminPages", () => {
     const patientView = renderWithProviders(<AdminPatientsPage />);
 
     fireEvent.click(screen.getByLabelText("王○珠 勾選"));
-    fireEvent.click(screen.getByRole("button", { name: "結案" }));
+    const batchActionsDialog = openPatientBatchActionsDialog();
+    fireEvent.click(within(batchActionsDialog).getByRole("button", { name: "結案" }));
     expect(screen.getByRole("status")).toHaveTextContent("已結案 1 位個案");
 
     patientView.unmount();
@@ -1197,7 +1246,8 @@ describe("AdminPages", () => {
     renderWithProviders(<AdminPatientsPage />);
 
     fireEvent.click(screen.getByLabelText("王○珠 勾選"));
-    fireEvent.click(screen.getByRole("button", { name: "結案" }));
+    const batchActionsDialog = openPatientBatchActionsDialog();
+    fireEvent.click(within(batchActionsDialog).getByRole("button", { name: "結案" }));
 
     const storedDb = JSON.parse(window.localStorage.getItem(MOCK_DB_STORAGE_KEY) ?? "{}");
     const closedSchedule = storedDb.visit_schedules.find(
@@ -1253,14 +1303,22 @@ describe("AdminPages", () => {
     expect(screen.queryByText("目前距離")).not.toBeInTheDocument();
   });
 
+  it("AdminDashboardPage 待重排案件會先顯示排程變更影響預覽", () => {
+    renderWithProviders(<AdminDashboardPage />);
+
+    expect(screen.getAllByText("排程變更影響預覽").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("受影響個案").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("LINE 通知草稿").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("原醫師 / 新醫師").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("路線順序變化").length).toBeGreaterThan(0);
+  });
+
   it("AdminDashboardPage 的總覽數字會連接實際排程與異常通知資料", () => {
-    vi.useFakeTimers();
     const seededDb = createSeedDb();
     const dashboardDate = seededDb.visit_schedules.find((schedule) => schedule.id === "vs-002")?.scheduled_start_at.slice(0, 10);
     if (!dashboardDate) {
       throw new Error("缺少 dashboard 測試日期。");
     }
-    vi.setSystemTime(new Date(`${dashboardDate}T08:00:00+08:00`));
     const completedRoutePlans = seededDb.saved_route_plans.map((routePlan) =>
       routePlan.route_date === dashboardDate ? { ...routePlan, execution_status: "completed" as const } : routePlan
     );
@@ -1303,14 +1361,32 @@ describe("AdminPages", () => {
     );
 
     renderWithProviders(<AdminDashboardPage />);
+    fireEvent.change(screen.getByLabelText("今日統計日期"), {
+      target: { value: dashboardDate }
+    });
+
+    const normalizedDashboardDb = JSON.parse(window.localStorage.getItem(MOCK_DB_STORAGE_KEY) ?? "{}");
+    const dashboardRecords = normalizedDashboardDb.route_completion_records ?? [];
+    const dailyExpectedExecutedVisits = dashboardRecords
+      .filter((record: { route_date: string }) => record.route_date === dashboardDate)
+      .reduce(
+        (total: number, record: { executed_visit_count: number }) => total + record.executed_visit_count,
+        0
+      );
+    const currentMonthExpectedExecutedVisits = dashboardRecords
+      .filter((record: { route_date: string }) => record.route_date.startsWith(dashboardDate.slice(0, 7)))
+      .reduce(
+        (total: number, record: { executed_visit_count: number }) => total + record.executed_visit_count,
+        0
+      );
 
     const dailyStats = screen.getByRole("heading", { name: "今日統計" }).closest("section");
     expect(dailyStats).not.toBeNull();
-    expect(within(dailyStats!).getByText("6")).toBeInTheDocument();
+    expect(within(dailyStats!).getByText(String(dailyExpectedExecutedVisits))).toBeInTheDocument();
 
     const currentMonthStats = screen.getByRole("heading", { name: "本月統計" }).closest("section");
     expect(currentMonthStats).not.toBeNull();
-    expect(within(currentMonthStats!).getByText("37")).toBeInTheDocument();
+    expect(within(currentMonthStats!).getByText(String(currentMonthExpectedExecutedVisits))).toBeInTheDocument();
 
     expect(screen.getAllByText("緊急處置人次").length).toBeGreaterThan(0);
     expect(screen.getByRole("link", { name: new RegExp(maskPatientName(dashboardPatient.name)) })).toBeInTheDocument();
@@ -3031,6 +3107,87 @@ describe("AdminPages", () => {
     });
   });
 
+  it("AdminFamilyLinePage 顯示最近發送失敗原因並可重新發送", async () => {
+    window.localStorage.setItem(
+      "tcm-family-line-managed-contacts",
+      JSON.stringify([
+        {
+          id: "line-contact-a",
+          displayName: "王先生 LINE",
+          lineUserId: "U1234567890abcdef1234567890abcdef",
+          linkedPatientIds: ["pat-001"],
+          note: "",
+          source: "webhook",
+          updatedAt: "2026-05-01T00:00:00.000Z"
+        }
+      ])
+    );
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        json: async () => ({
+          error: "LINE 部分或全部發送失敗：成功 0 位，失敗 1 位。",
+          results: [
+            {
+              caregiverId: "line-contact:line-contact-a",
+              patientId: "pat-001",
+              doctorId: "doc-001",
+              lineUserId: "U1234567890abcdef1234567890abcdef",
+              ok: false,
+              status: 401,
+              skipped: false,
+              error: "{\"message\":\"Authentication failed\"}"
+            }
+          ]
+        })
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          sentCount: 1,
+          attemptedCount: 1,
+          results: [
+            {
+              caregiverId: "line-contact:line-contact-a",
+              patientId: "pat-001",
+              doctorId: "doc-001",
+              lineUserId: "U1234567890abcdef1234567890abcdef",
+              ok: true,
+              status: 200,
+              skipped: false,
+              error: null
+            }
+          ]
+        })
+      });
+    vi.stubGlobal("fetch", fetchMock);
+    renderWithProviders(<AdminFamilyLinePage />);
+
+    fireEvent.click(screen.getByRole("button", { name: /單獨發訊息/ }));
+    fireEvent.change(screen.getByLabelText("單獨訊息內容"), {
+      target: { value: "請協助留意今日用藥。" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "送出單獨 LINE 訊息" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("失敗原因：Authentication failed")).toBeInTheDocument();
+    });
+    expect(screen.getByText("失敗")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "重新發送" }));
+    await waitFor(() => {
+      expect(screen.getByRole("status")).toHaveTextContent("已重新發送 LINE 訊息給 王先生 LINE");
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual(
+      expect.objectContaining({
+        subject: "LINE 單獨訊息",
+        content: "請協助留意今日用藥。"
+      })
+    );
+  });
+
   it("AdminFamilyLinePage 群發會依關聯個案對應到關聯醫師", async () => {
     const customDb = createSeedDb();
     customDb.doctors.push({
@@ -3350,7 +3507,9 @@ describe("AdminPages", () => {
     expect(screen.getByRole("heading", { name: "待處理請假" })).toBeInTheDocument();
     expect(screen.getByText("院內會議")).toBeInTheDocument();
     expect(screen.getByText("請協助檢查上午個案。")).toBeInTheDocument();
-    expect(screen.getByText("1 筆")).toBeInTheDocument();
+    const pendingLeaveStat = screen.getByText("等待行政核准或駁回的請假申請。").closest("div");
+    expect(pendingLeaveStat).not.toBeNull();
+    expect(within(pendingLeaveStat!).getByText("1")).toBeInTheDocument();
     expect(screen.queryByText("王麗珠")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "核准請假" }));
@@ -3713,10 +3872,86 @@ describe("AdminPages", () => {
     expect(screen.getByText("王○珠")).toBeInTheDocument();
     expect(screen.queryByText("病歷號")).not.toBeInTheDocument();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "暫停" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "恢復" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "結案" })).toBeInTheDocument();
+    const batchActionsDialog = openPatientBatchActionsDialog();
+    expect(within(batchActionsDialog).getByRole("button", { name: "暫停" })).toBeInTheDocument();
+    expect(within(batchActionsDialog).getByRole("button", { name: "恢復" })).toBeInTheDocument();
+    expect(within(batchActionsDialog).getByRole("button", { name: "結案" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "全部個案暫停" })).not.toBeInTheDocument();
+  });
+
+  it("AdminPatientDetailPage 會彙整照護時間軸作為個案工作台", () => {
+    const customDb = createSeedDb();
+    customDb.reminders.push({
+      id: "reminder-patient-timeline-001",
+      role: "admin",
+      title: "王○珠用藥提醒",
+      detail: "訪後確認止痛藥 PRN 使用頻率。",
+      due_at: "2026-05-06T17:00:00+08:00",
+      related_visit_schedule_id: "vs-001",
+      status: "pending",
+      created_at: "2026-05-06T08:00:00+08:00",
+      updated_at: "2026-05-06T08:00:00+08:00"
+    });
+    customDb.notification_tasks.push({
+      id: "line-patient-timeline-001",
+      template_id: "tpl-line",
+      patient_id: "pat-001",
+      caregiver_id: "cg-001",
+      visit_schedule_id: "vs-001",
+      status: "sent",
+      channel: "line",
+      scheduled_send_at: "2026-05-06T16:00:00+08:00",
+      sent_at: "2026-05-06T16:02:00+08:00",
+      recipient_name: "王先生 LINE",
+      recipient_role: "caregiver",
+      recipient_target: "U1234567890abcdef1234567890abcdef",
+      trigger_type: "訪後關心",
+      preview_payload: { message: "今日訪視完成，請留意睡眠與疼痛。" },
+      reply_excerpt: null,
+      reply_code: null,
+      failure_reason: null,
+      linked_tracking_session_id: null,
+      created_at: "2026-05-06T16:00:00+08:00",
+      updated_at: "2026-05-06T16:02:00+08:00"
+    });
+    customDb.notification_center_items.push({
+      id: "exception-patient-timeline-001",
+      role: "admin",
+      owner_user_id: null,
+      source_type: "patient_exception",
+      title: "訪視異常通報｜需急件回報",
+      content: "醫師回報個案疼痛突然加劇，請行政協助聯繫家屬。",
+      linked_patient_id: "pat-001",
+      linked_visit_schedule_id: "vs-001",
+      linked_doctor_id: "doc-001",
+      linked_leave_request_id: null,
+      status: "pending",
+      is_unread: true,
+      reply_text: null,
+      reply_updated_at: null,
+      reply_updated_by_role: null,
+      created_at: "2026-05-06T15:30:00+08:00",
+      updated_at: "2026-05-06T15:30:00+08:00"
+    });
+    window.localStorage.setItem(MOCK_DB_STORAGE_KEY, JSON.stringify(customDb));
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/admin/patients/:id" element={<AdminPatientDetailPage />} />
+      </Routes>,
+      ["/admin/patients/pat-001"]
+    );
+
+    expect(screen.getByText("照護時間軸")).toBeInTheDocument();
+    expect(screen.getAllByText("歷次訪視").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("病歷摘要").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("家屬聯繫").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("提醒").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("異常").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("LINE 通知").length).toBeGreaterThan(0);
+    expect(screen.getByText("訪視異常通報｜需急件回報")).toBeInTheDocument();
+    expect(screen.getByText("王○珠用藥提醒")).toBeInTheDocument();
+    expect(screen.getByText(/今日訪視完成，請留意睡眠與疼痛/)).toBeInTheDocument();
   });
 
   it("AdminPatientsPage 可用 CSV 匯入個案", async () => {
@@ -3731,7 +3966,8 @@ describe("AdminPages", () => {
       { type: "text/csv" }
     );
 
-    fireEvent.change(screen.getByLabelText("CSV / Excel 匯入"), {
+    const importDialog = openPatientImportDialog();
+    fireEvent.change(within(importDialog).getByLabelText("CSV / Excel 匯入"), {
       target: { files: [csvFile] }
     });
 
@@ -3768,7 +4004,8 @@ describe("AdminPages", () => {
       { type: "text/csv" }
     );
 
-    fireEvent.change(screen.getByLabelText("CSV / Excel 匯入"), {
+    const importDialog = openPatientImportDialog();
+    fireEvent.change(within(importDialog).getByLabelText("CSV / Excel 匯入"), {
       target: { files: [csvFile] }
     });
 
@@ -3795,7 +4032,8 @@ describe("AdminPages", () => {
       { type: "text/csv" }
     );
 
-    fireEvent.change(screen.getByLabelText("CSV / Excel 匯入"), {
+    const importDialog = openPatientImportDialog();
+    fireEvent.change(within(importDialog).getByLabelText("CSV / Excel 匯入"), {
       target: { files: [csvFile] }
     });
 
@@ -3866,7 +4104,8 @@ describe("AdminPages", () => {
       }
     ]);
 
-    fireEvent.change(screen.getByLabelText("CSV / Excel 匯入"), {
+    const importDialog = openPatientImportDialog();
+    fireEvent.change(within(importDialog).getByLabelText("CSV / Excel 匯入"), {
       target: { files: [xlsxFile] }
     });
 
@@ -3913,7 +4152,8 @@ describe("AdminPages", () => {
     }) as typeof document.createElement);
     vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
 
-    fireEvent.click(screen.getByRole("button", { name: "下載 CSV 範本" }));
+    const importDialog = openPatientImportDialog();
+    fireEvent.click(within(importDialog).getByRole("button", { name: "下載 CSV 範本" }));
 
     if (!exportedBlobRef.current) {
       throw new Error("CSV 範本 blob 未建立");
@@ -3996,7 +4236,8 @@ describe("AdminPages", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "取消" }));
 
     fireEvent.click(screen.getByLabelText("王○珠 勾選"));
-    fireEvent.click(screen.getByRole("button", { name: "恢復" }));
+    const batchActionsDialog = openPatientBatchActionsDialog();
+    fireEvent.click(within(batchActionsDialog).getByRole("button", { name: "恢復" }));
 
     expect(screen.getByRole("status")).toHaveTextContent("已恢復 1 位個案");
 
@@ -4010,7 +4251,8 @@ describe("AdminPages", () => {
     renderWithProviders(<AdminPatientsPage />);
 
     fireEvent.click(screen.getByLabelText("王○珠 勾選"));
-    fireEvent.click(screen.getByRole("button", { name: "結案" }));
+    const batchActionsDialog = openPatientBatchActionsDialog();
+    fireEvent.click(within(batchActionsDialog).getByRole("button", { name: "結案" }));
 
     expect(screen.getByRole("status")).toHaveTextContent("已結案 1 位個案");
 
@@ -4242,7 +4484,8 @@ describe("AdminPages", () => {
 
     fireEvent.click(screen.getByLabelText("何○惜 勾選"));
     fireEvent.click(screen.getByLabelText("彭○傑 勾選"));
-    fireEvent.click(screen.getByRole("button", { name: "批次刪除" }));
+    const batchActionsDialog = openPatientBatchActionsDialog();
+    fireEvent.click(within(batchActionsDialog).getByRole("button", { name: "批次刪除" }));
 
     expect(screen.getByRole("status")).toHaveTextContent("批次刪除完成：已刪除 2 位個案");
     expect(screen.getByText("目前已勾選 0 位個案")).toBeInTheDocument();
@@ -4463,9 +4706,7 @@ describe("AdminPages", () => {
 
     const dialog = screen.getByRole("dialog");
     expect(within(dialog).queryByLabelText("LINE 搜尋關鍵字")).not.toBeInTheDocument();
-    expect(
-      within(dialog).getByText("醫師資料只維護姓名、電話與可服務時段。醫師使用手機網頁接收站內提示並回傳即時位置，行政端可同步查看路線與進度。")
-    ).toBeInTheDocument();
+    expect(within(dialog).getByText("醫師資料維護姓名、電話與服務時段。")).toBeInTheDocument();
   });
 
   it("AdminStaffPage 醫師角色視窗不再顯示 Google 帳號欄位，仍可直接儲存", () => {
@@ -4475,9 +4716,7 @@ describe("AdminPages", () => {
     fireEvent.click(screen.getByRole("button", { name: /蕭坤元醫師/ }));
 
     const dialog = screen.getByRole("dialog");
-    expect(
-      within(dialog).getByText("醫師端使用手機網頁即時定位。醫師允許位置分享後，行政端會直接看到最新位置、路線與已過 / 未到站點。")
-    ).toBeInTheDocument();
+    expect(within(dialog).getByText("允許定位後，行政端可看位置與路線進度。")).toBeInTheDocument();
     expect(within(dialog).queryByLabelText("Google 登入帳號")).not.toBeInTheDocument();
     expect(within(dialog).queryByLabelText("Google Chat userId")).not.toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole("button", { name: "儲存角色設置" }));

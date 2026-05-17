@@ -348,6 +348,38 @@ describe("DoctorDashboardPage", () => {
     ).toBeInTheDocument();
   });
 
+  it("即時導航可一鍵通報訪視異常並同步行政通知中心", () => {
+    renderDashboard();
+
+    openNavigationModal();
+    resetCurrentRouteFromNavigationModal();
+    const firstPatientName = getFirstRoutePatientName();
+    fireEvent.click(screen.getByRole("button", { name: "開始出發" }));
+    fireEvent.click(screen.getByRole("button", { name: "地址錯誤" }));
+
+    const activeRoutePlan = getActiveRoutePlan();
+    const reportedRouteItem = activeRoutePlan.route_items.find(
+      (item) => item.patient_name === firstPatientName
+    );
+    const reportedSchedule = reportedRouteItem?.schedule_id
+      ? capturedContext?.repositories.visitRepository.getScheduleDetail(reportedRouteItem.schedule_id)
+      : null;
+    const adminNotifications =
+      capturedContext?.repositories.notificationRepository.getNotificationCenterItems("admin") ?? [];
+    const exceptionNotification = adminNotifications.find(
+      (item) =>
+        item.title === "訪視異常通報｜地址錯誤" &&
+        item.linked_visit_schedule_id === reportedRouteItem?.schedule_id
+    );
+
+    expect(reportedRouteItem?.status).toBe("paused");
+    expect(reportedSchedule?.schedule.status).toBe("issue_pending");
+    expect(reportedSchedule?.record?.visit_feedback_code).toBe("admin_followup");
+    expect(exceptionNotification?.status).toBe("pending");
+    expect(exceptionNotification?.content).toContain("地址或定位資訊錯誤");
+    expect(screen.queryByText(`前往 ${maskPatientName(firstPatientName)} 的停留點`)).not.toBeInTheDocument();
+  });
+
   it("跑到下一站後，重置路線仍會回到第一位待出發患者", () => {
     const openSpy = vi.spyOn(window, "open").mockReturnValue(window);
 

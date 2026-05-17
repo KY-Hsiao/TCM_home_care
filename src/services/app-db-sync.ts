@@ -26,7 +26,7 @@ export type ServerAppDbSnapshot = {
   updatedAt: string | null;
 };
 
-function canUseServerSync() {
+export function isAppDbServerSyncEnabled() {
   return (
     typeof window !== "undefined" &&
     typeof fetch === "function" &&
@@ -67,7 +67,7 @@ export function persistAppDbSyncMetadata(metadata: AppDbSyncMetadata) {
 }
 
 export async function fetchServerAppDb(): Promise<ServerAppDbSnapshot | null> {
-  if (!canUseServerSync()) {
+  if (!isAppDbServerSyncEnabled()) {
     return null;
   }
 
@@ -98,7 +98,7 @@ export async function fetchServerAppDb(): Promise<ServerAppDbSnapshot | null> {
 }
 
 export async function persistServerAppDb(db: AppDb): Promise<boolean> {
-  if (!canUseServerSync()) {
+  if (!isAppDbServerSyncEnabled()) {
     return false;
   }
 

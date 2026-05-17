@@ -58,10 +58,51 @@ type FamilyLineTemplateDraft = {
   content: string;
 };
 
+type FamilyLineSendRecipientPayload = {
+  caregiverId: string;
+  caregiverName: string;
+  patientId: string;
+  patientName: string;
+  doctorId: string;
+  doctorName: string;
+  lineUserId: string;
+};
+
+type FamilyLineSendResult = {
+  caregiverId?: string;
+  patientId?: string;
+  doctorId?: string;
+  lineUserId: string;
+  ok: boolean;
+  status: number;
+  skipped?: boolean;
+  error: string | null;
+};
+
+type FamilyLineSendRecord = {
+  id: string;
+  sentAt: string;
+  recipientName: string;
+  patientName: string;
+  lineUserId: string;
+  subject: string;
+  content: string;
+  contentSummary: string;
+  status: "success" | "failed";
+  failureReason: string | null;
+  request: {
+    subject: string;
+    content: string;
+    recipient: FamilyLineSendRecipientPayload;
+  };
+};
+
 const SETTINGS_STORAGE_KEY = "tcm-family-line-settings";
 const LEGACY_BINDINGS_STORAGE_KEY = "tcm-family-line-user-bindings";
 const MANAGED_CONTACTS_STORAGE_KEY = "tcm-family-line-managed-contacts";
 const TEMPLATE_DRAFTS_STORAGE_KEY = "tcm-family-line-template-drafts";
+const SEND_RECORDS_STORAGE_KEY = "tcm-family-line-send-records";
+const MAX_SEND_RECORDS = 30;
 
 const defaultSettings: FamilyLineAutomationSettings = {
   doctorLeaveAutoBroadcast: false,
@@ -156,6 +197,29 @@ function renderTemplateDraft(draft: FamilyLineTemplateDraft, selectedDoctorName:
   };
 }
 
+function summarizeLineContent(content: string) {
+  const compact = content.replace(/\s+/g, " ").trim();
+  return compact.length > 72 ? `${compact.slice(0, 72)}...` : compact;
+}
+
+function normalizeLineFailureReason(value: string | null | undefined) {
+  if (!value) {
+    return "LINE 發送失敗，未取得詳細原因。";
+  }
+  if (value === "patient_2h_cooldown") {
+    return "同一個案 2 小時內已發送抵達提醒，系統已略過。";
+  }
+  try {
+    const parsed = JSON.parse(value) as { message?: unknown };
+    if (typeof parsed.message === "string" && parsed.message.trim()) {
+      return parsed.message.trim();
+    }
+  } catch {
+    // LINE API 有時回傳純文字錯誤，無法解析 JSON 時直接保留原文。
+  }
+  return value;
+}
+
 function resolveLatestSchedule(schedules: VisitSchedule[]) {
   return schedules
     .slice()
@@ -189,6 +253,11 @@ export function AdminFamilyLinePage() {
       defaultTemplateDrafts
     )
   );
+  const [sendRecords, setSendRecords] = useState<FamilyLineSendRecord[]>(() =>
+    loadArrayStorage<FamilyLineSendRecord>(SEND_RECORDS_STORAGE_KEY)
+      .filter((record) => record?.request?.recipient?.lineUserId)
+      .slice(0, MAX_SEND_RECORDS)
+  );
   const [selectedTemplate, setSelectedTemplate] = useState<FamilyLineTemplateKey>("custom_notice");
   const [selectedSendTypes, setSelectedSendTypes] = useState<FamilyLineTemplateKey[]>(["custom_notice"]);
   const [selectedDoctorId, setSelectedDoctorId] = useState("all");
@@ -210,6 +279,7 @@ export function AdminFamilyLinePage() {
   const [isSending, setIsSending] = useState(false);
   const [isInstantSending, setIsInstantSending] = useState(false);
   const [isSingleSending, setIsSingleSending] = useState(false);
+  const [retryingRecordId, setRetryingRecordId] = useState<string | null>(null);
   const [isSyncingLineFriends, setIsSyncingLineFriends] = useState(false);
   const [activeLineTool, setActiveLineTool] = useState<"instant" | "single" | "automation" | "template" | null>(null);
   const [expandedManagedContactIds, setExpandedManagedContactIds] = useState<string[]>([]);
@@ -229,6 +299,10 @@ export function AdminFamilyLinePage() {
   useEffect(() => {
     window.localStorage.setItem(TEMPLATE_DRAFTS_STORAGE_KEY, JSON.stringify(templateDrafts));
   }, [templateDrafts]);
+
+  useEffect(() => {
+    window.localStorage.setItem(SEND_RECORDS_STORAGE_KEY, JSON.stringify(sendRecords));
+  }, [sendRecords]);
 
   const recipients = useMemo<FamilyLineRecipient[]>(() => {
     const nextRecipients: FamilyLineRecipient[] = [];
@@ -363,7 +437,9 @@ export function AdminFamilyLinePage() {
     return schedulePatient ?? recipient.patient;
   };
 
-  const buildLineSendRecipients = (targetRecipients: FamilyLineRecipient[]) =>
+  const buildLineSendRecipients = (
+    targetRecipients: FamilyLineRecipient[]
+  ): FamilyLineSendRecipientPayload[] =>
     targetRecipients.map((recipient) => {
       const schedule = resolveRecipientSchedule(recipient);
       const patient = resolveRecipientPatient(recipient, schedule);
@@ -377,6 +453,77 @@ export function AdminFamilyLinePage() {
         lineUserId: recipient.lineUserId
       };
     });
+
+  const appendLineSendRecords = (
+    subject: string,
+    content: string,
+    requestRecipients: FamilyLineSendRecipientPayload[],
+    results: FamilyLineSendResult[] | undefined,
+    fallbackFailureReason?: string
+  ) => {
+    const now = new Date().toISOString();
+    const resultByLineUserId = new Map(
+      (results ?? []).map((result) => [result.lineUserId, result])
+    );
+    const nextRecords = requestRecipients.map((recipient, index): FamilyLineSendRecord => {
+      const result = resultByLineUserId.get(recipient.lineUserId);
+      const isSuccess = result ? result.ok && !result.skipped : !fallbackFailureReason;
+      const failureReason = isSuccess
+        ? null
+        : normalizeLineFailureReason(result?.error ?? fallbackFailureReason);
+      return {
+        id: `line-send-${Date.now()}-${index}-${recipient.lineUserId}`,
+        sentAt: now,
+        recipientName: recipient.caregiverName || recipient.lineUserId,
+        patientName: recipient.patientName,
+        lineUserId: recipient.lineUserId,
+        subject,
+        content,
+        contentSummary: summarizeLineContent(content),
+        status: isSuccess ? "success" : "failed",
+        failureReason,
+        request: {
+          subject,
+          content,
+          recipient
+        }
+      };
+    });
+    setSendRecords((current) => [...nextRecords, ...current].slice(0, MAX_SEND_RECORDS));
+  };
+
+  const sendLineRecipientPayloads = async (
+    subject: string,
+    content: string,
+    requestRecipients: FamilyLineSendRecipientPayload[]
+  ) => {
+    const response = await fetch("/api/admin/family-line/send", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        subject,
+        content,
+        recipients: requestRecipients
+      })
+    });
+    const payload = (await response.json().catch(() => ({}))) as {
+      error?: string;
+      sentCount?: number;
+      failedCount?: number;
+      attemptedCount?: number;
+      results?: FamilyLineSendResult[];
+    };
+    appendLineSendRecords(
+      subject,
+      content,
+      requestRecipients,
+      payload.results,
+      response.ok ? undefined : payload.error
+    );
+    return { response, payload };
+  };
 
   const createLineContactLogs = (
     targetRecipients: FamilyLineRecipient[],
@@ -412,7 +559,9 @@ export function AdminFamilyLinePage() {
   }) => {
     const firstFailure = payload.results?.find((result) => !result.ok);
     const detail = firstFailure
-      ? `（LINE 狀態 ${firstFailure.status}${firstFailure.error ? `：${firstFailure.error}` : ""}）`
+      ? `（LINE 狀態 ${firstFailure.status}${
+          firstFailure.error ? `：${normalizeLineFailureReason(firstFailure.error)}` : ""
+        }）`
       : "";
     return `${payload.error ?? "LINE 發送失敗，請稍後再試。"}${detail}`;
   };
@@ -583,7 +732,7 @@ export function AdminFamilyLinePage() {
       tone: persisted ? "success" : "error",
       message: `${updatedContact.displayName} 已設為${
         getContactRoleLabel(contactRole)
-      }。${persisted ? "已同步保存。" : "目前只保存在本機，後端名單同步失敗時請稍後再試。"}`
+      }。${persisted ? "已同步保存。" : "後端同步失敗，暫存本機。"}`
     });
   };
 
@@ -613,7 +762,7 @@ export function AdminFamilyLinePage() {
             tone: "error",
             message:
               payload.error ??
-              "無法同步 LINE 官方帳號好友，請確認 LINE_CHANNEL_ACCESS_TOKEN 與官方帳號等級。"
+              "無法同步 LINE 好友，請確認 token 與官方帳號等級。"
           });
         }
         return;
@@ -648,7 +797,7 @@ export function AdminFamilyLinePage() {
           setSendFeedback({
             tone: "error",
             message:
-              "已連到 LINE 名單同步端點，但目前資料庫沒有任何 LINE 好友。請確認 LINE Developers 的 Use webhook 已啟用、Webhook URL 指向目前 Vercel 網址，並請家屬傳送一則新訊息後再重新整理。"
+              "資料庫沒有 LINE 好友；請確認 webhook 啟用，並請家屬傳訊後重整。"
           });
           return;
         }
@@ -656,8 +805,8 @@ export function AdminFamilyLinePage() {
           tone: "success",
           message:
             payload.warning
-              ? `${payload.warning} 已從資料庫載入 ${returnedCount} 位 LINE 好友。`
-              : `已載入 LINE 好友 ${returnedCount} 位；資料庫目前保存 ${savedCount} 位，請再於名單管理中關聯居家個案。`
+              ? `${payload.warning} 已載入 ${returnedCount} 位 LINE 好友。`
+              : `已載入 ${returnedCount} 位 LINE 好友；已保存 ${savedCount} 位。`
         });
       }
     } catch {
@@ -703,25 +852,13 @@ export function AdminFamilyLinePage() {
     }
 
     setIsSending(true);
+    const requestRecipients = buildLineSendRecipients(sendableRecipients);
     try {
-      const response = await fetch("/api/admin/family-line/send", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          subject: outboundSubject,
-          content: outboundContent,
-          recipients: buildLineSendRecipients(sendableRecipients)
-        })
-      });
-      const payload = (await response.json().catch(() => ({}))) as {
-        error?: string;
-        sentCount?: number;
-        failedCount?: number;
-        attemptedCount?: number;
-        results?: Array<{ ok: boolean; status: number; error: string | null }>;
-      };
+      const { response, payload } = await sendLineRecipientPayloads(
+        outboundSubject,
+        outboundContent,
+        requestRecipients
+      );
       if (!response.ok) {
         setSendFeedback({
           tone: "error",
@@ -741,6 +878,13 @@ export function AdminFamilyLinePage() {
       });
       setIsSendConfirmed(false);
     } catch {
+      appendLineSendRecords(
+        outboundSubject,
+        outboundContent,
+        requestRecipients,
+        undefined,
+        "無法連線到 LINE 發送端點，請確認部署與網路狀態。"
+      );
       setSendFeedback({
         tone: "error",
         message: "無法連線到 LINE 發送端點，請確認部署與網路狀態。"
@@ -768,25 +912,9 @@ export function AdminFamilyLinePage() {
     }
 
     setIsInstantSending(true);
+    const requestRecipients = buildLineSendRecipients(sendableRecipients);
     try {
-      const response = await fetch("/api/admin/family-line/send", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          subject,
-          content,
-          recipients: buildLineSendRecipients(sendableRecipients)
-        })
-      });
-      const payload = (await response.json().catch(() => ({}))) as {
-        error?: string;
-        sentCount?: number;
-        failedCount?: number;
-        attemptedCount?: number;
-        results?: Array<{ ok: boolean; status: number; error: string | null }>;
-      };
+      const { response, payload } = await sendLineRecipientPayloads(subject, content, requestRecipients);
       if (!response.ok) {
         setSendFeedback({
           tone: "error",
@@ -800,9 +928,16 @@ export function AdminFamilyLinePage() {
         tone: "success",
         message: `LINE 即時群發已送出 ${payload.sentCount ?? sendableRecipients.length} 位家屬${
           typeof payload.attemptedCount === "number" ? `（本次送出 ${payload.attemptedCount} 位）` : ""
-        }。${missingLineIdCount > 0 ? `另有 ${missingLineIdCount} 位缺 LINE userId 已略過。` : ""}`
+        }。${missingLineIdCount > 0 ? `缺 LINE userId ${missingLineIdCount} 位已略過。` : ""}`
       });
     } catch {
+      appendLineSendRecords(
+        subject,
+        content,
+        requestRecipients,
+        undefined,
+        "無法連線到 LINE 發送端點，請確認部署與網路狀態。"
+      );
       setSendFeedback({
         tone: "error",
         message: "無法連線到 LINE 發送端點，請確認部署與網路狀態。"
@@ -830,24 +965,9 @@ export function AdminFamilyLinePage() {
     }
 
     setIsSingleSending(true);
+    const requestRecipients = buildLineSendRecipients([selectedSingleRecipient]);
     try {
-      const response = await fetch("/api/admin/family-line/send", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          subject,
-          content,
-          recipients: buildLineSendRecipients([selectedSingleRecipient])
-        })
-      });
-      const payload = (await response.json().catch(() => ({}))) as {
-        error?: string;
-        sentCount?: number;
-        attemptedCount?: number;
-        results?: Array<{ ok: boolean; status: number; error: string | null }>;
-      };
+      const { response, payload } = await sendLineRecipientPayloads(subject, content, requestRecipients);
       if (!response.ok) {
         setSendFeedback({
           tone: "error",
@@ -862,6 +982,13 @@ export function AdminFamilyLinePage() {
         message: `LINE 單獨訊息已送出給 ${selectedSingleRecipient.displayName}。`
       });
     } catch {
+      appendLineSendRecords(
+        subject,
+        content,
+        requestRecipients,
+        undefined,
+        "無法連線到 LINE 發送端點，請確認部署與網路狀態。"
+      );
       setSendFeedback({
         tone: "error",
         message: "無法連線到 LINE 發送端點，請確認部署與網路狀態。"
@@ -871,26 +998,63 @@ export function AdminFamilyLinePage() {
     }
   };
 
+  const retryLineSendRecord = async (record: FamilyLineSendRecord) => {
+    setSendFeedback(null);
+    setRetryingRecordId(record.id);
+    try {
+      const { response, payload } = await sendLineRecipientPayloads(
+        record.request.subject,
+        record.request.content,
+        [record.request.recipient]
+      );
+      if (!response.ok) {
+        setSendFeedback({
+          tone: "error",
+          message: buildLineSendFailureMessage(payload)
+        });
+        return;
+      }
+      setSendFeedback({
+        tone: "success",
+        message: `已重新發送 LINE 訊息給 ${record.recipientName}。`
+      });
+    } catch {
+      appendLineSendRecords(
+        record.request.subject,
+        record.request.content,
+        [record.request.recipient],
+        undefined,
+        "無法連線到 LINE 發送端點，請確認部署與網路狀態。"
+      );
+      setSendFeedback({
+        tone: "error",
+        message: "無法連線到 LINE 發送端點，請確認部署與網路狀態。"
+      });
+    } finally {
+      setRetryingRecordId(null);
+    }
+  };
+
   return (
-    <div className="space-y-4">
-      <div className="grid gap-2 sm:grid-cols-4">
-        <div className="rounded-2xl border border-white/70 bg-white/90 px-4 py-3 shadow-card">
+    <div className="space-y-3 lg:space-y-4">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <div className="rounded-2xl border border-white/70 bg-white/90 px-3 py-2 shadow-card sm:px-4 sm:py-3">
           <p className="text-xs text-slate-500">可通知家屬</p>
-          <p className="mt-1 text-xl font-semibold text-brand-ink">{recipients.length}</p>
+          <p className="mt-1 text-lg font-semibold text-brand-ink sm:text-xl">{recipients.length}</p>
         </div>
-        <div className="rounded-2xl border border-white/70 bg-white/90 px-4 py-3 shadow-card">
-          <p className="text-xs text-slate-500">已綁 LINE userId</p>
-          <p className="mt-1 text-xl font-semibold text-brand-ink">
+        <div className="rounded-2xl border border-white/70 bg-white/90 px-3 py-2 shadow-card sm:px-4 sm:py-3">
+          <p className="text-xs text-slate-500">已綁 LINE</p>
+          <p className="mt-1 text-lg font-semibold text-brand-ink sm:text-xl">
             {recipients.filter((recipient) => recipient.lineUserId.trim()).length}
           </p>
         </div>
-        <div className="rounded-2xl border border-white/70 bg-white/90 px-4 py-3 shadow-card">
+        <div className="rounded-2xl border border-white/70 bg-white/90 px-3 py-2 shadow-card sm:px-4 sm:py-3">
           <p className="text-xs text-slate-500">本次選擇</p>
-          <p className="mt-1 text-xl font-semibold text-brand-ink">{selectedRecipients.length}</p>
+          <p className="mt-1 text-lg font-semibold text-brand-ink sm:text-xl">{selectedRecipients.length}</p>
         </div>
-        <div className="rounded-2xl border border-white/70 bg-white/90 px-4 py-3 shadow-card">
+        <div className="rounded-2xl border border-white/70 bg-white/90 px-3 py-2 shadow-card sm:px-4 sm:py-3">
           <p className="text-xs text-slate-500">可立即發送</p>
-          <p className="mt-1 text-xl font-semibold text-brand-ink">{sendableRecipients.length}</p>
+          <p className="mt-1 text-lg font-semibold text-brand-ink sm:text-xl">{sendableRecipients.length}</p>
         </div>
       </div>
 
@@ -911,11 +1075,11 @@ export function AdminFamilyLinePage() {
         <div className="space-y-4">
           <div data-line-quick-functions="true">
             <Panel title="LINE 快速功能">
-              <div className="grid gap-2">
+              <div className="grid grid-cols-2 gap-2 xl:grid-cols-1">
                 <button
                   type="button"
                   onClick={() => setActiveLineTool("instant")}
-                  className={`flex min-h-[56px] items-center gap-2 rounded-xl border px-3 py-2 text-left transition ${
+                  className={`flex min-h-[48px] items-center gap-2 rounded-xl border px-2.5 py-2 text-left transition sm:min-h-[56px] sm:px-3 ${
                     activeLineTool === "instant"
                       ? "border-brand-forest bg-emerald-50 shadow-sm"
                       : "border-slate-200 bg-white hover:border-brand-forest hover:bg-emerald-50"
@@ -932,13 +1096,13 @@ export function AdminFamilyLinePage() {
                   </span>
                   <span className="min-w-0">
                     <span className="block text-sm font-semibold text-brand-ink">即時群發訊息</span>
-                    <span className="mt-0.5 block text-xs text-slate-500">一次性推播</span>
+                    <span className="mt-0.5 hidden text-xs text-slate-500 sm:block">一次性推播</span>
                   </span>
                 </button>
                 <button
                   type="button"
                   onClick={() => setActiveLineTool("single")}
-                  className={`flex min-h-[56px] items-center gap-2 rounded-xl border px-3 py-2 text-left transition ${
+                  className={`flex min-h-[48px] items-center gap-2 rounded-xl border px-2.5 py-2 text-left transition sm:min-h-[56px] sm:px-3 ${
                     activeLineTool === "single"
                       ? "border-brand-forest bg-emerald-50 shadow-sm"
                       : "border-slate-200 bg-white hover:border-brand-forest hover:bg-emerald-50"
@@ -955,13 +1119,13 @@ export function AdminFamilyLinePage() {
                   </span>
                   <span className="min-w-0">
                     <span className="block text-sm font-semibold text-brand-ink">單獨發訊息</span>
-                    <span className="mt-0.5 block text-xs text-slate-500">指定一位家屬</span>
+                    <span className="mt-0.5 hidden text-xs text-slate-500 sm:block">指定一位家屬</span>
                   </span>
                 </button>
                 <button
                   type="button"
                   onClick={() => setActiveLineTool("automation")}
-                  className={`flex min-h-[56px] items-center gap-2 rounded-xl border px-3 py-2 text-left transition ${
+                  className={`flex min-h-[48px] items-center gap-2 rounded-xl border px-2.5 py-2 text-left transition sm:min-h-[56px] sm:px-3 ${
                     activeLineTool === "automation"
                       ? "border-brand-forest bg-emerald-50 shadow-sm"
                       : "border-slate-200 bg-white hover:border-brand-forest hover:bg-emerald-50"
@@ -978,13 +1142,13 @@ export function AdminFamilyLinePage() {
                   </span>
                   <span className="min-w-0">
                     <span className="block text-sm font-semibold text-brand-ink">LINE 自動發送設定</span>
-                    <span className="mt-0.5 block text-xs text-slate-500">請假與提醒</span>
+                    <span className="mt-0.5 hidden text-xs text-slate-500 sm:block">請假與提醒</span>
                   </span>
                 </button>
                 <button
                   type="button"
                   onClick={() => setActiveLineTool("template")}
-                  className={`flex min-h-[56px] items-center gap-2 rounded-xl border px-3 py-2 text-left transition ${
+                  className={`flex min-h-[48px] items-center gap-2 rounded-xl border px-2.5 py-2 text-left transition sm:min-h-[56px] sm:px-3 ${
                     activeLineTool === "template"
                       ? "border-brand-forest bg-emerald-50 shadow-sm"
                       : "border-slate-200 bg-white hover:border-brand-forest hover:bg-emerald-50"
@@ -1001,12 +1165,67 @@ export function AdminFamilyLinePage() {
                   </span>
                   <span className="min-w-0">
                     <span className="block text-sm font-semibold text-brand-ink">範本群發</span>
-                    <span className="mt-0.5 block text-xs text-slate-500">套用訊息範本</span>
+                    <span className="mt-0.5 hidden text-xs text-slate-500 sm:block">套用訊息範本</span>
                   </span>
                 </button>
               </div>
             </Panel>
           </div>
+
+          <Panel title="最近發送紀錄">
+            {sendRecords.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-6 text-center text-sm text-slate-500">
+                目前尚未有 LINE 發送紀錄。
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {sendRecords.slice(0, 8).map((record) => (
+                  <div
+                    key={record.id}
+                    className="rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="truncate font-semibold text-brand-ink">{record.recipientName}</p>
+                        <p className="mt-0.5 text-xs text-slate-500">
+                          {formatDateTimeFull(record.sentAt)}
+                          {record.patientName ? `｜${maskPatientName(record.patientName)}` : ""}
+                        </p>
+                      </div>
+                      <span
+                        className={`shrink-0 rounded-full px-3 py-1 text-xs font-semibold ${
+                          record.status === "success"
+                            ? "bg-emerald-100 text-emerald-700"
+                            : "bg-rose-100 text-rose-700"
+                        }`}
+                      >
+                        {record.status === "success" ? "成功" : "失敗"}
+                      </span>
+                    </div>
+                    <p className="mt-2 line-clamp-2 text-xs text-slate-600">
+                      {record.subject}：{record.contentSummary || "無內容摘要"}
+                    </p>
+                    {record.failureReason ? (
+                      <p className="mt-2 rounded-xl bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                        失敗原因：{record.failureReason}
+                      </p>
+                    ) : null}
+                    <div className="mt-2 flex items-center justify-between gap-2">
+                      <span className="truncate text-[11px] text-slate-400">{record.lineUserId}</span>
+                      <button
+                        type="button"
+                        onClick={() => void retryLineSendRecord(record)}
+                        disabled={retryingRecordId === record.id}
+                        className="shrink-0 rounded-full border border-emerald-200 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {retryingRecordId === record.id ? "重送中" : "重新發送"}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Panel>
 
           {activeLineTool ? (
             <section
@@ -1020,27 +1239,28 @@ export function AdminFamilyLinePage() {
                       ? "LINE 自動發送設定"
                       : "範本群發"
               }
-              className="overflow-hidden rounded-[1.25rem] border border-brand-moss/30 bg-white shadow-card"
+              className="fixed inset-0 z-40 flex items-end justify-center bg-slate-950/35 p-2 sm:items-center sm:p-4"
             >
-              <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3">
-                <h2 className="text-base font-semibold text-brand-ink">
-                  {activeLineTool === "instant"
-                    ? "即時群發訊息"
-                    : activeLineTool === "single"
-                      ? "單獨發訊息"
-                      : activeLineTool === "automation"
-                        ? "LINE 自動發送設定"
-                        : "範本群發"}
-                </h2>
-                <button
-                  type="button"
-                  onClick={() => setActiveLineTool(null)}
-                  className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-brand-ink"
-                >
-                  收合視窗
-                </button>
-              </div>
-              <div className="p-4">
+              <div className="max-h-[calc(100dvh-1rem)] w-full max-w-3xl overflow-y-auto rounded-[1.25rem] border border-brand-moss/30 bg-white shadow-card">
+                <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-3 py-3 sm:px-4">
+                  <h2 className="text-base font-semibold text-brand-ink">
+                    {activeLineTool === "instant"
+                      ? "即時群發訊息"
+                      : activeLineTool === "single"
+                        ? "單獨發訊息"
+                        : activeLineTool === "automation"
+                          ? "LINE 自動發送設定"
+                          : "範本群發"}
+                  </h2>
+                  <button
+                    type="button"
+                    onClick={() => setActiveLineTool(null)}
+                    className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-brand-ink"
+                  >
+                    關閉視窗
+                  </button>
+                </div>
+                <div className="p-3 sm:p-4">
                 {activeLineTool === "instant" ? (
                   <div className="space-y-3 text-sm">
                     <label className="block">
@@ -1069,7 +1289,7 @@ export function AdminFamilyLinePage() {
                           }))
                         }
                         rows={6}
-                        placeholder="輸入要立刻推播給所選 LINE 家屬的訊息"
+                        placeholder="輸入推播內容"
                         className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
                       />
                     </label>
@@ -1098,8 +1318,8 @@ export function AdminFamilyLinePage() {
                       </button>
                     </div>
                     <p className="text-xs text-slate-500">
-                      已選 {selectedRecipients.length} 位；可即時發送 {sendableRecipients.length} 位。
-                      {missingLineIdCount > 0 ? ` ${missingLineIdCount} 位缺 LINE userId 會略過。` : ""}
+                      已選 {selectedRecipients.length}；可發 {sendableRecipients.length}。
+                      {missingLineIdCount > 0 ? ` 缺 ID ${missingLineIdCount} 位略過。` : ""}
                     </p>
                   </div>
                 ) : activeLineTool === "single" ? (
@@ -1154,7 +1374,7 @@ export function AdminFamilyLinePage() {
                           }))
                         }
                         rows={6}
-                        placeholder="輸入要傳給單一 LINE 家屬的訊息"
+                        placeholder="輸入訊息內容"
                         className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3"
                       />
                     </label>
@@ -1170,8 +1390,8 @@ export function AdminFamilyLinePage() {
                     </div>
                     <p className="text-xs text-slate-500">
                       {selectedSingleRecipient
-                        ? `本次只會發送給 ${selectedSingleRecipient.displayName}。`
-                        : "請先建立或篩選出可發送的 LINE 好友。"}
+                        ? `發送給 ${selectedSingleRecipient.displayName}。`
+                        : "請先選擇 LINE 好友。"}
                     </p>
                   </div>
                 ) : activeLineTool === "automation" ? (
@@ -1201,7 +1421,7 @@ export function AdminFamilyLinePage() {
                       >
                         <span>
                           <span className="block font-semibold text-brand-ink">{item.title}</span>
-                          <span className="mt-1 block text-xs text-slate-500">{item.detail}</span>
+                          <span className="mt-1 hidden text-xs text-slate-500 sm:block">{item.detail}</span>
                         </span>
                         <span
                           className={`shrink-0 rounded-full px-3 py-1 text-xs font-semibold ${
@@ -1314,9 +1534,7 @@ export function AdminFamilyLinePage() {
                         onChange={(event) => setIsSendConfirmed(event.target.checked)}
                         className="mt-1 h-4 w-4"
                       />
-                      <span>
-                        我已確認本次勾選項目、範本內容與發送人員，送出後會透過 LINE 推播給可發送的家屬。
-                      </span>
+                      <span>我已確認發送項目與收件人。</span>
                     </label>
 
                     <div className="flex flex-wrap gap-2">
@@ -1345,6 +1563,7 @@ export function AdminFamilyLinePage() {
                     </div>
                   </div>
                 )}
+                </div>
               </div>
             </section>
           ) : null}
@@ -1394,14 +1613,14 @@ export function AdminFamilyLinePage() {
 
               {managedLineContacts.length === 0 ? (
                 <div className="rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-8 text-center text-sm text-slate-500">
-                  目前尚未收到 LINE 好友互動；請家屬加入官方帳號並傳送任一訊息後，再按「重新整理 LINE 好友名單」。
+                  尚未收到 LINE 好友；請家屬加好友並傳訊後重新整理。
                 </div>
               ) : visibleManagedLineContacts.length === 0 ? (
                 <div className="space-y-3 rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-8 text-center text-sm text-slate-500">
                   <p>
                     {focusedPatientId
                       ? "目前此個案尚未關聯 LINE 好友。"
-                      : "目前篩選醫師沒有可發送的 LINE 好友。請確認個案關聯是否已連到該醫師的居家個案。"}
+                      : "此醫師目前沒有可發送的 LINE 好友。"}
                   </p>
                 </div>
               ) : (

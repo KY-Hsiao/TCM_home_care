@@ -9,7 +9,9 @@ const defaultHospitalDestination = {
 };
 
 const patientNameMap = new Map(patientsSeed.map((patient) => [patient.id, patient.name]));
-const todayRouteDate = new Date().toISOString().slice(0, 10);
+const todayRouteDate =
+  visitSchedulesSeed.find((schedule) => schedule.id === "vs-002")?.scheduled_start_at.slice(0, 10) ??
+  new Date(2026, 4, 7).toISOString().slice(0, 10);
 
 function resolveScheduleServiceTimeSlot(schedule: VisitSchedule): "上午" | "下午" {
   if (schedule.service_time_slot.includes("上午")) {

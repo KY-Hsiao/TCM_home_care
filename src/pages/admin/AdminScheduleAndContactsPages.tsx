@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useAppContext } from "../../app/use-app-context";
 import type { NotificationCenterItem, SavedRoutePlan, VisitSchedule } from "../../domain/models";
+import { buildTodayScheduleRisks } from "../../domain/schedule-risk";
 import type { RouteMapInput } from "../../services/types";
 import { RouteMapPreviewCard } from "../../modules/maps/RouteMapPreviewCard";
 import { ReminderCenterPanel } from "../shared/ReminderCenterPanel";
@@ -8,6 +9,7 @@ import { Badge } from "../../shared/ui/Badge";
 import { Panel } from "../../shared/ui/Panel";
 import { formatDateOnly, formatDateTimeFull } from "../../shared/utils/format";
 import { maskPatientName } from "../../shared/utils/patient-name";
+import { ScheduleRiskPanel } from "./ScheduleRiskPanel";
 
 type RouteTimeSlot = "上午" | "下午";
 type PlannerStatus = "scheduled" | "paused" | "on_the_way" | "in_treatment" | "completed";
@@ -104,6 +106,7 @@ const routeEndLocation = {
   longitude: 120.483276
 } as const;
 const routeDatePreviewWindowDays = 30;
+const routeDateHistoryWindowDays = 30;
 const familyLineSettingsStorageKey = "tcm-family-line-settings";
 const familyLineManagedContactsStorageKey = "tcm-family-line-managed-contacts";
 const weekdayToIndex: Record<(typeof weekdayOptions)[number], number> = {
@@ -123,6 +126,11 @@ const calendarDayToWeekday: Record<number, (typeof weekdayOptions)[number]> = {
   4: "星期四",
   5: "星期五",
   6: "星期六"
+};
+const idleGoogleCalendarDateCheck: GoogleCalendarDateCheck = {
+  status: "idle",
+  message: "選醫師與日期後檢查 Google 日曆。",
+  events: []
 };
 
 function buildRoutePlanId(doctorId: string, routeDate: string, weekday: string, serviceTimeSlot: RouteTimeSlot) {
@@ -183,7 +191,7 @@ function buildUpcomingRouteDatesForWeekday(
   const targetDay = weekdayToIndex[weekday];
   const matchedDates: string[] = [];
 
-  for (let dayOffset = 0; dayOffset < days; dayOffset += 1) {
+  for (let dayOffset = -routeDateHistoryWindowDays; dayOffset < days; dayOffset += 1) {
     const currentDate = new Date(startDate);
     currentDate.setDate(startDate.getDate() + dayOffset);
     if (currentDate.getDay() === targetDay) {
@@ -693,7 +701,7 @@ function buildAutoScheduleNotificationItem(candidate: AutoScheduleCarryoverCandi
     owner_user_id: null,
     source_type: "system_notification",
     title: `排程待確認｜${candidate.doctorName}`,
-    content: `${formatDateOnly(candidate.routeDate)} ${candidate.routeWeekday}${candidate.timeSlot} 尚未排程。系統找到 ${candidate.sourceDaysBack} 天前同時段路線「${candidate.sourceRoutePlanName}」，請行政人員確認是否沿用排入。`,
+        content: `${formatDateOnly(candidate.routeDate)} ${candidate.routeWeekday}${candidate.timeSlot} 尚未排程。可沿用 ${candidate.sourceDaysBack} 天前路線「${candidate.sourceRoutePlanName}」，請確認。`,
     linked_patient_id: null,
     linked_visit_schedule_id: null,
     linked_doctor_id: candidate.doctorId,
@@ -1277,6 +1285,7 @@ export function AdminSchedulesPage() {
   const [routeDate, setRouteDate] = useState<string>("");
   const [routeStartAddress, setRouteStartAddress] = useState<string>(routeStartLocation.address);
   const [routeEndAddress, setRouteEndAddress] = useState<string>(routeEndLocation.address);
+  const [isRouteToolsDialogOpen, setIsRouteToolsDialogOpen] = useState(false);
   const [isRouteEndpointsDialogOpen, setIsRouteEndpointsDialogOpen] = useState(false);
   const [selectedSavedRoutePlanId, setSelectedSavedRoutePlanId] = useState<string>("");
   const [selectedSavedRoutePlanIds, setSelectedSavedRoutePlanIds] = useState<string[]>([]);
@@ -1287,11 +1296,7 @@ export function AdminSchedulesPage() {
   const [isGeocodingPlannerRows, setIsGeocodingPlannerRows] = useState(false);
   const [geocodingMessage, setGeocodingMessage] = useState<string | null>(null);
   const [googleCalendarDateCheck, setGoogleCalendarDateCheck] =
-    useState<GoogleCalendarDateCheck>({
-      status: "idle",
-      message: "尚未選擇日期。",
-      events: []
-    });
+    useState<GoogleCalendarDateCheck>(idleGoogleCalendarDateCheck);
   const [draggingPlannerPatientId, setDraggingPlannerPatientId] = useState<string | null>(null);
   const [dragTargetPlannerPatientId, setDragTargetPlannerPatientId] = useState<string | null>(null);
   const [dismissedAutoScheduleCandidateIds, setDismissedAutoScheduleCandidateIds] = useState<string[]>([]);
@@ -1314,6 +1319,15 @@ export function AdminSchedulesPage() {
   const savedRoutePlans = useMemo(
     () => [...db.saved_route_plans],
     [db.saved_route_plans]
+  );
+  const riskReferenceDate = routeDate || formatDateInputValue(new Date());
+  const scheduleRisks = useMemo(
+    () =>
+      buildTodayScheduleRisks({
+        db,
+        referenceDate: riskReferenceDate
+      }),
+    [db, riskReferenceDate]
   );
   const allSchedules = useMemo(
     () => [...db.visit_schedules],
@@ -1497,11 +1511,14 @@ export function AdminSchedulesPage() {
     return matchedOptions;
   }, [effectiveSelectedWeekday, routeDateMode, selectedDoctor, selectedRouteDateOption]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (selectedSavedRoutePlanId || routeDateMode !== "preset" || !selectedDoctorId || routeDate) {
       return;
     }
-    const defaultRouteDateOption = availableRouteDateOptions[0];
+    const todayRouteDate = formatDateInputValue(new Date());
+    const defaultRouteDateOption = availableRouteDateOptions.find(
+      (option) => option.routeDate >= todayRouteDate
+    );
     if (!defaultRouteDateOption) {
       return;
     }
@@ -1518,18 +1535,20 @@ export function AdminSchedulesPage() {
 
   useEffect(() => {
     if (!routeDate || !selectedDoctorId) {
-      setGoogleCalendarDateCheck({
-        status: "idle",
-        message: "選擇醫師與路線日期後，系統會檢查 Google 日曆是否已有行程。",
-        events: []
-      });
+      setGoogleCalendarDateCheck((current) =>
+        current.status === idleGoogleCalendarDateCheck.status &&
+        current.message === idleGoogleCalendarDateCheck.message &&
+        current.events.length === 0
+          ? current
+          : idleGoogleCalendarDateCheck
+      );
       return;
     }
 
     let isCancelled = false;
     setGoogleCalendarDateCheck({
       status: "checking",
-      message: "正在讀取 Google 日曆，確認這一天是否已有行程。",
+      message: "正在讀取 Google 日曆。",
       events: []
     });
 
@@ -1574,7 +1593,7 @@ export function AdminSchedulesPage() {
     };
   }, [routeDate, selectedDoctorId]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const existingNotificationItemIds = new Set(
       db.notification_center_items.map((item) => item.id)
     );
@@ -1588,7 +1607,7 @@ export function AdminSchedulesPage() {
     });
   }, [autoScheduleCarryoverCandidates, db.notification_center_items, repositories.notificationRepository]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (routeDateMode === "ad_hoc") {
       return;
     }
@@ -1602,7 +1621,7 @@ export function AdminSchedulesPage() {
     }
   }, [availableWeekdays, routeDateMode, selectedRouteDateOption, selectedWeekday]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (selectedSavedRoutePlanId) {
       return;
     }
@@ -1620,13 +1639,13 @@ export function AdminSchedulesPage() {
     setSelectedTimeSlot("");
   }, [routeDate, routeDateMode, selectedRouteDateOption, selectedSavedRoutePlanId]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (selectedTimeSlot && !availableTimeSlots.includes(selectedTimeSlot)) {
       setSelectedTimeSlot("");
     }
   }, [availableTimeSlots, selectedTimeSlot]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (selectedSavedRoutePlanId || !routeDate || !selectedRouteDateOption) {
       return;
     }
@@ -1647,7 +1666,7 @@ export function AdminSchedulesPage() {
     }
   }, [routeDate, routeDateMode, selectedRouteDateOption, selectedSavedRoutePlanId, selectedTimeSlot, selectedWeekday]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (routeDateMode !== "ad_hoc" || !routeDate) {
       return;
     }
@@ -1660,7 +1679,7 @@ export function AdminSchedulesPage() {
     }
   }, [availableTimeSlots, derivedRouteWeekday, routeDate, routeDateMode, selectedTimeSlot, selectedWeekday]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!selectedDoctorId || !effectiveSelectedWeekday || !selectedTimeSlot) {
       if (plannerRows.length > 0) {
         setPlannerRows([]);
@@ -1771,8 +1790,8 @@ export function AdminSchedulesPage() {
     const patientName = plannerRows.find((row) => row.patientId === patientId)?.name;
     setRecentAction(
       patientName
-        ? `已將 ${maskPatientName(patientName)} 設為目前患者暫停；只影響本次路線，不會改成長期暫停。`
-        : "已將目前患者設為暫停；只影響本次路線，不會改成長期暫停。"
+        ? `已將 ${maskPatientName(patientName)} 暫停本次路線。`
+        : "已將目前患者暫停本次路線。"
     );
   };
 
@@ -1954,9 +1973,9 @@ export function AdminSchedulesPage() {
     const failureReasonText = result.failureReasons.length > 0 ? ` 原因：${result.failureReasons[0]}` : "";
     const failedText =
       result.failedCount > 0
-        ? `仍有 ${result.failedCount} 位找不到座標，已保留在最後順位；需補座標後重新排程。${failureReasonText}`
-        : "全部已可納入地圖預覽與自動排序。";
-    setGeocodingMessage(`已由 Google Map 補上 ${result.resolvedCount} 位個案座標。${failedText}`);
+        ? `仍有 ${result.failedCount} 位找不到座標；補座標後請重新排程。${failureReasonText}`
+        : "可納入地圖預覽與排序。";
+    setGeocodingMessage(`已由 Google Map 補上 ${result.resolvedCount} 位座標。${failedText}`);
     return result.rows;
   }, [plannerRows, resolveMissingPlannerCoordinates]);
 
@@ -2021,9 +2040,9 @@ export function AdminSchedulesPage() {
         : "";
     const strategyText =
       strategy === "exhaustive"
-        ? `已比較 ${permutationCount ?? 0} 種排列，選出預估交通時間最短的自動排序。`
+        ? `已比較 ${permutationCount ?? 0} 種排列，選出較短路線。`
         : strategy === "nearest_neighbor"
-          ? "站點數較多，已改用最近下一站原則完成自動排序。"
+          ? "站點較多，已用最近下一站排序。"
           : "目前路線未重新排序。";
     const travelTimeText =
       typeof totalTravelMinutes === "number" && Number.isFinite(totalTravelMinutes)
@@ -2031,7 +2050,7 @@ export function AdminSchedulesPage() {
         : "";
     const unresolvedText =
       unresolvedCoordinateCount > 0
-        ? `另有 ${unresolvedCoordinateCount} 站缺少座標，已排到最後順位；請補座標後重新排程。`
+        ? `另有 ${unresolvedCoordinateCount} 站缺座標；補座標後請重新排程。`
         : "可再拖曳微調。";
     const geocodingText =
       geocodingResult.resolvedCount > 0 || geocodingResult.failedCount > 0
@@ -2085,7 +2104,7 @@ export function AdminSchedulesPage() {
 
   const buildRoutePlanDraft = (sourcePlannerRows = plannerRows) => {
     if (!selectedDoctorId || !effectiveSelectedWeekday || !selectedTimeSlot) {
-      setRecentAction("請先選擇醫師、星期與上午/下午。");
+      setRecentAction("請先選醫師、日期與時段。");
       return null;
     }
     if (!routeDate) {
@@ -2206,7 +2225,7 @@ export function AdminSchedulesPage() {
     }
     repositories.visitRepository.upsertSavedRoutePlan(routePlanDraft);
     setSelectedSavedRoutePlanId(routePlanDraft.id);
-    setRecentAction(`${geocodingText}已儲存路線，之後可從已儲存的路線完整還原。`);
+    setRecentAction(`${geocodingText}已儲存路線，可從清單還原。`);
     return routePlanDraft.id;
   };
 
@@ -2234,9 +2253,7 @@ export function AdminSchedulesPage() {
     }
     setSelectedSavedRoutePlanId(executed.id);
     setPlannerRows(buildPlannerRowsFromRoutePlan(executed, patientsById));
-    setRecentAction(
-      `${geocodingText}已實行 ${executed.route_name}，醫師端會以這條路線作為本次執行清單。`
-    );
+    setRecentAction(`${geocodingText}已實行 ${executed.route_name}。`);
   };
 
   const executeRoutePlan = () => {
@@ -2344,9 +2361,7 @@ export function AdminSchedulesPage() {
     setRouteStartAddress(previousRoutePlan.start_address || routeStartLocation.address);
     setRouteEndAddress(previousRoutePlan.end_address || routeEndLocation.address);
     setPlannerRows(nextRows);
-    setRecentAction(
-      `已套用前次路線 ${previousRoutePlan.route_name} 的個案、勾選狀態與排序；本次日期與時段維持目前設定。`
-    );
+    setRecentAction(`已套用前次路線 ${previousRoutePlan.route_name}。`);
   };
 
   const dismissAutoScheduleCarryoverCandidate = (candidateId: string) => {
@@ -2389,13 +2404,19 @@ export function AdminSchedulesPage() {
     setRouteEndAddress(routePlanDraft.end_address || routeEndLocation.address);
     setPlannerRows(buildPlannerRowsFromRoutePlan(routePlanDraft, patientsById));
     dismissAutoScheduleCarryoverCandidate(candidate.id);
-    setRecentAction(
-      `已沿用 ${candidate.sourceDaysBack} 天前同時段路線，建立 ${routePlanDraft.route_name}；請確認後再實行路線。`
-    );
+    setRecentAction(`已沿用 ${candidate.sourceDaysBack} 天前路線，建立 ${routePlanDraft.route_name}。`);
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 lg:space-y-6">
+      <ScheduleRiskPanel
+        risks={scheduleRisks}
+        title="今日行程風險提示"
+        emptyText="目前選取日期沒有偵測到行程風險。"
+        collapsible
+        defaultCollapsed
+      />
+
       <Panel title="排程管理頁">
         <div className="space-y-4">
           {visibleAutoScheduleCarryoverCandidates.length > 0 ? (
@@ -2404,7 +2425,7 @@ export function AdminSchedulesPage() {
                 <div>
                   <p className="font-semibold text-brand-ink">排程待確認</p>
                   <p className="mt-1 text-xs text-amber-800">
-                    系統偵測到未來 3 天內有醫師可出巡時段尚未排程，已同步新增通知中心提醒；請行政確認後才會排入。
+                    未來 3 天有可出巡時段尚未排程；確認後才會排入。
                   </p>
                 </div>
                 <span className="rounded-full bg-white/80 px-3 py-1 text-xs font-semibold">
@@ -2423,8 +2444,8 @@ export function AdminSchedulesPage() {
                         {candidate.timeSlot}
                       </p>
                       <p className="mt-1 text-xs text-slate-600">
-                        尚未排程，可沿用 {candidate.sourceDaysBack} 天前「{candidate.sourceRoutePlanName}」，
-                        共 {candidate.checkedPatientCount} 位已勾選個案。
+                        可沿用 {candidate.sourceDaysBack} 天前「{candidate.sourceRoutePlanName}」；
+                        {candidate.checkedPatientCount} 位個案。
                       </p>
                     </div>
                     <div className="flex flex-wrap gap-2">
@@ -2652,42 +2673,13 @@ export function AdminSchedulesPage() {
                 </p>
               </div>
 
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={() => setIsAllSchedulesDialogOpen(true)}
-                  className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-brand-ink"
-                >
-                  全部排程清單
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setIsRouteEndpointsDialogOpen(true)}
-                  className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-brand-ink"
-                >
-                  設定起終點
-                </button>
-                <button
-                  type="button"
-                  onClick={resetPlanner}
-                  className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-brand-ink"
-                >
-                  清除
-                </button>
-                <button
-                  type="button"
-                  onClick={applyPreviousRoutePlan}
-                  disabled={!selectedDoctorId || !previousRoutePlan}
-                  className="rounded-full border border-brand-forest/30 bg-white px-3 py-1.5 text-xs font-semibold text-brand-forest disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-400"
-                  title={
-                    previousRoutePlan
-                      ? `套用 ${previousRoutePlan.route_name}`
-                      : "請先選擇醫師，或確認已有前次路線"
-                  }
-                >
-                  套用前次路線
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={() => setIsRouteToolsDialogOpen(true)}
+                className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-brand-ink"
+              >
+                路線工具
+              </button>
             </div>
 
             <div className="mt-4 grid gap-3 xl:grid-cols-[minmax(260px,1fr)_auto] xl:items-end">
@@ -2772,15 +2764,15 @@ export function AdminSchedulesPage() {
 
           <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
             {routeDateMode === "ad_hoc"
-              ? "突發出巡事件可由任一醫師支援，系統會列出所有服務中個案；取消勾選或按「目前患者暫停」者只暫停本次路線，不會進入路線排序。"
-              : "選完醫師、星期與上午/下午後，系統會自動列出符合該時段的個案。取消勾選或按「目前患者暫停」者會保留在名單中，但只暫停本次路線，不會進入路線排序。"}
+              ? "突發出巡會列出所有服務中個案；暫停只影響本次路線。"
+              : "選日期後自動列出符合時段個案；暫停只影響本次路線。"}
           </div>
 
           <div className="grid gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)]">
             <div>
               <RouteMapPreviewCard
                 route={routePreview}
-                emptyText="請先選擇醫師、星期、上午/下午，並保留至少一位已勾選個案，才會產生路線預覽。"
+                emptyText="請先選醫師、日期與至少一位個案。"
                 compact
                 headerActions={
                   <>
@@ -2820,7 +2812,7 @@ export function AdminSchedulesPage() {
                 <div>
                   <p className="text-sm font-semibold text-brand-ink">本次路線排序</p>
                   <p className="mt-1 text-xs text-slate-500">
-                    自動排序會比較可行排列的總預估交通時間，選擇花費最短的站序；仍可拖曳微調站序。
+                    自動排序會找較短交通時間；仍可拖曳微調。
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center justify-end gap-2">
@@ -2917,7 +2909,7 @@ export function AdminSchedulesPage() {
                           <p className="mt-1 text-xs font-semibold text-amber-700">
                             {row.geocodingStatus === "failed" && row.geocodedAddress
                               ? `缺少座標：${row.geocodedAddress}`
-                              : "缺少座標，若 Google 仍找不到，會排到最後；需補座標後重新排程。"}
+                              : "缺少座標；補座標後請重新排程。"}
                           </p>
                         ) : null}
                       </div>
@@ -2951,7 +2943,7 @@ export function AdminSchedulesPage() {
                 })}
                 {checkedRows.length === 0 ? (
                   <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
-                    目前沒有已勾選的個案，因此不會產生路線排序。
+                    尚未勾選個案。
                   </div>
                 ) : null}
               </div>
@@ -2960,22 +2952,100 @@ export function AdminSchedulesPage() {
         </div>
       </Panel>
 
+      {isRouteToolsDialogOpen ? (
+        <div className="fixed inset-0 z-40 flex items-end justify-center bg-slate-950/35 p-2 sm:items-center sm:p-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="route-tools-dialog-title"
+            className="max-h-[calc(100dvh-1rem)] w-full max-w-lg overflow-y-auto rounded-[1.25rem] border border-white/70 bg-white p-4 shadow-2xl sm:rounded-[1.75rem] sm:p-5"
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-sm font-medium text-brand-coral">路線操作</p>
+                <h2 id="route-tools-dialog-title" className="mt-1 text-xl font-semibold text-brand-ink">
+                  路線工具
+                </h2>
+                <p className="mt-1 hidden text-sm text-slate-500 sm:block">
+                  起點：{routeStartAddress}｜終點：{routeEndAddress}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsRouteToolsDialogOpen(false)}
+                className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-600 ring-1 ring-slate-200"
+              >
+                關閉
+              </button>
+            </div>
+            <div className="mt-4 grid grid-cols-2 gap-2 sm:mt-5">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsAllSchedulesDialogOpen(true);
+                  setIsRouteToolsDialogOpen(false);
+                }}
+                className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-brand-ink"
+              >
+                全部排程清單
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsRouteEndpointsDialogOpen(true);
+                  setIsRouteToolsDialogOpen(false);
+                }}
+                className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-brand-ink"
+              >
+                設定起終點
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  resetPlanner();
+                  setIsRouteToolsDialogOpen(false);
+                }}
+                className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-brand-ink"
+              >
+                清除
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  applyPreviousRoutePlan();
+                  setIsRouteToolsDialogOpen(false);
+                }}
+                disabled={!selectedDoctorId || !previousRoutePlan}
+                className="rounded-2xl border border-brand-forest/30 bg-white px-4 py-3 text-sm font-semibold text-brand-forest disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-400"
+                title={
+                  previousRoutePlan
+                    ? `套用 ${previousRoutePlan.route_name}`
+                    : "請先選擇醫師，或確認已有前次路線"
+                }
+              >
+                套用前次路線
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {isAllSchedulesDialogOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4">
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/45 p-2 sm:items-center sm:p-4">
           <div
             role="dialog"
             aria-modal="true"
             aria-label="全部排程清單視窗"
-            className="flex max-h-[min(82vh,820px)] w-full max-w-6xl flex-col overflow-hidden rounded-[32px] bg-white shadow-2xl"
+            className="flex max-h-[calc(100dvh-1rem)] w-full max-w-6xl flex-col overflow-hidden rounded-[1.25rem] bg-white shadow-2xl sm:max-h-[min(82vh,820px)] sm:rounded-[32px]"
           >
-            <div className="flex items-center justify-between gap-4 border-b border-slate-200 px-6 py-5">
+            <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3 sm:gap-4 sm:px-6 sm:py-5">
               <div>
                 <p className="text-sm font-medium text-brand-coral">全部排程清單</p>
-                <h2 className="mt-1 text-2xl font-semibold text-brand-ink">
+                <h2 className="mt-1 text-lg font-semibold text-brand-ink sm:text-2xl">
                   目前系統內共有 {allScheduleRows.length} 筆排程
                 </h2>
-                <p className="mt-2 text-sm text-slate-500">
-                  這裡直接列出所有排程，不受上方醫師、日期、已儲存路線篩選影響；若醫師已被移除，也會顯示原本的醫師代碼。
+                <p className="mt-2 hidden text-sm text-slate-500 sm:block">
+                  不受上方篩選影響；醫師已移除時顯示原醫師代碼。
                 </p>
               </div>
               <button
@@ -2987,7 +3057,7 @@ export function AdminSchedulesPage() {
               </button>
             </div>
 
-            <div className="min-h-0 flex-1 overflow-y-auto p-6">
+            <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-6">
               <div className="grid gap-2 pr-1">
                 {allScheduleRows.map((schedule) => {
                   const doctor = doctorsById.get(schedule.assigned_doctor_id);
@@ -3038,17 +3108,17 @@ export function AdminSchedulesPage() {
       ) : null}
 
       {isBatchDeleteDialogOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4">
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/45 p-2 sm:items-center sm:p-4">
           <div
             role="dialog"
             aria-modal="true"
             aria-label="批次刪除路線視窗"
-            className="w-full max-w-2xl rounded-[32px] bg-white p-6 shadow-2xl"
+            className="max-h-[calc(100dvh-1rem)] w-full max-w-2xl overflow-y-auto rounded-[1.25rem] bg-white p-4 shadow-2xl sm:rounded-[32px] sm:p-6"
           >
             <div className="flex items-center justify-between gap-4">
               <div>
                 <p className="text-sm font-medium text-brand-coral">批次刪除</p>
-                <h2 className="mt-1 text-2xl font-semibold text-brand-ink">選擇要刪除的已儲存路線</h2>
+                <h2 className="mt-1 text-lg font-semibold text-brand-ink sm:text-2xl">選擇要刪除的已儲存路線</h2>
               </div>
               <button
                 type="button"
@@ -3059,11 +3129,11 @@ export function AdminSchedulesPage() {
               </button>
             </div>
 
-            <div className="mt-6 space-y-4">
+            <div className="mt-4 space-y-4 sm:mt-6">
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm">
                 <div>
                   <p className="font-semibold text-brand-ink">目前共有 {savedRoutePlans.length} 條已儲存路線</p>
-                  <p className="mt-1 text-xs text-slate-500">請勾選要刪除的路線，再按下確定刪除。</p>
+                  <p className="mt-1 text-xs text-slate-500">勾選後按確定刪除。</p>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <button
@@ -3123,18 +3193,18 @@ export function AdminSchedulesPage() {
       ) : null}
 
       {isRouteEndpointsDialogOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4">
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/45 p-2 sm:items-center sm:p-4">
           <div
             role="dialog"
             aria-modal="true"
             aria-label="起終點設定視窗"
-            className="w-full max-w-2xl rounded-[32px] bg-white p-6 shadow-2xl"
+            className="max-h-[calc(100dvh-1rem)] w-full max-w-2xl overflow-y-auto rounded-[1.25rem] bg-white p-4 shadow-2xl sm:rounded-[32px] sm:p-6"
           >
             <div className="flex items-center justify-between gap-4">
               <div>
                 <p className="text-sm font-medium text-brand-coral">路線設定</p>
-                <h2 className="mt-1 text-2xl font-semibold text-brand-ink">設定起點與終點</h2>
-                <p className="mt-2 text-sm text-slate-500">預設為旗山醫院，若本次出巡起訖不同可在此覆寫。</p>
+                <h2 className="mt-1 text-lg font-semibold text-brand-ink sm:text-2xl">設定起點與終點</h2>
+                <p className="mt-2 hidden text-sm text-slate-500 sm:block">預設為旗山醫院，必要時可覆寫。</p>
               </div>
               <button
                 type="button"
@@ -3145,7 +3215,7 @@ export function AdminSchedulesPage() {
               </button>
             </div>
 
-            <div className="mt-6 grid gap-4">
+            <div className="mt-4 grid gap-4 sm:mt-6">
               <label className="block text-sm">
                 <span className="mb-1 block font-medium text-brand-ink">起點</span>
                 <input
@@ -3179,7 +3249,7 @@ export function AdminSchedulesPage() {
               </label>
             </div>
 
-            <div className="mt-6 flex justify-end">
+            <div className="mt-4 flex justify-end sm:mt-6">
               <button
                 type="button"
                 onClick={() => setIsRouteEndpointsDialogOpen(false)}
@@ -3193,25 +3263,25 @@ export function AdminSchedulesPage() {
       ) : null}
 
       {isSlotPatientDialogOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4">
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/45 p-2 sm:items-center sm:p-4">
           <div
             role="dialog"
             aria-modal="true"
             aria-label={routeDateMode === "ad_hoc" ? "突發患者清單視窗" : "符合時段的個案清單視窗"}
-            className="flex max-h-[min(80vh,760px)] w-full max-w-5xl flex-col overflow-hidden rounded-[32px] bg-white shadow-2xl"
+            className="flex max-h-[calc(100dvh-1rem)] w-full max-w-5xl flex-col overflow-hidden rounded-[1.25rem] bg-white shadow-2xl sm:max-h-[min(80vh,760px)] sm:rounded-[32px]"
           >
-            <div className="flex items-center justify-between gap-4 border-b border-slate-200 px-6 py-5">
+            <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3 sm:gap-4 sm:px-6 sm:py-5">
               <div>
                 <p className="text-sm font-medium text-brand-coral">
                   {routeDateMode === "ad_hoc" ? "突發可選患者清單" : "符合時段的個案清單"}
                 </p>
-                <h2 className="mt-1 text-2xl font-semibold text-brand-ink">
+                <h2 className="mt-1 text-lg font-semibold text-brand-ink sm:text-2xl">
                   {routeDateMode === "ad_hoc" ? "選擇本次突發出巡患者" : "選擇要保留在本次路線的個案"}
                 </h2>
-                <p className="mt-2 text-sm text-slate-500">
+                <p className="mt-2 hidden text-sm text-slate-500 sm:block">
                   {routeDateMode === "ad_hoc"
-                    ? "突發出巡會列出所有未結案患者；取消勾選或按「目前患者暫停」後只會暫停本次路線，不會改成長期暫停。"
-                    : "每位個案預設已勾選；取消勾選或按「目前患者暫停」後只會暫停本次路線，不會改成長期暫停。"}
+                    ? "突發出巡列出所有未結案患者；暫停只影響本次路線。"
+                    : "預設全選；暫停只影響本次路線。"}
                 </p>
               </div>
               <button
@@ -3223,12 +3293,12 @@ export function AdminSchedulesPage() {
               </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto px-6 py-5">
+            <div className="flex-1 overflow-y-auto px-3 py-3 sm:px-6 sm:py-5">
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm">
                 <div>
                   <p className="font-semibold text-brand-ink">目前共有 {sortedPlannerRows.length} 位患者</p>
                   <p className="mt-1 text-xs text-slate-500">
-                    可執行 {checkedRows.length} 位，目前患者暫停 {pausedPlannerRows.length} 位；可直接結案或臨時暫停本次。
+                    可執行 {checkedRows.length} 位，目前患者暫停 {pausedPlannerRows.length} 位。
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-2">

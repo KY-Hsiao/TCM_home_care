@@ -2,13 +2,14 @@ import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode 
 import * as XLSX from "xlsx";
 import { Link, useParams } from "react-router-dom";
 import { useAppContext } from "../../app/use-app-context";
-import type { DoctorLocationLog, Patient, VisitSchedule } from "../../domain/models";
-import type { AdminDashboardStats } from "../../domain/repository";
+import type { ContactLog, DoctorLocationLog, NotificationCenterItem, NotificationTask, Patient, Reminder, RescheduleAction, VisitRecord, VisitSchedule } from "../../domain/models";
+import type { AdminDashboardStats, PatientProfile } from "../../domain/repository";
+import { buildTodayScheduleRisks } from "../../domain/schedule-risk";
 import type { RouteMapInput } from "../../services/types";
 import { Badge } from "../../shared/ui/Badge";
 import { Panel } from "../../shared/ui/Panel";
 import { StatCard } from "../../shared/ui/StatCard";
-import { formatDateTimeFull, formatTimeOnly } from "../../shared/utils/format";
+import { channelLabel, formatDateTimeFull, formatTimeOnly, statusLabel, statusTone } from "../../shared/utils/format";
 import { anonymizePatientName, maskPatientName } from "../../shared/utils/patient-name";
 import {
   buildGoogleMapsSearchUrl,
@@ -16,6 +17,7 @@ import {
   resolveLocationKeyword,
   sameAddressLocationKeyword
 } from "../../shared/utils/location-keyword";
+import { ScheduleRiskPanel } from "./ScheduleRiskPanel";
 
 function mapsLink(address: string, locationKeyword = sameAddressLocationKeyword) {
   return buildGoogleMapsSearchUrl(locationKeyword, address);
@@ -80,6 +82,117 @@ type TrackingRouteDistributionOption = {
   timeSlot: RouteTimeSlot;
   schedules: VisitSchedule[];
 };
+type RescheduleImpactPreview = {
+  patientName: string;
+  originalDoctorName: string;
+  newDoctorName: string;
+  originalRouteLabel: string;
+  newRouteLabel: string;
+  lineDraft: string;
+  routeOrderChanges: string[];
+};
+
+function routeKeyForSchedule(schedule: VisitSchedule) {
+  return [
+    schedule.assigned_doctor_id,
+    schedule.scheduled_start_at.slice(0, 10),
+    schedule.service_time_slot
+  ].join("::");
+}
+
+function sortRouteSchedules(schedules: VisitSchedule[]) {
+  return schedules
+    .slice()
+    .sort(
+      (left, right) =>
+        left.route_order - right.route_order ||
+        new Date(left.scheduled_start_at).getTime() - new Date(right.scheduled_start_at).getTime()
+    );
+}
+
+function buildRouteOrderMap(schedules: VisitSchedule[]) {
+  return new Map(sortRouteSchedules(schedules).map((schedule, index) => [schedule.id, index + 1]));
+}
+
+function buildRescheduleImpactPreview(input: {
+  action: RescheduleAction;
+  schedules: VisitSchedule[];
+  patients: Patient[];
+  doctors: Array<{ id: string; name: string }>;
+}): RescheduleImpactPreview | null {
+  const schedule = input.schedules.find((item) => item.id === input.action.visit_schedule_id);
+  if (!schedule) {
+    return null;
+  }
+
+  const patient = input.patients.find((item) => item.id === schedule.patient_id);
+  const originalDoctor = input.doctors.find((item) => item.id === schedule.assigned_doctor_id);
+  const newDoctorId = input.action.new_doctor_id ?? schedule.assigned_doctor_id;
+  const newDoctor = input.doctors.find((item) => item.id === newDoctorId);
+  const originalRouteSchedules = input.schedules.filter(
+    (item) => routeKeyForSchedule(item) === routeKeyForSchedule(schedule)
+  );
+  const originalOrders = buildRouteOrderMap(originalRouteSchedules);
+  const proposedSchedule: VisitSchedule = {
+    ...schedule,
+    assigned_doctor_id: newDoctorId,
+    scheduled_start_at: input.action.new_start_at,
+    scheduled_end_at: input.action.new_end_at
+  };
+  const newRouteSchedules = input.schedules
+    .filter((item) => item.id !== schedule.id)
+    .filter((item) => routeKeyForSchedule(item) === routeKeyForSchedule(proposedSchedule))
+    .concat(proposedSchedule);
+  const newOrders = buildRouteOrderMap(newRouteSchedules);
+  const changedScheduleIds = new Set([
+    ...originalRouteSchedules.map((item) => item.id),
+    ...newRouteSchedules.map((item) => item.id)
+  ]);
+  const routeOrderChanges = [...changedScheduleIds]
+    .map((scheduleId) => {
+      const affectedSchedule =
+        scheduleId === schedule.id
+          ? proposedSchedule
+          : input.schedules.find((item) => item.id === scheduleId);
+      if (!affectedSchedule) {
+        return null;
+      }
+      const affectedPatient = input.patients.find((item) => item.id === affectedSchedule.patient_id);
+      const beforeOrder = originalOrders.get(scheduleId);
+      const afterOrder = newOrders.get(scheduleId);
+      if (beforeOrder === afterOrder) {
+        return null;
+      }
+      const beforeText = beforeOrder ? `第 ${beforeOrder} 站` : "未在原路線";
+      const afterText = afterOrder ? `第 ${afterOrder} 站` : "移出原路線";
+      return `${affectedPatient ? maskPatientName(affectedPatient.name) : affectedSchedule.patient_id}：${beforeText} → ${afterText}`;
+    })
+    .filter((item): item is string => Boolean(item));
+
+  const patientName = patient ? maskPatientName(patient.name) : schedule.patient_id;
+  const originalDoctorName = originalDoctor?.name ?? schedule.assigned_doctor_id;
+  const newDoctorName = newDoctor?.name ?? newDoctorId;
+  const lineDraft = [
+    `您好，${patientName} 原訂 ${formatDateTimeFull(input.action.original_start_at)} 居家訪視需調整。`,
+    `最新安排為 ${formatDateTimeFull(input.action.new_start_at)}，由 ${newDoctorName} 服務。`,
+    `原因：${input.action.reason}`,
+    "行政人員確認後會再通知正式排程。"
+  ].join("\n");
+
+  return {
+    patientName,
+    originalDoctorName,
+    newDoctorName,
+    originalRouteLabel: `${formatDateTimeFull(input.action.original_start_at)}｜第 ${originalOrders.get(schedule.id) ?? schedule.route_order} 站`,
+    newRouteLabel: `${formatDateTimeFull(input.action.new_start_at)}｜${
+      newOrders.get(schedule.id) ? `第 ${newOrders.get(schedule.id)} 站` : "未進入新路線"
+    }`,
+    lineDraft,
+    routeOrderChanges: routeOrderChanges.length
+      ? routeOrderChanges
+      : ["路線站序不變，僅調整時間或通知內容。"]
+  };
+}
 
 function DashboardStatsBlock({
   title,
@@ -447,7 +560,7 @@ function sortTrackingSchedules(schedules: VisitSchedule[]) {
     .slice()
     .sort(
       (left, right) =>
-        (left.route_order ?? Number.MAX_SAFE_INTEGER) - (right.route_order ?? Number.MAX_SAFE_INTEGER) ||
+        ((left.route_order ?? Number.MAX_SAFE_INTEGER) - (right.route_order ?? Number.MAX_SAFE_INTEGER)) ||
         new Date(left.scheduled_start_at).getTime() - new Date(right.scheduled_start_at).getTime()
     );
 }
@@ -624,6 +737,10 @@ export function AdminDashboardPage() {
   const dashboard = repositories.staffingRepository.getAdminDashboard({
     referenceDate: dashboardDate
   });
+  const scheduleRisks = buildTodayScheduleRisks({
+    db,
+    referenceDate: dashboardDate
+  });
   const getPausedPatientOptionKey = (patient: (typeof dashboard.pausedPatients)[number]) =>
     [patient.patientId, patient.source, patient.scheduledStartAt ?? "expected"].join(":");
   const selectedPausedPatient =
@@ -660,6 +777,8 @@ export function AdminDashboardPage() {
         />
         <DashboardStatsBlock title="上個月統計" stats={dashboard.previousMonth} />
       </div>
+
+      <ScheduleRiskPanel risks={scheduleRisks} />
 
       <div className="grid gap-6 xl:grid-cols-2">
         <Panel title="醫師綜合表現排行">
@@ -882,12 +1001,61 @@ export function AdminDashboardPage() {
                 const patient = schedule
                   ? db.patients.find((item) => item.id === schedule.patient_id)
                   : undefined;
+                const impactPreview = buildRescheduleImpactPreview({
+                  action,
+                  schedules: db.visit_schedules,
+                  patients: db.patients,
+                  doctors: db.doctors
+                });
                 return (
                   <div key={action.id} className="rounded-2xl border border-slate-200 bg-white p-4 text-sm">
                     <div className="flex items-center justify-between gap-3">
                       <p className="font-semibold text-brand-ink">{patient ? maskPatientName(patient.name) : action.visit_schedule_id}</p>
                       <Badge value={action.status} compact />
                     </div>
+                    {impactPreview ? (
+                      <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-950">
+                        <p className="font-semibold text-brand-ink">排程變更影響預覽</p>
+                        <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                          <div>
+                            <p className="text-amber-800">受影響個案</p>
+                            <p className="mt-1 font-semibold">{impactPreview.patientName}</p>
+                          </div>
+                          <div>
+                            <p className="text-amber-800">原醫師 / 新醫師</p>
+                            <p className="mt-1 font-semibold">
+                              {impactPreview.originalDoctorName} → {impactPreview.newDoctorName}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-amber-800">原路線</p>
+                            <p className="mt-1 font-semibold">{impactPreview.originalRouteLabel}</p>
+                          </div>
+                          <div>
+                            <p className="text-amber-800">調整後路線</p>
+                            <p className="mt-1 font-semibold">{impactPreview.newRouteLabel}</p>
+                          </div>
+                        </div>
+                        <div className="mt-3">
+                          <p className="text-amber-800">路線順序變化</p>
+                          <ul className="mt-1 space-y-1">
+                            {impactPreview.routeOrderChanges.slice(0, 4).map((change) => (
+                              <li key={change}>{change}</li>
+                            ))}
+                          </ul>
+                        </div>
+                        <div className="mt-3">
+                          <p className="text-amber-800">LINE 通知草稿</p>
+                          <p className="mt-1 whitespace-pre-line rounded-xl bg-white/80 p-2 text-slate-700">
+                            {impactPreview.lineDraft}
+                          </p>
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="mt-3 rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-500">
+                        找不到原排程，暫無法產生影響預覽。
+                      </p>
+                    )}
                   </div>
                 );
               })}
@@ -2439,6 +2607,8 @@ export function AdminPatientsPage() {
   const [draft, setDraft] = useState<Patient>(() => buildPatientDraft(patients[0]));
   const [selectedPatientIds, setSelectedPatientIds] = useState<string[]>([]);
   const [recentAction, setRecentAction] = useState<string | null>(null);
+  const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
+  const [isBatchActionsDialogOpen, setIsBatchActionsDialogOpen] = useState(false);
 
   const selectedPatient = patients.find((patient) => patient.id === selectedId);
   const selectedProfile = selectedPatient
@@ -2840,6 +3010,7 @@ export function AdminPatientsPage() {
         ? `${isSpreadsheet ? "Excel" : "CSV"} 匯入完成：成功 ${importedCount} 筆，略過 ${skippedCount} 筆。${skippedReasons[0]}${geocodingText}`
         : `${isSpreadsheet ? "Excel" : "CSV"} 匯入完成：成功 ${importedCount} 筆。${geocodingText}`
     );
+    setIsImportDialogOpen(false);
     event.target.value = "";
   };
 
@@ -2848,31 +3019,29 @@ export function AdminPatientsPage() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 lg:space-y-6">
       <Panel
         title="個案管理頁"
         action={
-          <div className="flex flex-wrap gap-2">
+          <div className="grid w-full grid-cols-3 gap-2 sm:w-auto sm:flex sm:flex-wrap">
             <button
               type="button"
-              onClick={handleDownloadCsvTemplate}
-              className="rounded-full bg-brand-sand px-4 py-2 text-sm font-semibold text-brand-forest"
+              onClick={() => setIsBatchActionsDialogOpen(true)}
+              className="rounded-full bg-white px-3 py-2 text-xs font-semibold text-brand-ink ring-1 ring-slate-200 sm:px-4 sm:text-sm"
             >
-              下載 CSV 範本
+              批次操作
             </button>
-            <label className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-brand-ink ring-1 ring-slate-200">
-              CSV / Excel 匯入
-              <input
-                type="file"
-                accept=".csv,text/csv,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
-                className="sr-only"
-                onChange={(event) => void handlePatientImport(event)}
-              />
-            </label>
+            <button
+              type="button"
+              onClick={() => setIsImportDialogOpen(true)}
+              className="rounded-full bg-brand-sand px-3 py-2 text-xs font-semibold text-brand-forest sm:px-4 sm:text-sm"
+            >
+              匯入工具
+            </button>
             <button
               type="button"
               onClick={() => openPatientEditor()}
-              className="rounded-full bg-brand-coral px-4 py-2 text-sm font-semibold text-white"
+              className="rounded-full bg-brand-coral px-3 py-2 text-xs font-semibold text-white sm:px-4 sm:text-sm"
             >
               新增個案
             </button>
@@ -2882,78 +3051,110 @@ export function AdminPatientsPage() {
         {recentAction ? (
           <div
             role="status"
-            className="mb-4 rounded-2xl border border-brand-sand bg-brand-sand/50 px-4 py-3 text-sm text-brand-ink"
+            className="mb-3 rounded-2xl border border-brand-sand bg-brand-sand/50 px-3 py-2 text-xs text-brand-ink sm:px-4 sm:py-3 sm:text-sm"
           >
             最近操作：{recentAction}
           </div>
         ) : null}
-        <div className="mb-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <p className="font-semibold text-brand-ink">
-              批次處理區
-            </p>
-            <p className="text-slate-500">目前已勾選 {selectedPatientIds.length} 位個案</p>
-          </div>
-          <div className="mt-3 flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => pausePatients(selectedPatientIds, "批次暫停")}
-              className="rounded-full bg-brand-sand px-4 py-2 text-sm font-semibold text-brand-forest"
-            >
-              暫停
-            </button>
-            <button
-              type="button"
-              onClick={() => resumePatients(selectedPatientIds, "批次恢復")}
-              className="rounded-full bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700 ring-1 ring-emerald-200"
-            >
-              恢復
-            </button>
-            <button
-              type="button"
-              onClick={() => closePatients(selectedPatientIds, "批次結案")}
-              className="rounded-full bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-700 ring-1 ring-slate-300"
-            >
-              結案
-            </button>
-            <button
-              type="button"
-              onClick={() => batchDeletePatients(selectedPatientIds)}
-              className="rounded-full bg-rose-50 px-4 py-2 text-sm font-semibold text-rose-700 ring-1 ring-rose-200"
-            >
-              批次刪除
-            </button>
-            <button
-              type="button"
-              onClick={() => setSelectedPatientIds(patients.map((patient) => patient.id))}
-              className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-brand-ink ring-1 ring-slate-200"
-            >
-              全選
-            </button>
-            <button
-              type="button"
-              onClick={() => setSelectedPatientIds([])}
-              className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-brand-ink ring-1 ring-slate-200"
-            >
-              清除全選
-            </button>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm sm:px-4 sm:py-3">
+          <div>
+            <p className="font-semibold text-brand-ink">個案管理清單</p>
+            <p className="mt-0.5 text-xs text-slate-500">目前已勾選 {selectedPatientIds.length} 位個案</p>
           </div>
         </div>
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
-          <div className="max-h-[calc(100dvh-320px)] min-h-[320px] overflow-auto">
-            <table className="min-w-[980px] w-full border-collapse text-left text-sm">
+          <div className="grid gap-2 p-2 md:hidden">
+            {displayPatients.map((patient) => {
+              const isClosedPatient = patient.status === "closed";
+              const isSelectedPatient = selectedId === patient.id;
+              const maskedName = maskPatientName(patient.name);
+              const addressLabel = patient.home_address || patient.address || "未設定";
+              const doctorName = db.doctors.find((doctor) => doctor.id === patient.preferred_doctor_id)?.name ?? "未指定";
+
+              return (
+                <article
+                  key={`mobile-${patient.id}`}
+                  data-patient-id={patient.id}
+                  data-patient-status={patient.status}
+                  className={`rounded-2xl border px-3 py-3 text-sm ${
+                    isClosedPatient
+                      ? "border-slate-200 bg-slate-50 text-slate-500"
+                      : isSelectedPatient
+                        ? "border-brand-sand bg-brand-sand/45"
+                        : "border-slate-200 bg-white"
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <label className="flex min-w-0 items-start gap-2 font-semibold text-brand-ink">
+                      <input
+                        type="checkbox"
+                        checked={selectedPatientIds.includes(patient.id)}
+                        onChange={(event) => togglePatientSelection(patient.id, event.target.checked)}
+                        aria-label={`行動版 ${maskedName} 勾選`}
+                        className="mt-1 shrink-0"
+                      />
+                      <span className="min-w-0 break-words">個案 {maskedName}</span>
+                    </label>
+                    <Badge value={patient.status} compact />
+                  </div>
+                  <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                    <div className="rounded-xl bg-slate-50 px-3 py-2">
+                      <p className="text-slate-500">時段</p>
+                      <p className="mt-0.5 font-semibold text-brand-ink">{patient.preferred_service_slot || "未設定"}</p>
+                    </div>
+                    <div className="rounded-xl bg-slate-50 px-3 py-2">
+                      <p className="text-slate-500">醫師</p>
+                      <p className="mt-0.5 font-semibold text-brand-ink">{doctorName}</p>
+                    </div>
+                  </div>
+                  <div className="mt-3 space-y-1 text-xs text-slate-600">
+                    <p className="card-clamp-2">診斷：{patient.primary_diagnosis || "未設定"}</p>
+                    <p className="card-clamp-2">需求：{patient.service_needs.join("、") || "未設定"}</p>
+                    <p className="card-clamp-2">地址：{addressLabel}</p>
+                  </div>
+                  <div className="mt-3 grid grid-cols-3 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => openPatientEditor(patient)}
+                      aria-label={`行動版編輯 ${maskedName}`}
+                      className="rounded-full bg-white px-3 py-2 text-xs font-semibold text-brand-forest ring-1 ring-slate-200"
+                    >
+                      編輯
+                    </button>
+                    <Link
+                      to={`/admin/family-line?patientId=${encodeURIComponent(patient.id)}`}
+                      aria-label={`行動版 ${maskedName} 家屬聯繫`}
+                      className="rounded-full bg-emerald-50 px-3 py-2 text-center text-xs font-semibold text-emerald-700 ring-1 ring-emerald-200"
+                    >
+                      家屬
+                    </Link>
+                    <button
+                      type="button"
+                      onClick={() => deletePatient(patient)}
+                      aria-label={`行動版刪除 ${maskedName}`}
+                      className="rounded-full bg-white px-3 py-2 text-xs font-semibold text-rose-600 ring-1 ring-rose-200"
+                    >
+                      刪除
+                    </button>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+          <div className="hidden max-h-[calc(100dvh-260px)] min-h-[390px] overflow-auto md:block">
+            <table className="w-full min-w-[920px] border-collapse text-left text-sm">
               <caption className="sr-only">個案管理清單</caption>
               <thead className="sticky top-0 z-10 bg-slate-50 text-xs font-semibold text-slate-500 shadow-[0_1px_0_rgba(148,163,184,0.28)]">
                 <tr>
-                  <th scope="col" className="w-12 px-4 py-3">選取</th>
-                  <th scope="col" className="px-4 py-3">個案姓名</th>
-                  <th scope="col" className="px-4 py-3">狀態</th>
-                  <th scope="col" className="px-4 py-3">主診斷</th>
-                  <th scope="col" className="px-4 py-3">需求</th>
-                  <th scope="col" className="px-4 py-3">服務時段</th>
-                  <th scope="col" className="px-4 py-3">負責醫師</th>
-                  <th scope="col" className="min-w-[220px] px-4 py-3">地址 / 定位</th>
-                  <th scope="col" className="w-40 px-4 py-3">操作</th>
+                  <th scope="col" className="w-12 px-3 py-3">選取</th>
+                  <th scope="col" className="w-[76px] px-3 py-3">個案姓名</th>
+                  <th scope="col" className="w-[76px] px-3 py-3">狀態</th>
+                  <th scope="col" className="px-3 py-3">主診斷</th>
+                  <th scope="col" className="px-3 py-3">需求</th>
+                  <th scope="col" className="w-[88px] px-3 py-3">服務時段</th>
+                  <th scope="col" className="w-[88px] px-3 py-3">負責醫師</th>
+                  <th scope="col" className="min-w-[220px] px-3 py-3">地址 / 定位</th>
+                  <th scope="col" className="w-36 px-3 py-3">操作</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -2980,7 +3181,7 @@ export function AdminPatientsPage() {
                             : "bg-white hover:bg-slate-50"
                       }`}
                     >
-                      <td className="px-4 py-3">
+                      <td className="px-3 py-3">
                         <input
                           type="checkbox"
                           checked={selectedPatientIds.includes(patient.id)}
@@ -2988,16 +3189,16 @@ export function AdminPatientsPage() {
                           aria-label={`${maskedName} 勾選`}
                         />
                       </td>
-                      <th scope="row" className={`px-4 py-3 font-semibold ${isClosedPatient ? "text-slate-500" : "text-brand-ink"}`}>
+                      <th scope="row" className={`whitespace-nowrap px-3 py-3 font-semibold ${isClosedPatient ? "text-slate-500" : "text-brand-ink"}`}>
                         {maskedName}
                       </th>
-                      <td className="px-4 py-3">
+                      <td className="whitespace-nowrap px-3 py-3">
                         <Badge value={patient.status} compact />
                       </td>
-                      <td className={`px-4 py-3 ${isClosedPatient ? "text-slate-500" : "text-slate-700"}`}>
+                      <td className={`px-3 py-3 ${isClosedPatient ? "text-slate-500" : "text-slate-700"}`}>
                         {patient.primary_diagnosis || "未設定"}
                       </td>
-                      <td className={`px-4 py-3 ${isClosedPatient ? "text-slate-400" : "text-slate-600"}`}>
+                      <td className={`px-3 py-3 ${isClosedPatient ? "text-slate-400" : "text-slate-600"}`}>
                         <p>{patient.service_needs.join("、") || "未設定"}</p>
                         {patient.reminder_tags.length > 0 ? (
                           <div className="mt-1 flex flex-wrap gap-1">
@@ -3012,17 +3213,17 @@ export function AdminPatientsPage() {
                           </div>
                         ) : null}
                       </td>
-                      <td className={`px-4 py-3 ${isClosedPatient ? "text-slate-400" : "text-slate-600"}`}>
+                      <td className={`whitespace-nowrap px-3 py-3 ${isClosedPatient ? "text-slate-400" : "text-slate-600"}`}>
                         {patient.preferred_service_slot || "未設定"}
                       </td>
-                      <td className={`px-4 py-3 ${isClosedPatient ? "text-slate-400" : "text-slate-600"}`}>
+                      <td className={`px-3 py-3 ${isClosedPatient ? "text-slate-400" : "text-slate-600"}`}>
                         {db.doctors.find((doctor) => doctor.id === patient.preferred_doctor_id)?.name ?? "未指定"}
                       </td>
-                      <td className={`px-4 py-3 ${isClosedPatient ? "text-slate-400" : "text-slate-600"}`}>
+                      <td className={`px-3 py-3 ${isClosedPatient ? "text-slate-400" : "text-slate-600"}`}>
                         <p className="card-clamp-2">{addressLabel}</p>
                         <p className="mt-1 text-xs text-slate-400">位置關鍵字：{locationLabel}</p>
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="px-3 py-3">
                         <div className="flex flex-wrap gap-2">
                           <button
                             type="button"
@@ -3062,22 +3263,152 @@ export function AdminPatientsPage() {
         </div>
       </Panel>
 
+      {isImportDialogOpen ? (
+        <div className="fixed inset-0 z-40 flex items-end justify-center bg-slate-950/35 p-2 sm:items-center sm:p-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="patient-import-dialog-title"
+            className="max-h-[calc(100dvh-1rem)] w-full max-w-lg overflow-y-auto rounded-[1.25rem] border border-white/70 bg-white p-4 shadow-2xl sm:rounded-[1.75rem] sm:p-5"
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-sm font-medium text-brand-coral">個案資料工具</p>
+                <h2 id="patient-import-dialog-title" className="mt-1 text-xl font-semibold text-brand-ink">
+                  CSV / Excel 匯入
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsImportDialogOpen(false)}
+                className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-600 ring-1 ring-slate-200"
+              >
+                關閉
+              </button>
+            </div>
+            <div className="mt-4 space-y-3 text-sm text-slate-600 sm:mt-5">
+              <button
+                type="button"
+                onClick={handleDownloadCsvTemplate}
+                className="w-full rounded-2xl border border-brand-sand bg-brand-sand/60 px-4 py-3 text-left font-semibold text-brand-forest"
+              >
+                下載 CSV 範本
+              </button>
+              <label className="block cursor-pointer rounded-2xl border border-slate-200 bg-white px-4 py-3 font-semibold text-brand-ink">
+                選擇 CSV / Excel 檔案匯入
+                <span className="mt-1 block text-xs font-normal text-slate-500">
+                  匯入後會嘗試補上 Google Map 座標。
+                </span>
+                <input
+                  type="file"
+                  aria-label="CSV / Excel 匯入"
+                  accept=".csv,text/csv,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+                  className="sr-only"
+                  onChange={(event) => void handlePatientImport(event)}
+                />
+              </label>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {isBatchActionsDialogOpen ? (
+        <div className="fixed inset-0 z-40 flex items-end justify-center bg-slate-950/35 p-2 sm:items-center sm:p-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="patient-batch-dialog-title"
+            className="max-h-[calc(100dvh-1rem)] w-full max-w-xl overflow-y-auto rounded-[1.25rem] border border-white/70 bg-white p-4 shadow-2xl sm:rounded-[1.75rem] sm:p-5"
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-sm font-medium text-brand-coral">批次處理區</p>
+                <h2 id="patient-batch-dialog-title" className="mt-1 text-xl font-semibold text-brand-ink">
+                  已勾選 {selectedPatientIds.length} 位個案
+                </h2>
+                <p className="mt-1 text-sm text-slate-500">勾選後執行狀態變更或刪除。</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsBatchActionsDialogOpen(false)}
+                className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-600 ring-1 ring-slate-200"
+              >
+                關閉
+              </button>
+            </div>
+            <div className="mt-4 grid grid-cols-2 gap-2 sm:mt-5">
+              <button
+                type="button"
+                onClick={() => {
+                  pausePatients(selectedPatientIds, "批次暫停");
+                  setIsBatchActionsDialogOpen(false);
+                }}
+                className="rounded-2xl bg-brand-sand px-4 py-3 text-sm font-semibold text-brand-forest"
+              >
+                暫停
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  resumePatients(selectedPatientIds, "批次恢復");
+                  setIsBatchActionsDialogOpen(false);
+                }}
+                className="rounded-2xl bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700 ring-1 ring-emerald-200"
+              >
+                恢復
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  closePatients(selectedPatientIds, "批次結案");
+                  setIsBatchActionsDialogOpen(false);
+                }}
+                className="rounded-2xl bg-slate-100 px-4 py-3 text-sm font-semibold text-slate-700 ring-1 ring-slate-300"
+              >
+                結案
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  batchDeletePatients(selectedPatientIds);
+                  setIsBatchActionsDialogOpen(false);
+                }}
+                className="rounded-2xl bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700 ring-1 ring-rose-200"
+              >
+                批次刪除
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedPatientIds(patients.map((patient) => patient.id))}
+                className="rounded-2xl bg-white px-4 py-3 text-sm font-semibold text-brand-ink ring-1 ring-slate-200"
+              >
+                全選
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedPatientIds([])}
+                className="rounded-2xl bg-white px-4 py-3 text-sm font-semibold text-brand-ink ring-1 ring-slate-200"
+              >
+                清除全選
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {editorOpen ? (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/35 p-4">
+        <div className="fixed inset-0 z-40 flex items-end justify-center bg-slate-950/35 p-2 sm:items-center sm:p-4">
           <div
             role="dialog"
             aria-modal="true"
             aria-label={selectedPatient ? `${maskPatientName(selectedPatient.name)} 編輯資料` : "新增個案視窗"}
-            className="max-h-[92vh] w-full max-w-5xl overflow-y-auto rounded-[2rem] border border-white/70 bg-white p-5 shadow-2xl sm:p-6"
+            className="max-h-[calc(100dvh-1rem)] w-full max-w-5xl overflow-y-auto rounded-[1.25rem] border border-white/70 bg-white p-4 shadow-2xl sm:rounded-[2rem] sm:p-6"
           >
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <h2 className="text-lg font-semibold text-brand-ink">
                   {selectedPatient ? `${maskPatientName(selectedPatient.name)} 編輯資料` : "新增 / 編輯個案"}
                 </h2>
-                <p className="mt-1 text-sm text-slate-500">
-                  編輯完畢後視窗會自動收起，不會常駐在個案管理頁。
-                </p>
               </div>
               <div className="flex flex-wrap gap-2">
                 {selectedPatient ? (
@@ -3098,7 +3429,7 @@ export function AdminPatientsPage() {
               </div>
             </div>
 
-            <div className="mt-6 grid gap-4 md:grid-cols-2">
+            <div className="mt-4 grid gap-4 md:grid-cols-2 sm:mt-6">
               <label className="block text-sm">
                 <span className="mb-1 block font-medium text-brand-ink">個案姓名</span>
                 <input aria-label="個案姓名" value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} className="w-full rounded-2xl border border-slate-200 px-4 py-3" />
@@ -3111,9 +3442,7 @@ export function AdminPatientsPage() {
               <label className="block text-sm">
                 <span className="mb-1 block font-medium text-brand-ink">地址</span>
                 <input aria-label="地址" value={draft.home_address} onChange={(event) => setDraft({ ...draft, address: event.target.value, home_address: event.target.value })} className="w-full rounded-2xl border border-slate-200 px-4 py-3" />
-                <span className="mt-1 block text-xs text-slate-500">
-                  住家地址會作為預設定位來源，也會同步帶到排程與導航。
-                </span>
+                <span className="mt-1 block text-xs text-slate-500">會同步帶到排程與導航。</span>
               </label>
               <label className="block text-sm">
                 <span className="mb-1 block font-medium text-brand-ink">位置關鍵字</span>
@@ -3128,9 +3457,7 @@ export function AdminPatientsPage() {
                   }
                   className="w-full rounded-2xl border border-slate-200 px-4 py-3"
                 />
-                <span className="mt-1 block text-xs text-slate-500">
-                  這個欄位就是 Google Maps 搜尋材料。預設值是「同住址」；若填入大樓名稱、管理室或巷口地標，系統會優先用這個文字定位。
-                </span>
+                <span className="mt-1 block text-xs text-slate-500">填地標時會優先用它定位。</span>
               </label>
               <div className="md:col-span-2 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-500">
                 搜尋預覽：
@@ -3235,7 +3562,7 @@ export function AdminPatientsPage() {
             </div>
 
             <p className="mt-4 text-xs text-slate-500">
-              儲存後會更新個案的負責醫師與服務時段；實際路線請改到排程管理頁建立、儲存與實行。
+              路線請到排程管理頁建立與實行。
             </p>
             <div className="mt-4 flex flex-wrap gap-3">
               <button type="button" onClick={saveDraft} className="rounded-full bg-brand-forest px-5 py-3 text-sm font-semibold text-white">
@@ -3320,6 +3647,151 @@ export function AdminPatientsPage() {
   );
 }
 
+type PatientTimelineItem = {
+  id: string;
+  occurredAt: string;
+  category: "歷次訪視" | "病歷摘要" | "家屬聯繫" | "提醒" | "異常" | "LINE 通知";
+  title: string;
+  detail: string;
+  meta: string;
+  status?: string;
+};
+
+function latestVisitRecordTime(record: VisitRecord) {
+  return (
+    record.departure_from_patient_home_time ??
+    record.treatment_end_time ??
+    record.arrival_time ??
+    record.departure_time ??
+    record.updated_at
+  );
+}
+
+function buildVisitSummaryItem(schedule: VisitSchedule, doctorName: string): PatientTimelineItem {
+  return {
+    id: `schedule-${schedule.id}`,
+    occurredAt: schedule.scheduled_start_at,
+    category: "歷次訪視",
+    title: `${formatDateTimeFull(schedule.scheduled_start_at)} ${schedule.visit_type}`,
+    detail: schedule.note || "尚未填寫訪視備註。",
+    meta: `主責：${doctorName}｜${schedule.service_time_slot || "未設定時段"}`,
+    status: schedule.status
+  };
+}
+
+function buildMedicalSummaryItem(record: VisitRecord, schedule: VisitSchedule | undefined): PatientTimelineItem {
+  const summary = [
+    record.doctor_note || record.physician_assessment,
+    record.caregiver_feedback ? `家屬回饋：${record.caregiver_feedback}` : "",
+    record.follow_up_note ? `後續：${record.follow_up_note}` : ""
+  ]
+    .filter(Boolean)
+    .join("｜");
+
+  return {
+    id: `record-${record.id}`,
+    occurredAt: latestVisitRecordTime(record),
+    category: "病歷摘要",
+    title: schedule ? `${schedule.visit_type} 病歷摘要` : "病歷摘要",
+    detail: summary || "尚未填寫醫師摘要。",
+    meta: [
+      `抵達 ${formatTimeOnly(record.arrival_time)}`,
+      `離開 ${formatTimeOnly(record.departure_from_patient_home_time)}`,
+      record.next_visit_suggestion_date ? `建議下次 ${record.next_visit_suggestion_date}` : ""
+    ]
+      .filter(Boolean)
+      .join("｜"),
+    status: record.family_followup_status
+  };
+}
+
+function buildContactItem(log: ContactLog): PatientTimelineItem {
+  return {
+    id: `contact-${log.id}`,
+    occurredAt: log.contacted_at,
+    category: log.channel === "line" ? "LINE 通知" : "家屬聯繫",
+    title: log.subject,
+    detail: log.content,
+    meta: `${channelLabel(log.channel)}｜${log.outcome}`,
+    status: log.channel
+  };
+}
+
+function buildReminderItem(reminder: Reminder): PatientTimelineItem {
+  return {
+    id: `reminder-${reminder.id}`,
+    occurredAt: reminder.due_at,
+    category: "提醒",
+    title: reminder.title,
+    detail: reminder.detail,
+    meta: `到期：${formatDateTimeFull(reminder.due_at)}`,
+    status: reminder.status
+  };
+}
+
+function buildNotificationTaskItem(task: NotificationTask): PatientTimelineItem {
+  const previewText = Object.values(task.preview_payload).filter(Boolean).join("｜");
+  return {
+    id: `notification-task-${task.id}`,
+    occurredAt: task.sent_at ?? task.scheduled_send_at,
+    category: task.channel === "line" ? "LINE 通知" : "提醒",
+    title: `${channelLabel(task.channel)}｜${task.trigger_type}`,
+    detail:
+      task.reply_excerpt ??
+      task.failure_reason ??
+      (previewText || "通知已建立，等待後續狀態更新。"),
+    meta: `${task.recipient_name}｜${statusLabel(task.status)}`,
+    status: task.status
+  };
+}
+
+function buildExceptionItem(item: NotificationCenterItem): PatientTimelineItem {
+  return {
+    id: `notification-center-${item.id}`,
+    occurredAt: item.created_at,
+    category: item.source_type === "patient_exception" ? "異常" : "提醒",
+    title: item.title,
+    detail: item.content,
+    meta: item.reply_text ? `回覆：${item.reply_text}` : statusLabel(item.status),
+    status: item.status
+  };
+}
+
+function buildPatientTimeline(profile: PatientProfile, doctorName: string) {
+  const scheduleById = new Map(profile.recentSchedules.map((schedule) => [schedule.id, schedule]));
+  const timeline: PatientTimelineItem[] = [
+    ...profile.recentSchedules.map((schedule) => buildVisitSummaryItem(schedule, doctorName)),
+    ...profile.visitRecords.map((record) =>
+      buildMedicalSummaryItem(record, scheduleById.get(record.visit_schedule_id))
+    ),
+    ...profile.contactLogs.map(buildContactItem),
+    ...profile.reminders.map(buildReminderItem),
+    ...profile.notificationTasks.map(buildNotificationTaskItem),
+    ...profile.notificationCenterItems.map(buildExceptionItem)
+  ];
+
+  return timeline
+    .sort((left, right) => new Date(right.occurredAt).getTime() - new Date(left.occurredAt).getTime())
+    .slice(0, 20);
+}
+
+function timelineCategoryTone(category: PatientTimelineItem["category"]) {
+  switch (category) {
+    case "異常":
+      return "bg-rose-50 text-rose-700 ring-rose-100";
+    case "LINE 通知":
+      return "bg-emerald-50 text-emerald-700 ring-emerald-100";
+    case "提醒":
+      return "bg-amber-50 text-amber-700 ring-amber-100";
+    case "病歷摘要":
+      return "bg-sky-50 text-sky-700 ring-sky-100";
+    case "家屬聯繫":
+      return "bg-violet-50 text-violet-700 ring-violet-100";
+    case "歷次訪視":
+      return "bg-slate-100 text-slate-700 ring-slate-200";
+  }
+}
+
 export function AdminPatientDetailPage() {
   const { id } = useParams();
   const { repositories } = useAppContext();
@@ -3329,11 +3801,18 @@ export function AdminPatientDetailPage() {
     return <Panel title="查無個案">找不到指定個案。</Panel>;
   }
 
+  const doctorName =
+    repositories.patientRepository.getDoctors().find((doctor) => doctor.id === profile.patient.preferred_doctor_id)?.name ??
+    profile.patient.preferred_doctor_id;
+  const timeline = buildPatientTimeline(profile, doctorName);
+  const exceptionCount = timeline.filter((item) => item.category === "異常").length;
+  const lineNotificationCount = timeline.filter((item) => item.category === "LINE 通知").length;
+
   return (
     <div className="space-y-6">
       <Panel title={`${maskPatientName(profile.patient.name)} 詳細頁`}>
         <div className="grid gap-4 md:grid-cols-2 text-sm text-slate-600">
-          <p>主責醫師：{repositories.patientRepository.getDoctors().find((doctor) => doctor.id === profile.patient.preferred_doctor_id)?.name ?? profile.patient.preferred_doctor_id}</p>
+          <p>主責醫師：{doctorName}</p>
           <p>主要診斷：{profile.patient.primary_diagnosis}</p>
           <p>需求項目：{profile.patient.service_needs.join("、") || "未設定"}</p>
           <p>服務時段：{profile.patient.preferred_service_slot || "未設定"}</p>
@@ -3346,6 +3825,44 @@ export function AdminPatientDetailPage() {
           </p>
           <p>狀態：{profile.patient.status}</p>
           <p className="md:col-span-2">特殊提醒：{profile.patient.reminder_tags.join("、") || "未設定"}</p>
+        </div>
+      </Panel>
+
+      <Panel title="照護時間軸">
+        <div className="grid gap-3 sm:grid-cols-3">
+          <StatCard label="時間軸事件" value={timeline.length} />
+          <StatCard label="異常待追蹤" value={exceptionCount} />
+          <StatCard label="LINE 通知" value={lineNotificationCount} />
+        </div>
+
+        <div className="mt-5 space-y-3">
+          {timeline.map((item) => (
+            <article key={item.id} className="rounded-2xl border border-slate-200 bg-white p-4 text-sm">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ${timelineCategoryTone(item.category)}`}>
+                      {item.category}
+                    </span>
+                    {item.status ? (
+                      <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${statusTone(item.status)}`}>
+                        {statusLabel(item.status)}
+                      </span>
+                    ) : null}
+                  </div>
+                  <h2 className="mt-2 text-base font-semibold text-brand-ink">{item.title}</h2>
+                </div>
+                <time className="text-xs font-medium text-slate-500">{formatDateTimeFull(item.occurredAt)}</time>
+              </div>
+              <p className="mt-2 whitespace-pre-line text-slate-600">{item.detail}</p>
+              <p className="mt-2 text-xs text-slate-500">{item.meta}</p>
+            </article>
+          ))}
+          {timeline.length === 0 ? (
+            <p className="rounded-2xl bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
+              目前尚無訪視、病歷、聯繫、提醒或通知紀錄。
+            </p>
+          ) : null}
         </div>
       </Panel>
 

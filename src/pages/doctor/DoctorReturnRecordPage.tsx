@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { addMinutes } from "date-fns";
 import { useForm, useWatch } from "react-hook-form";
@@ -172,6 +172,7 @@ const chiefComplaintOptions = [
 ] as const;
 
 const returnRecordDraftStorageKey = "tcm-return-record-drafts";
+const unusualTreatmentDurationMinutes = 240;
 
 function normalizeReturnRecordFormValues(values: ReturnRecordFormValues): ReturnRecordFormValues {
   return {
@@ -590,6 +591,62 @@ function hasReturnRecordDraftContent(values: ReturnRecordFormValues) {
       values.treatment_topical_medication_note.trim() ||
       values.generated_record_text.trim()
   );
+}
+
+function hasFourDiagnosisContent(values: ReturnRecordFormValues) {
+  return fourDiagnosisSections.some(
+    (section) =>
+      values[section.field].length > 0 ||
+      values[section.otherField].trim().length > 0
+  );
+}
+
+function hasSelectedTreatment(values: ReturnRecordFormValues) {
+  return Boolean(
+    values.treatment_chinese_medicine_checked ||
+      values.treatment_acupuncture_checked ||
+      values.treatment_topical_medication_checked
+  );
+}
+
+function buildReturnRecordPreSubmitIssues(values: ReturnRecordFormValues) {
+  const issues: string[] = [];
+  const treatmentStartTime = fromDateTimeLocalValue(values.treatment_start_time);
+  const treatmentEndTime = fromDateTimeLocalValue(values.treatment_end_time);
+  const chiefComplaint =
+    values.chief_complaint_option === "其他"
+      ? values.chief_complaint_other.trim()
+      : values.chief_complaint_option.trim();
+
+  if (!chiefComplaint) {
+    issues.push("主訴未填：請選擇主訴；若選「其他」請補充內容。");
+  }
+  if (!hasFourDiagnosisContent(values)) {
+    issues.push("四診全空：請至少勾選或補充一項望、聞、問、切內容。");
+  }
+  if (!treatmentStartTime || !treatmentEndTime) {
+    issues.push("治療時間異常：請完整填寫開始與結束治療時間。");
+  } else {
+    const treatmentDurationMinutes = calculateTreatmentDurationMinutes(
+      values.treatment_start_time,
+      values.treatment_end_time
+    );
+    if (new Date(treatmentEndTime) <= new Date(treatmentStartTime)) {
+      issues.push("治療時間異常：結束治療時間需晚於開始治療時間。");
+    } else if (treatmentDurationMinutes > unusualTreatmentDurationMinutes) {
+      issues.push(
+        `治療時間異常：目前治療時間為 ${treatmentDurationMinutes} 分鐘，請確認是否超過 ${unusualTreatmentDurationMinutes} 分鐘。`
+      );
+    }
+  }
+  if (!hasSelectedTreatment(values)) {
+    issues.push("未選療法：請至少勾選中藥、針灸或外用藥其中一項。");
+  }
+  if (values.add_to_reminders && !values.reminder_note.trim()) {
+    issues.push("提醒事項有勾但內容空白：請補充提醒內容，或取消加入通知中心。");
+  }
+
+  return issues;
 }
 
 function resolveVisitTreatmentWindow(detail: VisitDetail, record: VisitRecord | undefined): VisitTreatmentWindow {
@@ -1146,37 +1203,24 @@ export function DoctorReturnRecordPage({
           })
       : null
   );
+  const initialFormValues = useMemo(() => {
+    const values = buildReturnRecordFormValues({
+      routeKey: defaultRouteKey,
+      patientId: defaultPatientId,
+      timeDefaults: initialTimeDefaults,
+      previousRecord: undefined,
+      selectedPatientMedicalHistory: "",
+      loadPrevious: false
+    });
+    return {
+      ...values,
+      generated_record_text: buildInitialGeneratedRecordText(values)
+    };
+  }, [defaultPatientId, defaultRouteKey, initialTimeDefaults]);
 
   const { control, formState, getValues, handleSubmit, register, reset, setValue } =
     useForm<ReturnRecordFormValues>({
-      defaultValues: {
-        route_key: defaultRouteKey,
-        patient_id: defaultPatientId,
-        mark_as_exception: false,
-        add_to_reminders: false,
-        reminder_note: "",
-        chief_complaint_option: "",
-        chief_complaint_other: "",
-        treatment_start_time: initialTimeDefaults.treatmentStartTime,
-        treatment_end_time: initialTimeDefaults.treatmentEndTime,
-        inspection_tags: [],
-        inspection_other: "",
-        listening_tags: [],
-        listening_other: "",
-        inquiry_tags: [],
-        inquiry_other: "",
-        palpation_tags: [],
-        palpation_other: "",
-        medical_history_tags: [],
-        medical_history_other: "",
-        treatment_chinese_medicine_checked: false,
-        treatment_chinese_medicine_note: "",
-        treatment_acupuncture_checked: false,
-        treatment_acupuncture_note: "",
-        treatment_topical_medication_checked: false,
-        treatment_topical_medication_note: "",
-        generated_record_text: ""
-      }
+      defaultValues: initialFormValues
     });
 
   const selectedRouteKey = useWatch({ control, name: "route_key" });
@@ -1266,7 +1310,7 @@ export function DoctorReturnRecordPage({
         : undefined,
     [repositories, selectedPatientId, selectedProfile, session.activeDoctorId]
   );
-  const previousAutoDraftRef = useRef("");
+  const previousAutoDraftRef = useRef(initialFormValues.generated_record_text);
   const autoLoadedDriveRecordKeyRef = useRef("");
   const formDirtyRef = useRef(false);
   formDirtyRef.current = formState.isDirty;
@@ -1541,7 +1585,7 @@ export function DoctorReturnRecordPage({
     }
   };
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!selectedRoute) {
       return;
     }
@@ -1563,7 +1607,7 @@ export function DoctorReturnRecordPage({
     setValue
   ]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!selectedPatientId) {
       return;
     }
@@ -1666,7 +1710,7 @@ export function DoctorReturnRecordPage({
     });
   }, [getValues, resolvedChiefComplaint, watchedValues]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const currentDraft = getValues("generated_record_text");
     if (!currentDraft || currentDraft === previousAutoDraftRef.current) {
       setValue("generated_record_text", autoDraft, { shouldDirty: false });
@@ -1900,6 +1944,12 @@ export function DoctorReturnRecordPage({
       return;
     }
 
+    const preSubmitIssues = buildReturnRecordPreSubmitIssues(normalizedValues);
+    if (preSubmitIssues.length > 0) {
+      window.alert(`建立回院病歷前請先確認：\n${preSubmitIssues.map((issue) => `• ${issue}`).join("\n")}`);
+      return;
+    }
+
     const treatmentStartTime = fromDateTimeLocalValue(normalizedValues.treatment_start_time);
     const treatmentEndTime = fromDateTimeLocalValue(normalizedValues.treatment_end_time);
     if (!treatmentStartTime || !treatmentEndTime) {
@@ -1925,15 +1975,6 @@ export function DoctorReturnRecordPage({
       ? "已由醫師回院病歷頁建立病歷，並勾選異常個案。"
       : "已由醫師回院病歷頁建立病歷。";
     const reminderNote = normalizedValues.reminder_note.trim();
-
-    if (normalizedValues.chief_complaint_option === "其他" && !chiefComplaint) {
-      window.alert("若主訴選擇其他，請補充主訴內容。");
-      return;
-    }
-    if (normalizedValues.add_to_reminders && !reminderNote) {
-      window.alert("若要加入通知中心，請補充提醒內容。");
-      return;
-    }
 
     const estimatedMinutes = calculateTreatmentDurationMinutes(
       normalizedValues.treatment_start_time,

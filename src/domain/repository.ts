@@ -69,6 +69,9 @@ export type PatientProfile = {
   recentSchedules: VisitSchedule[];
   contactLogs: ContactLog[];
   visitRecords: VisitRecord[];
+  reminders: Reminder[];
+  notificationTasks: NotificationTask[];
+  notificationCenterItems: NotificationCenterItem[];
   todaySchedule: VisitSchedule | undefined;
 };
 
@@ -150,6 +153,12 @@ export type AdminDashboard = {
   pausedPatients: AdminDashboardPausedPatient[];
   doctorPerformance: AdminDashboardDoctorPerformance[];
 };
+
+export type VisitExceptionReason =
+  | "family_absent"
+  | "patient_status_abnormal"
+  | "address_error"
+  | "urgent_report";
 
 export interface PatientRepository {
   getPatients(): Patient[];
@@ -280,6 +289,12 @@ export interface VisitRepository {
     feedbackCode: VisitFeedbackCode,
     recordedAt?: string
   ): VisitRecord | undefined;
+  reportVisitException(input: {
+    visitScheduleId: string;
+    reason: VisitExceptionReason;
+    note?: string;
+    reportedAt?: string;
+  }): VisitRecord | undefined;
   updateFamilyFollowUpStatus(
     visitScheduleId: string,
     status: FamilyFollowUpStatus,

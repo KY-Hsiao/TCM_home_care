@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ReactElement } from "react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -139,6 +139,27 @@ describe("AppShell", () => {
     ]);
   });
 
+  it("行政端手機導覽可用目錄按鈕收合展開", () => {
+    window.localStorage.setItem(
+      SESSION_STORAGE_KEY,
+      JSON.stringify({
+        role: "admin",
+        activeDoctorId: "doc-001",
+        activeAdminId: "admin-001",
+        authenticatedDoctorId: null,
+        authenticatedAdminId: "admin-001"
+      })
+    );
+
+    renderShell("/admin/dashboard", <AdminDashboardPage />);
+
+    const menuButton = screen.getByRole("button", { name: /目錄/ });
+    expect(menuButton).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(menuButton);
+    expect(menuButton).toHaveAttribute("aria-expanded", "true");
+    expect(within(screen.getByRole("navigation")).getByRole("link", { name: /排程管理/ })).toBeInTheDocument();
+  });
+
   it("行政端可從左側目錄進入家屬聯繫頁", () => {
     window.localStorage.setItem(
       SESSION_STORAGE_KEY,
@@ -220,7 +241,9 @@ describe("AppShell", () => {
     expect(screen.queryByLabelText("Google Calendar ID")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "測試 Google Maps 連線" })).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "顯示機密管理" }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "顯示機密管理" }));
+    });
     expect(screen.getByRole("button", { name: "收起機密管理" })).toHaveAttribute("aria-expanded", "true");
     await waitFor(() => {
       expect(screen.getByText("外部服務設定狀態")).toBeInTheDocument();
@@ -230,7 +253,9 @@ describe("AppShell", () => {
     expect(screen.queryByLabelText("LINE Channel Access Token")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Google Maps API Key")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "測試 Google Maps 連線" }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "測試 Google Maps 連線" }));
+    });
 
     await waitFor(() =>
       expect(screen.getByRole("status")).toHaveTextContent("Google Maps Geocoding 連線正常")
@@ -250,7 +275,12 @@ describe("AppShell", () => {
 
     unmount();
     renderShell("/admin/staff", <AdminStaffPage />);
-    fireEvent.click(screen.getByRole("button", { name: "顯示機密管理" }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "顯示機密管理" }));
+    });
+    await waitFor(() => {
+      expect(screen.getByText("外部服務設定狀態")).toBeInTheDocument();
+    });
     expect(screen.queryByLabelText("LINE Channel Access Token")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Google Maps API Key")).not.toBeInTheDocument();
   });
@@ -856,7 +886,7 @@ describe("AppShell", () => {
     expect(screen.getAllByRole("button", { name: "登出" }).length).toBeGreaterThan(0);
   });
 
-  it("醫師端左側即時導航與回院病歷會在同頁開啟內嵌視窗", () => {
+  it("醫師端左側即時導航與回院病歷會在同頁開啟內嵌視窗", async () => {
     window.localStorage.setItem(
       SESSION_STORAGE_KEY,
       JSON.stringify({
@@ -880,8 +910,8 @@ describe("AppShell", () => {
     expect(screen.queryByRole("dialog", { name: "即時導航視窗" })).not.toBeInTheDocument();
 
     fireEvent.click(returnRecordLink);
-    const embeddedWindow = screen.getByRole("dialog", { name: "回院病歷視窗" });
-    expect(within(embeddedWindow).getByLabelText("選擇路線")).toBeInTheDocument();
+    const embeddedWindow = await screen.findByRole("dialog", { name: "回院病歷視窗" });
+    expect(await within(embeddedWindow).findByLabelText("選擇路線")).toBeInTheDocument();
     expect(within(embeddedWindow).queryByRole("button", { name: "開啟回院病歷視窗" })).not.toBeInTheDocument();
     fireEvent.click(within(embeddedWindow).getByRole("button", { name: "關閉視窗" }));
     expect(screen.queryByRole("dialog", { name: "回院病歷視窗" })).not.toBeInTheDocument();
@@ -913,7 +943,7 @@ describe("AppShell", () => {
 
     expect(screen.getByText("醫師手機定位共享")).toBeInTheDocument();
     expect(
-      screen.getByText("目前未取得定位分享：醫師端尚未允許定位，行政端目前無法看到即時位置。")
+      screen.getByText("未允許定位，行政端看不到即時位置。")
     ).toBeInTheDocument();
   });
 

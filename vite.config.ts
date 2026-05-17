@@ -178,6 +178,16 @@ export default defineConfig(({ mode }) => {
         }
       }
     ],
+    build: {
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            vendor: ["react", "react-dom", "react-router-dom"],
+            xlsx: ["xlsx"]
+          }
+        }
+      }
+    },
     test: {
       environment: "jsdom",
       globals: true,

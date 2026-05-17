@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import { Link, Navigate, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { navigationByRole } from "../../shared/constants/navigation";
 import { useAppContext } from "../use-app-context";
@@ -6,7 +6,6 @@ import { formatDateTimeFull } from "../../shared/utils/format";
 import { isVisitFinished, isVisitUnlocked } from "../../modules/doctor/doctor-page-helpers";
 import { StaffCommunicationDialog } from "../../shared/components/StaffCommunicationDialog";
 import { maskPatientName } from "../../shared/utils/patient-name";
-import { DoctorReturnRecordPage } from "../../pages/doctor/DoctorReturnRecordPage";
 import {
   useTeamCommunicationConversation,
   useTeamCommunicationUnreadCount
@@ -19,6 +18,12 @@ type DoctorLocationSyncState = {
 };
 
 type DoctorEmbeddedWindow = "return-records";
+
+const DoctorReturnRecordPage = lazy(() =>
+  import("../../pages/doctor/DoctorReturnRecordPage").then((module) => ({
+    default: module.DoctorReturnRecordPage
+  }))
+);
 
 function resolveDoctorLocationBannerTone(status: DoctorLocationSyncState["status"]) {
   if (status === "sharing") {
@@ -38,6 +43,23 @@ function resolveDbSyncBannerTone(status: ReturnType<typeof useAppContext>["dbSyn
     return "border-amber-200 bg-amber-50 text-amber-800";
   }
   return "border-rose-200 bg-rose-50 text-rose-800";
+}
+
+function resolveCompactDbSyncLabel(dbSync: ReturnType<typeof useAppContext>["dbSync"]) {
+  if (dbSync.status === "loading") {
+    return "讀取中";
+  }
+  if (dbSync.status === "synced") {
+    return "線上";
+  }
+  if (dbSync.status === "error") {
+    return "同步失敗";
+  }
+  return dbSync.source === "local_seed" ? "初始資料" : "本機快取";
+}
+
+function resolveCompactDbSyncActionMessage(message: string) {
+  return message.includes("失敗") ? "上傳失敗" : "已上傳";
 }
 
 function resolveDoctorLocationLinkedScheduleId(input: {
@@ -191,6 +213,7 @@ export function AppShell() {
   const [isDoctorQuickSummaryOpen, setIsDoctorQuickSummaryOpen] = useState(false);
   const [isStaffCommunicationOpen, setIsStaffCommunicationOpen] = useState(false);
   const [isDoctorMobileMenuOpen, setIsDoctorMobileMenuOpen] = useState(false);
+  const [isAdminMobileMenuOpen, setIsAdminMobileMenuOpen] = useState(false);
   const [doctorEmbeddedWindow, setDoctorEmbeddedWindow] = useState<DoctorEmbeddedWindow | null>(null);
   const [passwordForm, setPasswordForm] = useState({
     currentPassword: "",
@@ -217,6 +240,7 @@ export function AppShell() {
 
   useEffect(() => {
     setIsDoctorMobileMenuOpen(false);
+    setIsAdminMobileMenuOpen(false);
   }, [location.pathname]);
 
   useEffect(() => {
@@ -227,7 +251,7 @@ export function AppShell() {
     if (typeof navigator === "undefined" || !("geolocation" in navigator)) {
       setDoctorLocationSync({
         status: "unsupported",
-        message: "目前未取得定位分享：這台裝置不支援瀏覽器定位，行政端無法看到即時位置。",
+        message: "裝置不支援定位，行政端無法即時追蹤。",
         lastUpdatedAt: null
       });
       return;
@@ -235,7 +259,7 @@ export function AppShell() {
 
     setDoctorLocationSync({
       status: "requesting",
-      message: "醫師登入後正在要求定位授權；若未允許定位，行政端將無法看到即時位置。",
+      message: "正在要求定位授權；未允許時行政端看不到位置。",
       lastUpdatedAt: null
     });
 
@@ -244,7 +268,7 @@ export function AppShell() {
         const recordedAt = new Date(position.timestamp || Date.now()).toISOString();
         setDoctorLocationSync({
           status: "sharing",
-          message: "醫師端位置已持續共享給行政檢視。",
+          message: "定位共享中。",
           lastUpdatedAt: recordedAt
         });
 
@@ -276,7 +300,7 @@ export function AppShell() {
           Promise.resolve(services.doctorLocationSync.pushSample(locationSample)).catch(() => {
             setDoctorLocationSync({
               status: "error",
-              message: "定位已取得，但同步到行政追蹤頁失敗，請確認網路或稍後重試。",
+              message: "定位同步失敗，請稍後重試。",
               lastUpdatedAt: recordedAt
             });
           });
@@ -288,14 +312,14 @@ export function AppShell() {
         if (error.code === 1) {
           setDoctorLocationSync({
             status: "denied",
-            message: "目前未取得定位分享：醫師端尚未允許定位，行政端目前無法看到即時位置。",
+            message: "未允許定位，行政端看不到即時位置。",
             lastUpdatedAt: null
           });
           return;
         }
         setDoctorLocationSync({
           status: "error",
-          message: "目前未取得定位分享：定位共享中斷，請確認手機定位與網路。",
+          message: "定位共享中斷，請確認手機定位與網路。",
           lastUpdatedAt: null
         });
       },
@@ -458,32 +482,32 @@ export function AppShell() {
   return (
     <div
       className={`bg-brand-sand text-brand-ink ${
-        isDoctorShell ? "min-h-dvh overflow-x-hidden" : "h-dvh overflow-hidden"
+        isDoctorShell ? "min-h-dvh overflow-x-hidden" : "min-h-dvh overflow-x-hidden lg:h-dvh lg:overflow-hidden"
       }`}
     >
       <div
         className={`mx-auto grid max-w-[1600px] min-w-0 overflow-x-hidden ${
             isDoctorShell
               ? "min-h-dvh items-start gap-2 px-2 py-2 lg:grid-cols-[260px_1fr] lg:gap-3 lg:px-3 lg:py-3"
-              : "h-dvh min-h-0 items-stretch gap-4 px-3 py-3 lg:grid-cols-[260px_1fr] lg:px-4"
+              : "min-h-dvh items-start gap-3 px-2 py-2 sm:px-3 lg:h-dvh lg:min-h-0 lg:items-stretch lg:grid-cols-[240px_minmax(0,1fr)] lg:py-3"
         }`}
       >
         <aside
           className={`min-w-0 overflow-hidden border border-white/70 bg-brand-ink text-white shadow-card ${
             isDoctorShell
               ? "rounded-[1.35rem] p-3 pb-2.5 lg:rounded-[2rem] lg:p-6"
-              : "h-[calc(100dvh-1.5rem)] overflow-y-auto rounded-[1.75rem] p-4 lg:p-5"
+              : "rounded-[1.35rem] p-3 lg:h-[calc(100dvh-1.5rem)] lg:overflow-y-auto lg:rounded-[1.75rem] lg:p-5"
           }`}
         >
-          <div className={isDoctorShell ? "flex items-center justify-between gap-3 lg:block" : ""}>
+          <div className={shellRole ? "flex items-center justify-between gap-3 lg:block" : ""}>
             <div className="min-w-0">
-              <p className={`tracking-[0.18em] text-brand-sand/70 ${isDoctorShell ? "text-xs" : "text-sm"}`}>
+              <p className={`tracking-[0.18em] text-brand-sand/70 ${isDoctorShell ? "text-xs" : "text-xs lg:text-sm"}`}>
                 中醫居家輔助系統
               </p>
-              <h1 className={`mt-1.5 font-bold ${isDoctorShell ? "text-lg leading-tight lg:mt-2 lg:text-2xl" : "text-2xl"}`}>
+              <h1 className={`mt-1.5 font-bold ${isDoctorShell ? "text-lg leading-tight lg:mt-2 lg:text-2xl" : "text-lg leading-tight lg:text-xl"}`}>
                 中醫居家輔助系統
               </h1>
-              <p className={`mt-1.5 text-brand-sand/80 ${isDoctorShell ? "hidden text-[11px] lg:mt-2 lg:block lg:text-sm" : "text-sm"}`}>
+              <p className={`mt-1.5 text-brand-sand/80 ${isDoctorShell ? "hidden text-[11px] lg:mt-2 lg:block lg:text-sm" : "hidden text-sm sm:block"}`}>
                 {shellRole === "doctor"
                   ? "這是醫師端介面。"
                   : shellRole === "admin"
@@ -491,17 +515,23 @@ export function AppShell() {
                     : "這是系統共用介面。"}
               </p>
             </div>
-            {isDoctorShell ? (
+            {shellRole ? (
               <button
                 type="button"
-                aria-expanded={isDoctorMobileMenuOpen}
-                onClick={() => setIsDoctorMobileMenuOpen((open) => !open)}
+                aria-expanded={isDoctorShell ? isDoctorMobileMenuOpen : isAdminMobileMenuOpen}
+                onClick={() => {
+                  if (isDoctorShell) {
+                    setIsDoctorMobileMenuOpen((open) => !open);
+                    return;
+                  }
+                  setIsAdminMobileMenuOpen((open) => !open);
+                }}
                 className="inline-flex min-h-[46px] shrink-0 items-center justify-center rounded-2xl bg-white px-5 py-2.5 text-base font-bold text-brand-ink lg:hidden"
               >
                 目錄
-                {unreadNotificationCount + doctorTeamCommunicationUnreadCount > 0 ? (
+                {unreadNotificationCount + (isDoctorShell ? doctorTeamCommunicationUnreadCount : 0) > 0 ? (
                   <span className="ml-2 rounded-full bg-brand-coral px-2 py-0.5 text-xs font-semibold text-white">
-                    {unreadNotificationCount + doctorTeamCommunicationUnreadCount}
+                    {unreadNotificationCount + (isDoctorShell ? doctorTeamCommunicationUnreadCount : 0)}
                   </span>
                 ) : null}
               </button>
@@ -512,7 +542,7 @@ export function AppShell() {
             className={
               isDoctorShell
                 ? `${isDoctorMobileMenuOpen ? "mt-3 grid" : "hidden"} grid-cols-1 gap-2 sm:grid-cols-2 lg:mt-5 lg:block lg:space-y-2`
-                : "mt-4 space-y-2"
+                : `${isAdminMobileMenuOpen ? "mt-3 grid" : "hidden"} grid-cols-2 gap-2 sm:grid-cols-3 lg:mt-4 lg:block lg:space-y-2`
             }
           >
             {navItems.map((item) => (
@@ -530,6 +560,10 @@ export function AppShell() {
                   }
                 }}
                 onClick={(event) => {
+                  if (shellRole === "admin") {
+                    setIsAdminMobileMenuOpen(false);
+                    return;
+                  }
                   if (shellRole !== "doctor") {
                     return;
                   }
@@ -542,7 +576,7 @@ export function AppShell() {
                   setIsDoctorMobileMenuOpen(false);
                 }}
                 className={({ isActive }) =>
-                  `${isDoctorShell ? "block min-w-0 rounded-2xl px-3 py-2 text-sm lg:rounded-3xl lg:px-4 lg:py-3" : "block rounded-3xl px-4 py-3"} transition ${
+                  `${isDoctorShell ? "block min-w-0 rounded-2xl px-3 py-2 text-sm lg:rounded-3xl lg:px-4 lg:py-3" : "block min-w-0 rounded-2xl px-3 py-2 text-sm lg:rounded-3xl lg:px-4 lg:py-3"} transition ${
                     isActive ||
                     (doctorEmbeddedWindow === "return-records" && item.to === "/doctor/return-records")
                       ? "bg-white text-brand-ink"
@@ -565,7 +599,7 @@ export function AppShell() {
                   ) : null}
                 </div>
                 <div
-                  className={`${isDoctorShell ? "mt-1 hidden min-w-0 break-words text-[11px] lg:block" : "mt-1 text-xs"} ${
+                  className={`${isDoctorShell ? "mt-1 hidden min-w-0 break-words text-[11px] lg:block" : "mt-1 hidden min-w-0 break-words text-xs sm:block"} ${
                     location.pathname === item.to ? "text-slate-500" : "text-brand-sand/70"
                   }`}
                 >
@@ -650,7 +684,10 @@ export function AppShell() {
                   )} lg:mt-3`}
                 >
                   <p className="font-semibold">資料同步狀態</p>
-                  <p>{dbSync.message}</p>
+                  <p>
+                    <span className="sm:hidden">{resolveCompactDbSyncLabel(dbSync)}</span>
+                    <span className="hidden sm:inline">{dbSync.message}</span>
+                  </p>
                   {dbSync.lastSyncedAt ? (
                     <p className="text-[11px] opacity-80">最後同步：{formatDateTimeFull(dbSync.lastSyncedAt)}</p>
                   ) : null}
@@ -660,10 +697,16 @@ export function AppShell() {
                       onClick={handleUploadLocalDbToServer}
                       className="mt-2 rounded-full bg-white px-3 py-1.5 text-[11px] font-semibold text-brand-ink ring-1 ring-slate-200"
                     >
-                      上傳本機快取到線上資料庫
+                      <span className="sm:hidden">上傳快取</span>
+                      <span className="hidden sm:inline">上傳本機快取到線上資料庫</span>
                     </button>
                   ) : null}
-                  {dbSyncActionMessage ? <p className="mt-1 text-[11px]">{dbSyncActionMessage}</p> : null}
+                  {dbSyncActionMessage ? (
+                    <p className="mt-1 text-[11px]">
+                      <span className="sm:hidden">{resolveCompactDbSyncActionMessage(dbSyncActionMessage)}</span>
+                      <span className="hidden sm:inline">{dbSyncActionMessage}</span>
+                    </p>
+                  ) : null}
                 </div>
               </div>
             </div>
@@ -672,16 +715,16 @@ export function AppShell() {
 
         <div
           className={`min-w-0 ${
-            isDoctorShell ? "space-y-3 lg:space-y-4" : "h-[calc(100dvh-1.5rem)] min-h-0 space-y-4 overflow-y-auto pr-1"
+            isDoctorShell ? "space-y-3 lg:space-y-4" : "space-y-3 lg:h-[calc(100dvh-1.5rem)] lg:min-h-0 lg:space-y-4 lg:overflow-y-auto lg:pr-1"
           }`}
         >
           {shellRole !== "doctor" ? (
-            <header className="rounded-[1.5rem] border border-white/70 bg-white/90 p-3 shadow-card backdrop-blur lg:p-4">
-              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-start">
-                <div className="grid gap-2 md:grid-cols-[160px_160px_auto]">
+            <header className="rounded-[1.25rem] border border-white/70 bg-white/90 p-2.5 shadow-card backdrop-blur lg:rounded-[1.5rem] lg:p-4">
+              <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-start lg:gap-3">
+                <div className="grid w-full grid-cols-3 gap-2 lg:w-auto lg:grid-cols-[160px_160px_auto]">
                   <Link
                     to="/admin/reminders"
-                    className="rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-center text-sm font-semibold text-brand-ink"
+                    className="rounded-2xl border border-slate-200 bg-white px-2 py-2 text-center text-xs font-semibold text-brand-ink sm:text-sm lg:px-4 lg:py-2.5"
                   >
                     {notificationSummaryLabel}
                   </Link>
@@ -692,7 +735,7 @@ export function AppShell() {
                         setPasswordMessage(null);
                         setIsPasswordModalOpen(true);
                       }}
-                      className="rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-brand-ink"
+                      className="rounded-2xl border border-slate-200 bg-white px-2 py-2 text-xs font-semibold text-brand-ink sm:text-sm lg:px-4 lg:py-2.5"
                     >
                       修改密碼
                     </button>
@@ -701,32 +744,39 @@ export function AppShell() {
                     <button
                       type="button"
                       onClick={handleLogout}
-                      className="rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white"
+                      className="rounded-2xl bg-slate-900 px-2 py-2 text-xs font-semibold text-white sm:text-sm lg:px-4 lg:py-3"
                     >
                     登出
                   </button>
                 ) : null}
                 </div>
                 <div
-                  className={`rounded-2xl border px-4 py-2 text-xs leading-5 ${resolveDbSyncBannerTone(
+                  className={`w-full rounded-2xl border px-3 py-2 text-[11px] leading-4 lg:w-auto lg:px-4 lg:text-xs lg:leading-5 ${resolveDbSyncBannerTone(
                     dbSync.status
                   )}`}
                 >
                   <span className="font-semibold">資料同步：</span>
-                  <span>{dbSync.message}</span>
+                  <span className="sm:hidden">{resolveCompactDbSyncLabel(dbSync)}</span>
+                  <span className="hidden sm:inline">{dbSync.message}</span>
                   {dbSync.lastSyncedAt ? (
-                    <span className="ml-2 whitespace-nowrap">最後同步：{formatDateTimeFull(dbSync.lastSyncedAt)}</span>
+                    <span className="ml-2 hidden whitespace-nowrap sm:inline">最後同步：{formatDateTimeFull(dbSync.lastSyncedAt)}</span>
                   ) : null}
                   {dbSync.status !== "synced" ? (
                     <button
                       type="button"
                       onClick={handleUploadLocalDbToServer}
-                      className="ml-2 rounded-full bg-white px-3 py-1.5 text-[11px] font-semibold text-brand-ink ring-1 ring-slate-200"
+                      className="mt-2 rounded-full bg-white px-3 py-1.5 text-[11px] font-semibold text-brand-ink ring-1 ring-slate-200 sm:ml-2 sm:mt-0"
                     >
-                      上傳本機快取到線上資料庫
+                      <span className="sm:hidden">上傳快取</span>
+                      <span className="hidden sm:inline">上傳本機快取到線上資料庫</span>
                     </button>
                   ) : null}
-                  {dbSyncActionMessage ? <span className="ml-2">{dbSyncActionMessage}</span> : null}
+                  {dbSyncActionMessage ? (
+                    <span className="mt-1 block sm:ml-2 sm:mt-0 sm:inline">
+                      <span className="sm:hidden">{resolveCompactDbSyncActionMessage(dbSyncActionMessage)}</span>
+                      <span className="hidden sm:inline">{dbSyncActionMessage}</span>
+                    </span>
+                  ) : null}
                 </div>
               </div>
             </header>
@@ -787,7 +837,9 @@ export function AppShell() {
               </button>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto p-3 lg:p-5">
-              <DoctorReturnRecordPage embeddedWindow onCloseWindow={() => setDoctorEmbeddedWindow(null)} />
+              <Suspense fallback={null}>
+                <DoctorReturnRecordPage embeddedWindow onCloseWindow={() => setDoctorEmbeddedWindow(null)} />
+              </Suspense>
             </div>
           </div>
         </div>

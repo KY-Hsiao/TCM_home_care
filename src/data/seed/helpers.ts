@@ -1,7 +1,8 @@
 import { addDays, addHours, addMinutes, formatISO, startOfDay } from "date-fns";
 import { buildGoogleMapsSearchUrl } from "../../shared/utils/location-keyword";
 
-const baseDay = startOfDay(new Date());
+const seedBaseDate = new Date(2026, 4, 7);
+const baseDay = startOfDay(seedBaseDate);
 
 export function at(dayOffset: number, hour: number, minute = 0): string {
   return formatISO(addMinutes(addHours(addDays(baseDay, dayOffset), hour), minute));

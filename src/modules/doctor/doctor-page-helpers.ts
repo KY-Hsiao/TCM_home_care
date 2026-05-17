@@ -52,7 +52,7 @@ export function getScheduleDisplayRange(
 }
 
 export function isVisitFinished(status: VisitSchedule["status"]) {
-  return ["completed", "followup_pending", "cancelled", "paused"].includes(status);
+  return ["completed", "followup_pending", "issue_pending", "cancelled", "paused"].includes(status);
 }
 
 export function isVisitUnlocked(

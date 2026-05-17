@@ -13,7 +13,11 @@ import type {
   VisitStatus
 } from "../../../domain/enums";
 import { applyVisitRecordRules } from "../../../domain/rules";
-import type { RoutePlanningWindow, VisitRepository } from "../../../domain/repository";
+import type {
+  RoutePlanningWindow,
+  VisitExceptionReason,
+  VisitRepository
+} from "../../../domain/repository";
 import {
   buildNotificationCenterItemFromReminder,
   upsertNotificationCenterItem
@@ -310,11 +314,13 @@ function buildVisitAlertNotification(
     title: string;
     content: string;
     sourceType: "patient_exception" | "system_notification";
+    idSuffix?: string;
   }
 ) {
   const schedule = db.visit_schedules.find((item) => item.id === input.scheduleId);
+  const now = new Date().toISOString();
   return {
-    id: `nc-visit-${input.scheduleId}-${input.sourceType}-${Date.now()}`,
+    id: `nc-visit-${input.scheduleId}-${input.sourceType}-${input.idSuffix ?? Date.now()}`,
     role: "admin" as const,
     owner_user_id: null,
     source_type: input.sourceType,
@@ -329,9 +335,38 @@ function buildVisitAlertNotification(
     reply_text: null,
     reply_updated_at: null,
     reply_updated_by_role: null,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString()
+    created_at: now,
+    updated_at: now
   };
+}
+
+function resolveVisitExceptionReason(reason: VisitExceptionReason) {
+  switch (reason) {
+    case "family_absent":
+      return {
+        label: "家屬不在",
+        feedbackCode: "admin_followup" as const,
+        summary: "家屬不在，需行政協助確認是否改約或改聯絡方式。"
+      };
+    case "patient_status_abnormal":
+      return {
+        label: "個案狀態異常",
+        feedbackCode: "admin_followup" as const,
+        summary: "個案狀態異常，需行政協助追蹤現場狀況與後續安排。"
+      };
+    case "address_error":
+      return {
+        label: "地址錯誤",
+        feedbackCode: "admin_followup" as const,
+        summary: "地址或定位資訊錯誤，需行政協助校正個案地址與導航資訊。"
+      };
+    case "urgent_report":
+      return {
+        label: "需急件回報",
+        feedbackCode: "urgent" as const,
+        summary: "醫師標記需急件回報，請行政優先處理並回覆追蹤狀態。"
+      };
+  }
 }
 
 function deleteSavedRoutePlanList(db: AppDb, routePlanId: string) {
@@ -1277,6 +1312,81 @@ export function createVisitRepository(
                 })
               )
       }));
+      return nextRecord;
+    },
+    reportVisitException(input) {
+      const db = getDb();
+      const schedule = db.visit_schedules.find((item) => item.id === input.visitScheduleId);
+      const existingRecord = db.visit_records.find(
+        (item) => item.visit_schedule_id === input.visitScheduleId
+      );
+      if (!schedule) {
+        return undefined;
+      }
+
+      const reason = resolveVisitExceptionReason(input.reason);
+      const reportedAt = input.reportedAt ?? new Date().toISOString();
+      const note = input.note?.trim();
+      const nextRecord = applyVisitRecordRules(
+        {
+          ...(existingRecord ?? buildBlankRecord(schedule, null)),
+          visit_feedback_code: reason.feedbackCode,
+          visit_feedback_at: reportedAt,
+          family_followup_status: "draft_ready",
+          follow_up_note: [
+            existingRecord?.follow_up_note,
+            `訪視異常通報：${reason.label}${note ? `｜${note}` : ""}`
+          ]
+            .filter(Boolean)
+            .join("\n"),
+          updated_at: reportedAt
+        },
+        schedule.estimated_treatment_minutes
+      );
+
+      updateDb((currentDb) => {
+        const currentSchedule = currentDb.visit_schedules.find(
+          (item) => item.id === input.visitScheduleId
+        );
+        const patient = currentSchedule
+          ? currentDb.patients.find((item) => item.id === currentSchedule.patient_id)
+          : undefined;
+        const doctor = currentSchedule
+          ? currentDb.doctors.find((item) => item.id === currentSchedule.assigned_doctor_id)
+          : undefined;
+        const maskedPatientName = patient ? patient.name.replace(/^(.).*(.)$/, "$1○$2") : "個案";
+        const content = [
+          `${maskedPatientName} 已由醫師${doctor ? ` ${doctor.name}` : ""}標記訪視異常：${reason.summary}`,
+          note ? `補充：${note}` : null,
+          currentSchedule ? `排程：${currentSchedule.scheduled_start_at}` : null,
+          "處理狀態可在通知中心回覆或標記完成。"
+        ]
+          .filter(Boolean)
+          .join("\n");
+
+        return {
+          ...currentDb,
+          visit_records: upsertRecordList(currentDb, nextRecord),
+          visit_schedules: patchSchedule(currentDb, input.visitScheduleId, {
+            status: "issue_pending",
+            last_feedback_code: reason.feedbackCode,
+            tracking_stopped_at: currentSchedule?.tracking_stopped_at ?? reportedAt
+          }),
+          saved_route_plans: syncRoutePlansForSchedule(currentDb, input.visitScheduleId, {
+            status: "paused"
+          }),
+          notification_center_items: upsertNotificationCenterItem(
+            currentDb,
+            buildVisitAlertNotification(currentDb, {
+              scheduleId: input.visitScheduleId,
+              title: `訪視異常通報｜${reason.label}`,
+              content,
+              sourceType: "patient_exception",
+              idSuffix: `exception-${input.reason}`
+            })
+          )
+        };
+      });
       return nextRecord;
     },
     updateFamilyFollowUpStatus(visitScheduleId, status, sentAt = null) {

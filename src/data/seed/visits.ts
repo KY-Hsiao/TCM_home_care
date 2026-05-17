@@ -88,8 +88,9 @@ function buildPreferredSlotStart(slot: string) {
     return null;
   }
 
-  const today = new Date();
-  const dayOffset = parsed.dayOfWeek - today.getDay();
+  const today = new Date(at(0, 0, 0));
+  const rawDayOffset = parsed.dayOfWeek - today.getDay();
+  const dayOffset = rawDayOffset <= 0 ? rawDayOffset + 7 : rawDayOffset;
   const hour = parsed.part === "上午" ? 9 : 14;
   return at(dayOffset, hour, 0);
 }

@@ -313,6 +313,7 @@ export function createPatientRepository(
         .sort((left, right) =>
           compareAsc(new Date(right.scheduled_start_at), new Date(left.scheduled_start_at))
         );
+      const scheduleIds = new Set(allSchedules.map((schedule) => schedule.id));
 
       return {
         patient,
@@ -334,6 +335,29 @@ export function createPatientRepository(
             compareAsc(new Date(right.contacted_at), new Date(left.contacted_at))
           )
           .slice(0, 12),
+        reminders: db.reminders
+          .filter(
+            (reminder) =>
+              reminder.related_visit_schedule_id !== null &&
+              scheduleIds.has(reminder.related_visit_schedule_id)
+          )
+          .sort((left, right) => compareAsc(new Date(right.due_at), new Date(left.due_at))),
+        notificationTasks: db.notification_tasks
+          .filter(
+            (task) =>
+              task.patient_id === id ||
+              (task.visit_schedule_id !== null && scheduleIds.has(task.visit_schedule_id))
+          )
+          .sort((left, right) =>
+            compareAsc(new Date(right.scheduled_send_at), new Date(left.scheduled_send_at))
+          ),
+        notificationCenterItems: db.notification_center_items
+          .filter(
+            (item) =>
+              item.linked_patient_id === id ||
+              (item.linked_visit_schedule_id !== null && scheduleIds.has(item.linked_visit_schedule_id))
+          )
+          .sort((left, right) => compareAsc(new Date(right.created_at), new Date(left.created_at))),
         todaySchedule: allSchedules.find((schedule) =>
           isSameDay(new Date(schedule.scheduled_start_at), new Date())
         )

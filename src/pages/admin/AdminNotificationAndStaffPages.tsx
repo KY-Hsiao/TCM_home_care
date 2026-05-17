@@ -4,6 +4,7 @@ import type { AdminUser, Doctor } from "../../domain/models";
 import { Badge } from "../../shared/ui/Badge";
 import { Panel } from "../../shared/ui/Panel";
 import { clearLegacyAdminApiTokenSettings } from "../../shared/utils/admin-api-tokens";
+import { maskPatientName } from "../../shared/utils/patient-name";
 
 type ManageableRole = "doctor" | "admin";
 
@@ -25,6 +26,30 @@ type StaffListItem = {
   phone: string;
   accountLabel: string;
   secondaryLabel: string;
+};
+
+type ManagedFamilyLineContactSnapshot = {
+  id?: string;
+  userId?: string;
+  displayName?: string;
+  lineUserId?: string;
+  linkedPatientIds?: string[];
+  contactRole?: "family" | "admin" | "doctor";
+};
+
+type DataIntegrityIssue = {
+  id: string;
+  title: string;
+  detail: string;
+  linkText: string;
+  href: string;
+};
+
+type DataIntegrityCheck = {
+  key: string;
+  title: string;
+  description: string;
+  issues: DataIntegrityIssue[];
 };
 
 type EnvVariableName =
@@ -138,19 +163,19 @@ const envServiceGroups: EnvServiceGroup[] = [
       {
         key: "GOOGLE_DRIVE_SERVICE_ACCOUNT_CLIENT_EMAIL",
         label: "Google Drive Service Account Client Email",
-        note: "建議正式環境使用。把 Drive 資料夾分享給這個服務帳號後，系統可長期讀寫。",
+        note: "正式環境建議使用；需分享 Drive 資料夾。",
         source: "Google Cloud Console > IAM & Admin > Service Accounts 建立服務帳號後取得 client_email。"
       },
       {
         key: "GOOGLE_DRIVE_SERVICE_ACCOUNT_PRIVATE_KEY",
         label: "Google Drive Service Account Private Key",
-        note: "搭配服務帳號換取 Drive access token；請只放在 Vercel 環境變數，不要放到前端。",
+        note: "搭配服務帳號換 token；只放 Vercel。",
         source: "同一個 Service Account > Keys > Add key > JSON，使用 private_key 欄位。"
       },
       {
         key: "GOOGLE_DRIVE_REFRESH_TOKEN",
         label: "Google Drive Refresh Token",
-        note: "建議設定。可自動換新 access token，避免一小時後失效。",
+        note: "可自動換新 access token。",
         source: "Google Cloud OAuth Client 搭配 Drive API scope 取得 refresh_token。"
       },
       {
@@ -168,7 +193,7 @@ const envServiceGroups: EnvServiceGroup[] = [
       {
         key: "GOOGLE_DRIVE_ACCESS_TOKEN",
         label: "Google Drive Access Token",
-        note: "只當短效備援，通常約 1 小時會過期；正式環境不建議只靠這個。",
+        note: "短效備援；正式環境不建議只靠它。",
         source: "OAuth Playground 或 OAuth 流程可臨時換取，但過期後必須更新 Vercel 再重新部署。"
       }
     ]
@@ -193,6 +218,8 @@ const serviceDayOrder = Object.fromEntries(
 const servicePartOrder = Object.fromEntries(
   servicePartOptions.map((part, index) => [part, index])
 ) as Record<(typeof servicePartOptions)[number], number>;
+
+const familyLineManagedContactsStorageKey = "tcm-family-line-managed-contacts";
 
 type ServiceDay = (typeof serviceDayOptions)[number];
 type ServicePart = (typeof servicePartOptions)[number];
@@ -305,6 +332,219 @@ function createId(prefix: string) {
   return `${prefix}-${Date.now().toString(36)}`;
 }
 
+function isBlank(value: string | null | undefined) {
+  return !value || value.trim().length === 0;
+}
+
+function loadFamilyLineArray<T>(key: string): T[] {
+  if (typeof window === "undefined") {
+    return [];
+  }
+  try {
+    const raw = window.localStorage.getItem(key);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? (parsed as T[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function normalizeManagedFamilyLineContacts(
+  contacts: ManagedFamilyLineContactSnapshot[]
+): Required<Pick<ManagedFamilyLineContactSnapshot, "displayName" | "lineUserId" | "linkedPatientIds" | "contactRole">>[] {
+  return contacts
+    .map((contact) => {
+      const lineUserId = String(contact.lineUserId ?? contact.userId ?? "").trim();
+      const normalizedContact: Required<
+        Pick<ManagedFamilyLineContactSnapshot, "displayName" | "lineUserId" | "linkedPatientIds" | "contactRole">
+      > = {
+        displayName: String(contact.displayName ?? lineUserId),
+        lineUserId,
+        linkedPatientIds: Array.isArray(contact.linkedPatientIds)
+          ? contact.linkedPatientIds.map((patientId) => String(patientId ?? "").trim()).filter(Boolean)
+          : [],
+        contactRole:
+          contact.contactRole === "admin" || contact.contactRole === "doctor"
+            ? contact.contactRole
+            : "family"
+      };
+      return normalizedContact;
+    })
+    .filter((contact) => contact.lineUserId);
+}
+
+function loadManagedFamilyLineContacts() {
+  return normalizeManagedFamilyLineContacts(
+    loadFamilyLineArray<ManagedFamilyLineContactSnapshot>(familyLineManagedContactsStorageKey)
+  );
+}
+
+function buildDataIntegrityChecks(
+  db: ReturnType<typeof useAppContext>["db"],
+  lineContacts: ReturnType<typeof loadManagedFamilyLineContacts>
+): DataIntegrityCheck[] {
+  const activePatients = db.patients.filter((patient) => patient.status === "active");
+  const doctorsById = new Map(db.doctors.map((doctor) => [doctor.id, doctor]));
+  const patientsById = new Map(db.patients.map((patient) => [patient.id, patient]));
+  const caregiversByPatientId = new Map(
+    db.caregivers.reduce<Array<[string, typeof db.caregivers]>>((items, caregiver) => {
+      const currentCaregivers = items.find(([patientId]) => patientId === caregiver.patient_id)?.[1];
+      if (currentCaregivers) {
+        currentCaregivers.push(caregiver);
+      } else {
+        items.push([caregiver.patient_id, [caregiver]]);
+      }
+      return items;
+    }, [])
+  );
+  const patientIdsWithLineUserId = new Set(
+    lineContacts
+      .filter((contact) => contact.contactRole === "family")
+      .flatMap((contact) => contact.linkedPatientIds)
+  );
+
+  const missingGoogleAccountIssues: DataIntegrityIssue[] = [
+    ...db.doctors
+      .filter((doctor) => isBlank(doctor.google_account_email) || !doctor.google_account_logged_in)
+      .map((doctor) => ({
+        id: `doctor-google-${doctor.id}`,
+        title: doctor.name || "未命名醫師",
+        detail: isBlank(doctor.google_account_email)
+          ? "醫師缺 Google 帳號 email。"
+          : "醫師 Google 帳號尚未標記為已登入。",
+        linkText: "到角色設置",
+        href: "/admin/staff"
+      })),
+    ...db.admin_users
+      .filter((admin) => isBlank(admin.google_account_email) || !admin.google_account_logged_in)
+      .map((admin) => ({
+        id: `admin-google-${admin.id}`,
+        title: admin.name || "未命名行政",
+        detail: isBlank(admin.google_account_email)
+          ? "行政人員缺 Google 帳號 email。"
+          : "行政人員 Google 帳號尚未標記為已登入。",
+        linkText: "到角色設置",
+        href: "/admin/staff"
+      }))
+  ];
+
+  const missingLineUserIdIssues = activePatients
+    .filter((patient) => {
+      const caregivers = caregiversByPatientId.get(patient.id) ?? [];
+      return caregivers.some((caregiver) => caregiver.is_primary && caregiver.receives_notifications) &&
+        !patientIdsWithLineUserId.has(patient.id);
+    })
+    .map((patient) => ({
+      id: `patient-line-${patient.id}`,
+      title: maskPatientName(patient.name),
+      detail: "主要家屬尚未在 LINE 聯繫名單關聯 lineUserId。",
+      linkText: "到 LINE 聯繫",
+      href: `/admin/family-line?patientId=${encodeURIComponent(patient.id)}`
+    }));
+
+  const missingCoordinateIssues = activePatients
+    .filter(
+      (patient) =>
+        patient.home_latitude === null ||
+        patient.home_longitude === null ||
+        patient.geocoding_status === "missing" ||
+        patient.geocoding_status === "pending"
+    )
+    .map((patient) => ({
+      id: `patient-coordinate-${patient.id}`,
+      title: maskPatientName(patient.name),
+      detail:
+        patient.home_latitude === null || patient.home_longitude === null
+          ? "個案缺住家座標，導航與路線排序會改用地址近似。"
+          : `座標狀態仍為 ${patient.geocoding_status}，請確認定位結果。`,
+      linkText: "到個案管理",
+      href: `/admin/patients/${encodeURIComponent(patient.id)}`
+    }));
+
+  const missingPrimaryCaregiverIssues = activePatients
+    .filter((patient) => !(caregiversByPatientId.get(patient.id) ?? []).some((caregiver) => caregiver.is_primary))
+    .map((patient) => ({
+      id: `patient-primary-caregiver-${patient.id}`,
+      title: maskPatientName(patient.name),
+      detail: "個案沒有主照顧者，家屬通知與到訪確認會缺少主要對象。",
+      linkText: "到個案管理",
+      href: `/admin/patients/${encodeURIComponent(patient.id)}`
+    }));
+
+  const missingScheduleDoctorIssues = db.visit_schedules
+    .filter(
+      (schedule) =>
+        !["completed", "cancelled"].includes(schedule.status) &&
+        (isBlank(schedule.assigned_doctor_id) || !doctorsById.has(schedule.assigned_doctor_id))
+    )
+    .map((schedule) => {
+      const patient = patientsById.get(schedule.patient_id);
+      return {
+        id: `schedule-doctor-${schedule.id}`,
+        title: `排程 ${schedule.id}`,
+        detail: `${patient ? maskPatientName(patient.name) : "未知個案"} 的排程沒有有效醫師。`,
+        linkText: "到排程管理",
+        href: "/admin/schedules"
+      };
+    });
+
+  const missingRecordUploadIssues = db.visit_schedules
+    .filter((schedule) => ["completed", "followup_pending"].includes(schedule.status))
+    .filter((schedule) => {
+      const record = db.visit_records.find((item) => item.visit_schedule_id === schedule.id);
+      return !record || isBlank(record.generated_record_text);
+    })
+    .map((schedule) => {
+      const patient = patientsById.get(schedule.patient_id);
+      return {
+        id: `record-upload-${schedule.id}`,
+        title: patient ? maskPatientName(patient.name) : `排程 ${schedule.id}`,
+        detail: "完成排程尚未有可上傳病歷文字。",
+        linkText: "到回院病歷",
+        href: "/doctor/return-records"
+      };
+    });
+
+  return [
+    {
+      key: "google-account",
+      title: "缺 Google 帳號",
+      description: "檢查人員 Google 帳號與登入標記。",
+      issues: missingGoogleAccountIssues
+    },
+    {
+      key: "line-user-id",
+      title: "缺 LINE userId",
+      description: "檢查需通知個案是否已關聯 LINE userId。",
+      issues: missingLineUserIdIssues
+    },
+    {
+      key: "coordinates",
+      title: "缺座標",
+      description: "檢查住家座標與 geocoding 狀態。",
+      issues: missingCoordinateIssues
+    },
+    {
+      key: "primary-caregiver",
+      title: "缺主照顧者",
+      description: "檢查是否已有主照顧者。",
+      issues: missingPrimaryCaregiverIssues
+    },
+    {
+      key: "schedule-doctor",
+      title: "排程沒有醫師",
+      description: "檢查排程是否指派有效醫師。",
+      issues: missingScheduleDoctorIssues
+    },
+    {
+      key: "record-upload",
+      title: "病歷未上傳",
+      description: "檢查是否已有可上傳病歷文字。",
+      issues: missingRecordUploadIssues
+    }
+  ];
+}
+
 export function AdminStaffPage() {
   const { repositories, db } = useAppContext();
   const defaultDoctorKey = db.doctors[0] ? `doctor:${db.doctors[0].id}` : "new:doctor";
@@ -321,6 +561,8 @@ export function AdminStaffPage() {
     tone: "success" | "error";
     message: string;
   } | null>(null);
+  const [integrityCheckedAt, setIntegrityCheckedAt] = useState(() => new Date().toISOString());
+  const [managedLineContacts, setManagedLineContacts] = useState(() => loadManagedFamilyLineContacts());
   const staffList = useMemo<StaffListItem[]>(
     () =>
       [
@@ -358,6 +600,14 @@ export function AdminStaffPage() {
   const currentDoctorAssignments = draft.originalRole === "doctor" && draft.sourceId
     ? db.visit_schedules.filter((schedule) => schedule.assigned_doctor_id === draft.sourceId).length
     : 0;
+  const dataIntegrityChecks = useMemo(
+    () => buildDataIntegrityChecks(db, managedLineContacts),
+    [db, managedLineContacts]
+  );
+  const dataIntegrityIssueCount = dataIntegrityChecks.reduce(
+    (total, check) => total + check.issues.length,
+    0
+  );
 
   const loadEnvStatus = async () => {
     setIsLoadingEnvStatus(true);
@@ -646,7 +896,7 @@ export function AdminStaffPage() {
       return {
         ready: false,
         label: isLoadingEnvStatus ? "讀取中" : "尚未讀取",
-        detail: "按「重新整理狀態」後，系統會從後端讀取 Vercel 是否已設定，不會顯示任何 token 值。",
+        detail: "重新整理後讀取 Vercel 狀態，不顯示 token。",
         missingKeys: [] as EnvVariableName[]
       };
     }
@@ -677,12 +927,12 @@ export function AdminStaffPage() {
         ready,
         label: ready ? group.readyText : group.pendingText,
         detail: serviceAccountReady
-          ? "目前使用 Service Account 方案；請確認 Drive 資料夾已分享給服務帳號。"
+          ? "使用 Service Account；請確認資料夾已分享。"
           : refreshTokenReady
-          ? "目前使用 Refresh Token 方案，Drive 授權可自動更新。"
+          ? "使用 Refresh Token，授權可自動更新。"
           : hasAccessToken
-            ? "目前只使用短效 Access Token；若 Drive 顯示授權失效，請改補 Refresh Token 三件組。"
-            : "需要 Folder ID，並設定 Service Account 兩個欄位；Refresh Token 三件組也可作為替代方案。",
+            ? "使用短效 Access Token，建議改補 Refresh Token。"
+            : "需要 Folder ID，並設定 Service Account 或 Refresh Token。",
         missingKeys
       };
     }
@@ -692,7 +942,7 @@ export function AdminStaffPage() {
     return {
       ready,
       label: ready ? group.readyText : group.pendingText,
-      detail: ready ? "必要設定已存在，可使用下方測試按鈕確認連線。" : "請先補齊缺少的 Vercel 環境變數。",
+      detail: ready ? "必要設定已存在，可測試連線。" : "請補齊缺少的 Vercel 環境變數。",
       missingKeys
     };
   };
@@ -727,8 +977,7 @@ export function AdminStaffPage() {
               <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
                 <p className="font-semibold text-brand-ink">外部服務設定狀態</p>
                 <p className="mt-1">
-                  Token 不再由瀏覽器輸入或保存。請到 Vercel 專案的 Settings / Environment Variables 設定，
-                  然後重新部署 Production。此畫面只顯示「是否已設定」，不會顯示任何 token 值。
+                  Token 由 Vercel 環境變數管理；此畫面只顯示設定狀態，不顯示 token。
                 </p>
               </div>
               <div className="mt-4 grid gap-4 text-sm xl:grid-cols-2">
@@ -790,9 +1039,7 @@ export function AdminStaffPage() {
               <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
                 <p className="font-semibold">Google Drive 建議設定方式</p>
                 <p className="mt-1">
-                  正式使用建議設定 Service Account 的 `GOOGLE_DRIVE_SERVICE_ACCOUNT_CLIENT_EMAIL`、
-                  `GOOGLE_DRIVE_SERVICE_ACCOUNT_PRIVATE_KEY` 與 `GOOGLE_DRIVE_FOLDER_ID`，並把該 Drive 資料夾分享給服務帳號。
-                  也可改用 Refresh Token 三件組；只設定 `GOOGLE_DRIVE_ACCESS_TOKEN` 會很容易過期。
+                  正式環境建議用 Service Account + Folder ID，或 Refresh Token；Access Token 只作短效備援。
                 </p>
               </div>
               <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -844,9 +1091,89 @@ export function AdminStaffPage() {
             </>
           ) : (
             <p className="text-sm text-slate-500">
-              API Token 改由 Vercel 環境變數管理。需要檢查設定狀態或測試連線時，請先按「顯示機密管理」。
+              API Token 由 Vercel 管理；需檢查或測試時再展開。
             </p>
           )}
+        </Panel>
+
+        <Panel
+          title="資料完整性檢查"
+          action={
+            <button
+              type="button"
+              onClick={() => {
+                setManagedLineContacts(loadManagedFamilyLineContacts());
+                setIntegrityCheckedAt(new Date().toISOString());
+              }}
+              className="rounded-full border border-brand-sand bg-white px-4 py-2 text-sm font-semibold text-brand-forest"
+            >
+              重新檢查
+            </button>
+          }
+        >
+          <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <p className="font-semibold text-brand-ink">
+                {dataIntegrityIssueCount === 0
+                  ? "目前沒有資料完整性異常"
+                  : `目前共有 ${dataIntegrityIssueCount} 筆待補資料`}
+              </p>
+              <p className="mt-1 text-xs">
+                範圍：Google 帳號、LINE、座標、照顧者、排程醫師、病歷。
+              </p>
+            </div>
+            <p className="text-xs text-slate-500">最後檢查：{new Date(integrityCheckedAt).toLocaleString("zh-TW")}</p>
+          </div>
+
+          <div className="mt-4 grid gap-4 xl:grid-cols-2">
+            {dataIntegrityChecks.map((check) => (
+              <div key={check.key} className="rounded-2xl border border-slate-200 bg-white p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-semibold text-brand-ink">{check.title}</p>
+                    <p className="mt-1 text-xs text-slate-500">{check.description}</p>
+                  </div>
+                  <span
+                    className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                      check.issues.length === 0
+                        ? "bg-emerald-100 text-emerald-800"
+                        : "bg-amber-100 text-amber-800"
+                    }`}
+                  >
+                    {check.issues.length === 0 ? "通過" : `${check.issues.length} 筆`}
+                  </span>
+                </div>
+
+                <div className="mt-3 space-y-2">
+                  {check.issues.length > 0 ? (
+                    check.issues.slice(0, 5).map((issue) => (
+                      <div key={issue.id} className="rounded-xl bg-slate-50 px-3 py-2 text-sm">
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="font-semibold text-brand-ink">{issue.title}</p>
+                            <p className="mt-1 text-xs text-slate-600">{issue.detail}</p>
+                          </div>
+                          <a
+                            href={issue.href}
+                            className="shrink-0 rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-brand-forest ring-1 ring-slate-200"
+                          >
+                            {issue.linkText}
+                          </a>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="rounded-xl bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+                      此項目目前沒有缺漏。
+                    </p>
+                  )}
+                  {check.issues.length > 5 ? (
+                    <p className="text-xs text-slate-500">另有 {check.issues.length - 5} 筆，請先處理上方項目後重新檢查。</p>
+                  ) : null}
+                </div>
+              </div>
+            ))}
+          </div>
         </Panel>
 
         <Panel
@@ -908,7 +1235,7 @@ export function AdminStaffPage() {
                     : "新增醫師資料"}
                 </h2>
                 <p className="mt-2 text-sm text-slate-600">
-                  醫師端會在網頁內收到出發、抵達、緊急與追蹤通知；使用手機開啟後可允許位置分享。
+                  醫師手機端接收通知並可分享位置。
                 </p>
               </div>
               <button
@@ -921,7 +1248,7 @@ export function AdminStaffPage() {
             </div>
 
             <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-              醫師資料只維護姓名、電話與可服務時段。醫師使用手機網頁接收站內提示並回傳即時位置，行政端可同步查看路線與進度。
+              醫師資料維護姓名、電話與服務時段。
             </div>
 
             {legacyServiceSlotWarnings.length > 0 ? (
@@ -954,7 +1281,7 @@ export function AdminStaffPage() {
                 />
               </label>
               <div className="md:col-span-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-                醫師端使用手機網頁即時定位。醫師允許位置分享後，行政端會直接看到最新位置、路線與已過 / 未到站點。
+                允許定位後，行政端可看位置與路線進度。
               </div>
 
               {draft.role === "doctor" ? (
@@ -963,7 +1290,7 @@ export function AdminStaffPage() {
                   <div className="space-y-3">
                     <div>
                       <p className="text-sm font-semibold text-brand-ink">星期一到星期六</p>
-                      <p className="mt-1 text-xs text-slate-500">先選擇要編輯的星期，再切換上午或下午。</p>
+                      <p className="mt-1 text-xs text-slate-500">先選星期，再切換時段。</p>
                     </div>
                     <div className="flex flex-wrap gap-2">
                       {serviceDayOptions.map((day) => (

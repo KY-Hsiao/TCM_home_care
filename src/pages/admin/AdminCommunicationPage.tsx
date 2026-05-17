@@ -123,7 +123,7 @@ export function AdminTeamCommunicationPage() {
       >
         <div className="flex flex-col gap-1 text-sm text-slate-600 sm:flex-row sm:items-center sm:justify-between">
           <span>目前對象：{selectedDoctor.name}</span>
-          <span>雙擊醫師名單可直接切換對話。</span>
+          <span>雙擊可切換。</span>
         </div>
       </Panel>
 
@@ -139,7 +139,7 @@ export function AdminTeamCommunicationPage() {
                 <div className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-200 px-3 py-2.5 lg:px-4 lg:py-3">
                   <div className="min-w-0">
                     <h2 className="text-base font-semibold text-brand-ink lg:text-lg">團隊通訊全頁對話</h2>
-                    <p className="text-xs text-slate-500">選擇醫師後直接在右側對話區打字。</p>
+                    <p className="text-xs text-slate-500">選醫師後即可對話。</p>
                   </div>
                   <button
                     type="button"

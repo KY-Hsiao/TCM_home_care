@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadDb, MOCK_DB_STORAGE_KEY } from "./db";
 import { createSeedDb } from "../seed";
 import { createRepositories } from "./repositories";
@@ -7,6 +7,10 @@ describe("mock db loader", () => {
   beforeEach(() => {
     vi.useRealTimers();
     window.localStorage.clear();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("遇到損壞的 localStorage 資料時會自動回復 seed db", () => {

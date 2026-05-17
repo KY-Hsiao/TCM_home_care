@@ -21,6 +21,7 @@ import type { AppServices } from "../services/types";
 import {
   fetchServerAppDb,
   getAppDbSyncDebounceMs,
+  isAppDbServerSyncEnabled,
   persistAppDbSyncMetadata,
   persistServerAppDb
 } from "../services/app-db-sync";
@@ -41,13 +42,22 @@ function serializeAppDbForChangeDetection(db: AppDb) {
   return JSON.stringify(normalizeAppDbForCurrentVersion(db));
 }
 
+function resolveInitialDbSyncMessage(serverSyncEnabled: boolean, hadLocalDbSnapshot: boolean) {
+  if (serverSyncEnabled) {
+    return "正在讀取線上資料庫。";
+  }
+
+  return hadLocalDbSnapshot ? "目前使用本機快取。" : "目前使用初始資料。";
+}
+
 export function AppProviders({ children }: PropsWithChildren) {
+  const serverSyncEnabled = isAppDbServerSyncEnabled();
   const hadLocalDbSnapshotRef = useRef(hasLocalDbSnapshot());
   const [db, setDb] = useState<AppDb>(() => loadDb());
   const [dbSync, setDbSync] = useState<AppDbSyncUiState>(() => ({
     source: hadLocalDbSnapshotRef.current ? "local_cache" : "local_seed",
-    status: "loading",
-    message: "正在讀取線上資料庫。",
+    status: serverSyncEnabled ? "loading" : "local_only",
+    message: resolveInitialDbSyncMessage(serverSyncEnabled, hadLocalDbSnapshotRef.current),
     lastSyncedAt: null
   }));
   const [, setServicesRevision] = useState(0);
@@ -84,7 +94,7 @@ export function AppProviders({ children }: PropsWithChildren) {
   const persistDbTimerRef = useRef<number | null>(null);
   const persistServerDbTimerRef = useRef<number | null>(null);
   const latestDbRef = useRef(db);
-  const serverSyncReadyRef = useRef(false);
+  const serverSyncReadyRef = useRef(!serverSyncEnabled);
   const serverWritesEnabledRef = useRef(false);
   const skipNextServerPersistRef = useRef(false);
   const protectedLocalDbBaselineRef = useRef<string | null>(null);
@@ -120,6 +130,10 @@ export function AppProviders({ children }: PropsWithChildren) {
     });
 
   useEffect(() => {
+    if (!serverSyncEnabled) {
+      return;
+    }
+
     let isCancelled = false;
 
     void fetchServerAppDb()
@@ -192,7 +206,7 @@ export function AppProviders({ children }: PropsWithChildren) {
     return () => {
       isCancelled = true;
     };
-  }, []);
+  }, [serverSyncEnabled]);
 
   useEffect(() => {
     latestDbRef.current = db;
@@ -262,7 +276,7 @@ export function AppProviders({ children }: PropsWithChildren) {
         void persistServerAppDb(normalizeAppDbForCurrentVersion(latestDbRef.current));
       }
     };
-  }, []);
+  }, [serverSyncEnabled]);
 
   useEffect(() => {
     return subscribeDbStorage((nextDb) => {
