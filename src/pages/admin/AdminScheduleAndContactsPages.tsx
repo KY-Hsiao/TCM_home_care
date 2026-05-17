@@ -3370,21 +3370,6 @@ export function AdminSchedulesPage() {
   );
 }
 
-export function AdminContactsPage() {
-  return (
-    <div className="space-y-6">
-      <Panel title="聯絡方式設定已整合">
-        <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-600">
-          <p className="font-semibold text-brand-ink">這個頁面已不再維護任何家屬聯絡或綁定流程。</p>
-          <p className="mt-2">1. 個案管理目前只處理個案本身的診斷、地址、定位關鍵字、醫師與服務時段。</p>
-          <p className="mt-1">2. 如需追蹤流程，請改看排程管理、醫師追蹤與 ContactLog。</p>
-          <p className="mt-1">3. 外部通訊與家屬入口已移除，不需要另外建立綁定資料。</p>
-        </div>
-      </Panel>
-    </div>
-  );
-}
-
 export function AdminRemindersPage() {
   const { repositories, db, session } = useAppContext();
   const [isNoticeDialogOpen, setIsNoticeDialogOpen] = useState(false);
@@ -3679,6 +3664,7 @@ export function AdminRemindersPage() {
 export function AdminLeaveRequestsPage() {
   const { repositories, db } = useAppContext();
   const [selectedLeaveRequestId, setSelectedLeaveRequestId] = useState<string>("");
+  const [leaveReviewDialogId, setLeaveReviewDialogId] = useState<string | null>(null);
   const [selectedLeaveLineRecipientIds, setSelectedLeaveLineRecipientIds] = useState<string[]>([]);
   const [managedLineContacts, setManagedLineContacts] = useState<ManagedFamilyLineContactSnapshot[]>(() =>
     loadManagedFamilyLineContacts()
@@ -3722,12 +3708,16 @@ export function AdminLeaveRequestsPage() {
   useEffect(() => {
     if (!leaveRequests.length) {
       setSelectedLeaveRequestId("");
+      setLeaveReviewDialogId(null);
       return;
     }
     if (!leaveRequests.some((leaveRequest) => leaveRequest.id === selectedLeaveRequestId)) {
       setSelectedLeaveRequestId((pendingLeaveRequests[0] ?? leaveRequests[0]).id);
     }
-  }, [leaveRequests, pendingLeaveRequests, selectedLeaveRequestId]);
+    if (leaveReviewDialogId && !leaveRequests.some((leaveRequest) => leaveRequest.id === leaveReviewDialogId)) {
+      setLeaveReviewDialogId(null);
+    }
+  }, [leaveRequests, leaveReviewDialogId, pendingLeaveRequests, selectedLeaveRequestId]);
 
   const selectedLeaveRequest =
     leaveRequests.find((leaveRequest) => leaveRequest.id === selectedLeaveRequestId) ??
@@ -3938,6 +3928,7 @@ export function AdminLeaveRequestsPage() {
     }
     repositories.staffingRepository.deleteLeaveRequest(deleteConfirmLeaveRequestId);
     setDeleteConfirmLeaveRequestId(null);
+    setLeaveReviewDialogId(null);
     setStatusFeedback({
       tone: "success",
       message: "請假案件已刪除。"
@@ -4057,7 +4048,10 @@ export function AdminLeaveRequestsPage() {
                   <button
                     key={leaveRequest.id}
                     type="button"
-                    onClick={() => setSelectedLeaveRequestId(leaveRequest.id)}
+                    onClick={() => {
+                      setSelectedLeaveRequestId(leaveRequest.id);
+                      setLeaveReviewDialogId(leaveRequest.id);
+                    }}
                     className={`w-full rounded-2xl border p-4 text-left ${
                       isSelected ? "border-brand-forest bg-brand-sand/50" : "border-slate-200 bg-white"
                     }`}
@@ -4082,8 +4076,30 @@ export function AdminLeaveRequestsPage() {
         </Panel>
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-[1fr]">
-        <Panel title="請假案件與處理摘要">
+      {leaveReviewDialogId ? (
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/45 p-3 pt-10 sm:items-center sm:p-6">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="leave-review-dialog-title"
+            className="w-full max-w-5xl"
+          >
+            <Panel
+              title="請假案件與處理摘要"
+              action={
+                <button
+                  type="button"
+                  onClick={() => setLeaveReviewDialogId(null)}
+                  className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-brand-ink"
+                >
+                  關閉
+                </button>
+              }
+              className="max-h-[calc(100dvh-5rem)] overflow-y-auto"
+            >
+              <span id="leave-review-dialog-title" className="sr-only">
+                請假案件與處理摘要
+              </span>
           {selectedLeaveRequest ? (
             <div className="space-y-4">
               <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
@@ -4291,8 +4307,10 @@ export function AdminLeaveRequestsPage() {
               目前沒有可查看的請假單。
             </div>
           )}
-        </Panel>
-      </div>
+            </Panel>
+          </div>
+        </div>
+      ) : null}
 
       {deleteConfirmLeaveRequest ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4">

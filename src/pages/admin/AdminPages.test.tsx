@@ -103,6 +103,15 @@ function openPatientBatchActionsDialog() {
   return screen.getByRole("dialog", { name: /已勾選 \d+ 位個案/ });
 }
 
+function openLeaveRequestReviewDialog(reason: string) {
+  const leaveRequestButton = screen.getByText(reason).closest("button");
+  if (!leaveRequestButton) {
+    throw new Error(`找不到請假項目：${reason}`);
+  }
+  fireEvent.click(leaveRequestButton);
+  return screen.getByRole("dialog", { name: "請假案件與處理摘要" });
+}
+
 function expectRouteStopLabel(label: string) {
   expect(screen.getAllByText(label).length).toBeGreaterThan(0);
 }
@@ -3506,13 +3515,14 @@ describe("AdminPages", () => {
 
     expect(screen.getByRole("heading", { name: "待處理請假" })).toBeInTheDocument();
     expect(screen.getByText("院內會議")).toBeInTheDocument();
-    expect(screen.getByText("請協助檢查上午個案。")).toBeInTheDocument();
     const pendingLeaveStat = screen.getByText("等待行政核准或駁回的請假申請。").closest("div");
     expect(pendingLeaveStat).not.toBeNull();
     expect(within(pendingLeaveStat!).getByText("1")).toBeInTheDocument();
     expect(screen.queryByText("王麗珠")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "核准請假" }));
+    const leaveReviewDialog = openLeaveRequestReviewDialog("院內會議");
+    expect(within(leaveReviewDialog).getByText("請協助檢查上午個案。")).toBeInTheDocument();
+    fireEvent.click(within(leaveReviewDialog).getByRole("button", { name: "核准請假" }));
 
     await waitFor(() => {
       expect(screen.getByRole("status")).toHaveTextContent("請假申請已核准");
@@ -3596,10 +3606,11 @@ describe("AdminPages", () => {
     );
 
     renderWithProviders(<AdminLeaveRequestsPage />);
-    expect(screen.getByLabelText("王先生 LINE LINE 請假通知勾選")).toBeChecked();
+    const leaveReviewDialog = openLeaveRequestReviewDialog("院內會議");
+    expect(within(leaveReviewDialog).getByLabelText("王先生 LINE LINE 請假通知勾選")).toBeChecked();
     expect(screen.queryByLabelText("未受影響家屬 LINE LINE 請假通知勾選")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "核准請假" }));
+    fireEvent.click(within(leaveReviewDialog).getByRole("button", { name: "核准請假" }));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
@@ -3700,13 +3711,14 @@ describe("AdminPages", () => {
 
     renderWithProviders(<AdminLeaveRequestsPage />);
 
-    expect(screen.queryByLabelText("駁回理由")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "駁回申請" }));
-    expect(screen.getByLabelText("駁回理由")).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("駁回理由"), {
+    const leaveReviewDialog = openLeaveRequestReviewDialog("個人行程");
+    expect(within(leaveReviewDialog).queryByLabelText("駁回理由")).not.toBeInTheDocument();
+    fireEvent.click(within(leaveReviewDialog).getByRole("button", { name: "駁回申請" }));
+    expect(within(leaveReviewDialog).getByLabelText("駁回理由")).toBeInTheDocument();
+    fireEvent.change(within(leaveReviewDialog).getByLabelText("駁回理由"), {
       target: { value: "該時段已有醫師不足，請改提其他日期。" }
     });
-    fireEvent.click(screen.getByRole("button", { name: "確認駁回" }));
+    fireEvent.click(within(leaveReviewDialog).getByRole("button", { name: "確認駁回" }));
 
     await waitFor(() => {
       expect(screen.getByRole("status")).toHaveTextContent("請假申請已駁回，並已記錄駁回理由");
@@ -3742,14 +3754,15 @@ describe("AdminPages", () => {
 
     renderWithProviders(<AdminLeaveRequestsPage />);
 
-    fireEvent.click(screen.getByRole("button", { name: "駁回申請" }));
-    fireEvent.change(screen.getByLabelText("駁回理由"), {
+    const leaveReviewDialog = openLeaveRequestReviewDialog("家庭因素");
+    fireEvent.click(within(leaveReviewDialog).getByRole("button", { name: "駁回申請" }));
+    fireEvent.change(within(leaveReviewDialog).getByLabelText("駁回理由"), {
       target: { value: "暫時不允許。" }
     });
-    fireEvent.click(screen.getByRole("button", { name: "取消駁回" }));
+    fireEvent.click(within(leaveReviewDialog).getByRole("button", { name: "取消駁回" }));
 
-    expect(screen.queryByLabelText("駁回理由")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "確認駁回" })).not.toBeInTheDocument();
+    expect(within(leaveReviewDialog).queryByLabelText("駁回理由")).not.toBeInTheDocument();
+    expect(within(leaveReviewDialog).queryByRole("button", { name: "確認駁回" })).not.toBeInTheDocument();
 
     const storedDb = JSON.parse(window.localStorage.getItem(MOCK_DB_STORAGE_KEY) ?? "{}");
     expect(storedDb.leave_requests?.[0]?.status).toBe("pending");
@@ -3780,7 +3793,8 @@ describe("AdminPages", () => {
 
     renderWithProviders(<AdminLeaveRequestsPage />);
 
-    fireEvent.click(screen.getByRole("button", { name: "取消駁回" }));
+    const leaveReviewDialog = openLeaveRequestReviewDialog("身體不適");
+    fireEvent.click(within(leaveReviewDialog).getByRole("button", { name: "取消駁回" }));
 
     await waitFor(() => {
       expect(screen.getByRole("status")).toHaveTextContent("已取消駁回，請假申請已恢復待處理。");
@@ -3839,14 +3853,15 @@ describe("AdminPages", () => {
     renderWithProviders(<AdminLeaveRequestsPage />);
 
     expect(screen.getByText("院內會議")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "刪除請假案件" }));
+    const leaveReviewDialog = openLeaveRequestReviewDialog("院內會議");
+    fireEvent.click(within(leaveReviewDialog).getByRole("button", { name: "刪除請假案件" }));
     expect(screen.getByRole("dialog", { name: "確定刪除這筆請假案件？" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "確定刪除" }));
 
     await waitFor(() => {
       expect(screen.getByRole("status")).toHaveTextContent("請假案件已刪除");
       expect(screen.getByText("目前沒有請假申請。")).toBeInTheDocument();
-      expect(screen.getByText("目前沒有可查看的請假單。")).toBeInTheDocument();
+      expect(screen.queryByRole("dialog", { name: "請假案件與處理摘要" })).not.toBeInTheDocument();
     });
 
     const storedDb = JSON.parse(window.localStorage.getItem(MOCK_DB_STORAGE_KEY) ?? "{}");
@@ -4549,6 +4564,21 @@ describe("AdminPages", () => {
     expect(within(dialog).getByLabelText("角色姓名")).toHaveValue("蕭坤元醫師");
     expect(within(dialog).queryByLabelText("Google 登入帳號")).not.toBeInTheDocument();
     expect(within(dialog).queryByLabelText("Google Chat userId")).not.toBeInTheDocument();
+  });
+
+  it("AdminStaffPage 資料完整性檢查預設收合，點擊後才顯示明細", () => {
+    renderWithProviders(<AdminStaffPage />);
+
+    expect(screen.getByRole("button", { name: "顯示完整性檢查" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByText(/目前共有 \d+ 筆待補資料|目前沒有資料完整性異常/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "重新檢查" })).not.toBeInTheDocument();
+    expect(screen.queryByText("缺 Google 帳號")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "顯示完整性檢查" }));
+
+    expect(screen.getByRole("button", { name: "收起完整性檢查" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("button", { name: "重新檢查" })).toBeInTheDocument();
+    expect(screen.getByText("缺 Google 帳號")).toBeInTheDocument();
   });
 
   it("AdminStaffPage 可在個人資料視窗中修改醫師資料", () => {

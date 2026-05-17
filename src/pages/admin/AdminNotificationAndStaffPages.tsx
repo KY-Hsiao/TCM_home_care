@@ -1,27 +1,23 @@
 import { useEffect, useMemo, useState } from "react";
 import { useAppContext } from "../../app/use-app-context";
-import type { AdminUser, Doctor } from "../../domain/models";
+import type { Doctor } from "../../domain/models";
 import { Badge } from "../../shared/ui/Badge";
 import { Panel } from "../../shared/ui/Panel";
 import { clearLegacyAdminApiTokenSettings } from "../../shared/utils/admin-api-tokens";
 import { maskPatientName } from "../../shared/utils/patient-name";
 
-type ManageableRole = "doctor" | "admin";
-
 type StaffDraft = {
   sourceId: string | null;
-  originalRole: ManageableRole | null;
-  role: ManageableRole;
+  originalRole: "doctor" | null;
   name: string;
   phone: string;
-  jobTitle: string;
   serviceSlotsText: string;
 };
 
 type StaffListItem = {
   key: string;
   id: string;
-  role: ManageableRole;
+  role: "doctor";
   name: string;
   phone: string;
   accountLabel: string;
@@ -304,28 +300,14 @@ function buildDoctorDraft(doctor?: Doctor): StaffDraft {
   return {
     sourceId: doctor?.id ?? null,
     originalRole: doctor ? "doctor" : null,
-    role: "doctor",
     name: doctor?.name ?? "",
     phone: doctor?.phone ?? "",
-    jobTitle: "",
     serviceSlotsText: doctor?.available_service_slots.join("\n") ?? ""
   };
 }
 
-function buildAdminDraft(admin?: AdminUser): StaffDraft {
-  return {
-    sourceId: admin?.id ?? null,
-    originalRole: admin ? "admin" : null,
-    role: "admin",
-    name: admin?.name ?? "",
-    phone: admin?.phone ?? "",
-    jobTitle: admin?.job_title ?? "",
-    serviceSlotsText: ""
-  };
-}
-
-function buildEmptyStaffDraft(role: ManageableRole = "doctor"): StaffDraft {
-  return role === "doctor" ? buildDoctorDraft() : buildAdminDraft();
+function buildEmptyStaffDraft(): StaffDraft {
+  return buildDoctorDraft();
 }
 
 function createId(prefix: string) {
@@ -553,6 +535,7 @@ export function AdminStaffPage() {
   const [activeServiceDay, setActiveServiceDay] = useState<ServiceDay>(serviceDayOptions[0]);
   const [recentAction, setRecentAction] = useState<string | null>(null);
   const [isSecretManagementOpen, setIsSecretManagementOpen] = useState(false);
+  const [isDataIntegrityOpen, setIsDataIntegrityOpen] = useState(false);
   const [testingConnectionService, setTestingConnectionService] =
     useState<ConnectionTestService | null>(null);
   const [isLoadingEnvStatus, setIsLoadingEnvStatus] = useState(false);
@@ -582,12 +565,12 @@ export function AdminStaffPage() {
     if (staffKey.startsWith("doctor:")) {
       return buildDoctorDraft(db.doctors.find((doctor) => doctor.id === staffKey.replace("doctor:", "")));
     }
-    return buildAdminDraft(db.admin_users.find((admin) => admin.id === staffKey.replace("admin:", "")));
+    return buildEmptyStaffDraft();
   };
   const [draft, setDraft] = useState<StaffDraft>(() =>
     defaultDoctorKey.startsWith("doctor:")
       ? resolveDraftByKey(defaultDoctorKey)
-      : buildEmptyStaffDraft("doctor")
+      : buildEmptyStaffDraft()
   );
   const supportedServiceSlots = useMemo(
     () => getSupportedServiceSlots(draft.serviceSlotsText),
@@ -713,7 +696,7 @@ export function AdminStaffPage() {
 
   const syncDraftFromSelection = (staffKey: string) => {
     const nextDraft = staffKey.startsWith("new:")
-      ? buildEmptyStaffDraft(staffKey.replace("new:", "") as ManageableRole)
+      ? buildEmptyStaffDraft()
       : resolveDraftByKey(staffKey);
     setDraft(nextDraft);
     setActiveServiceDay(getInitialActiveServiceDay(nextDraft.serviceSlotsText));
@@ -725,8 +708,8 @@ export function AdminStaffPage() {
     setIsEditorOpen(true);
   };
 
-  const startCreateStaff = (role: ManageableRole) => {
-    const staffKey = `new:${role}`;
+  const startCreateStaff = () => {
+    const staffKey = "new:doctor";
     setSelectedStaffKey(staffKey);
     syncDraftFromSelection(staffKey);
     setIsEditorOpen(true);
@@ -763,84 +746,46 @@ export function AdminStaffPage() {
       return;
     }
 
-    if (draft.originalRole === "doctor" && draft.role === "admin" && currentDoctorAssignments > 0) {
-      setRecentAction(`${normalizedName} 目前仍有排程案件，暫不允許改為行政身分。`);
+    const selectedServiceSlots = getSupportedServiceSlots(draft.serviceSlotsText);
+    if (selectedServiceSlots.length === 0) {
+      setRecentAction("請至少勾選一個醫師可服務時段。");
       return;
     }
 
-    if (draft.role === "doctor") {
-      const selectedServiceSlots = getSupportedServiceSlots(draft.serviceSlotsText);
-      if (selectedServiceSlots.length === 0) {
-        setRecentAction("請至少勾選一個醫師可服務時段。");
-        return;
-      }
-      const doctorIdToSave =
-        draft.originalRole === "doctor" && draft.sourceId
-          ? draft.sourceId
-          : createId("doc");
-      const existingDoctor =
-        draft.originalRole === "doctor" && draft.sourceId
-          ? db.doctors.find((doctor) => doctor.id === draft.sourceId)
-          : null;
-      const doctorToSave: Doctor = {
-        id: doctorIdToSave,
-        name: normalizedName,
-        license_number: "",
-        phone: normalizedPhone,
-        specialty: "",
-        service_area: "",
-        google_chat_user_id: existingDoctor?.google_chat_user_id ?? "",
-        google_account_email: existingDoctor?.google_account_email ?? null,
-        google_account_logged_in: existingDoctor?.google_account_logged_in ?? false,
-        google_location_share_url: existingDoctor?.google_location_share_url ?? null,
-        google_location_share_enabled: existingDoctor?.google_location_share_enabled ?? false,
-        available_service_slots: selectedServiceSlots,
-        status: "active",
-        created_at: now,
-        updated_at: now
-      };
-      repositories.patientRepository.upsertDoctor(doctorToSave);
-      if (draft.originalRole === "admin" && draft.sourceId) {
-        repositories.patientRepository.removeAdmin(draft.sourceId);
-      }
-      setSelectedStaffKey(`doctor:${doctorIdToSave}`);
-      setDraft(buildDoctorDraft(doctorToSave));
-      setActiveServiceDay(getInitialActiveServiceDay(doctorToSave.available_service_slots.join("\n")));
-      setRecentAction(
-        legacyServiceSlotWarnings.length > 0
-          ? `已將 ${normalizedName} 設為醫師，並移除不支援的舊時段：${legacyServiceSlotWarnings.join("、")}。`
-          : `已將 ${normalizedName} 設為醫師。`
-      );
-      return;
-    }
-
-    const adminIdToSave =
-      draft.originalRole === "admin" && draft.sourceId
+    const doctorIdToSave =
+      draft.originalRole === "doctor" && draft.sourceId
         ? draft.sourceId
-        : createId("admin");
-    const existingAdmin =
-      draft.originalRole === "admin" && draft.sourceId
-        ? db.admin_users.find((admin) => admin.id === draft.sourceId)
+        : createId("doc");
+    const existingDoctor =
+      draft.originalRole === "doctor" && draft.sourceId
+        ? db.doctors.find((doctor) => doctor.id === draft.sourceId)
         : null;
-    const adminToSave: AdminUser = {
-      id: adminIdToSave,
+    const doctorToSave: Doctor = {
+      id: doctorIdToSave,
       name: normalizedName,
-      job_title: draft.jobTitle.trim() || "行政協作人員",
-      email: existingAdmin?.email || `${adminIdToSave}@example.local`,
-      google_chat_user_id: existingAdmin?.google_chat_user_id ?? "",
-      google_account_email: existingAdmin?.google_account_email ?? "",
-      google_account_logged_in: existingAdmin?.google_account_logged_in ?? false,
       phone: normalizedPhone,
+      license_number: "",
+      specialty: "",
+      service_area: "",
+      google_chat_user_id: existingDoctor?.google_chat_user_id ?? "",
+      google_account_email: existingDoctor?.google_account_email ?? null,
+      google_account_logged_in: existingDoctor?.google_account_logged_in ?? false,
+      google_location_share_url: existingDoctor?.google_location_share_url ?? null,
+      google_location_share_enabled: existingDoctor?.google_location_share_enabled ?? false,
+      available_service_slots: selectedServiceSlots,
+      status: "active",
       created_at: now,
       updated_at: now
     };
-    repositories.patientRepository.upsertAdmin(adminToSave);
-    if (draft.originalRole === "doctor" && draft.sourceId) {
-      repositories.patientRepository.removeDoctor(draft.sourceId);
-    }
-    setSelectedStaffKey(`admin:${adminIdToSave}`);
-    setDraft(buildAdminDraft(adminToSave));
-    setRecentAction(`已將 ${normalizedName} 設為行政。`);
+    repositories.patientRepository.upsertDoctor(doctorToSave);
+    setSelectedStaffKey(`doctor:${doctorIdToSave}`);
+    setDraft(buildDoctorDraft(doctorToSave));
+    setActiveServiceDay(getInitialActiveServiceDay(doctorToSave.available_service_slots.join("\n")));
+    setRecentAction(
+      legacyServiceSlotWarnings.length > 0
+        ? `已將 ${normalizedName} 設為醫師，並移除不支援的舊時段：${legacyServiceSlotWarnings.join("、")}。`
+        : `已將 ${normalizedName} 設為醫師。`
+    );
   };
 
   const removeStaffRole = () => {
@@ -849,42 +794,30 @@ export function AdminStaffPage() {
       return;
     }
 
-    if (draft.originalRole === "doctor") {
-      if (db.doctors.length <= 1) {
-        setRecentAction("目前至少要保留一位醫師。");
+    if (db.doctors.length <= 1) {
+      setRecentAction("目前至少要保留一位醫師。");
+      return;
+    }
+    if (currentDoctorAssignments > 0) {
+      const confirmed = window.confirm(
+        `${draft.name || "此醫師"} 目前仍有 ${currentDoctorAssignments} 筆排程案件。確定移除此角色嗎？相關排程、已儲存路線、定位紀錄與請假通知也會一併清除。`
+      );
+      if (!confirmed) {
+        setRecentAction("已取消移除此角色。");
         return;
       }
-      if (currentDoctorAssignments > 0) {
-        const confirmed = window.confirm(
-          `${draft.name || "此醫師"} 目前仍有 ${currentDoctorAssignments} 筆排程案件。確定移除此角色嗎？相關排程、已儲存路線、定位紀錄與請假通知也會一併清除。`
-        );
-        if (!confirmed) {
-          setRecentAction("已取消移除此角色。");
-          return;
-        }
-      }
+    }
 
-      repositories.patientRepository.removeDoctor(draft.sourceId);
-      const fallbackDoctor = db.doctors.find((doctor) => doctor.id !== draft.sourceId);
-      if (fallbackDoctor) {
-        setSelectedStaffKey(`doctor:${fallbackDoctor.id}`);
-        setDraft(buildDoctorDraft(fallbackDoctor));
-        setActiveServiceDay(getInitialActiveServiceDay(fallbackDoctor.available_service_slots.join("\n")));
-      } else {
-        setSelectedStaffKey("new:doctor");
-        setDraft(buildEmptyStaffDraft("doctor"));
-        setActiveServiceDay(serviceDayOptions[0]);
-      }
+    repositories.patientRepository.removeDoctor(draft.sourceId);
+    const fallbackDoctor = db.doctors.find((doctor) => doctor.id !== draft.sourceId);
+    if (fallbackDoctor) {
+      setSelectedStaffKey(`doctor:${fallbackDoctor.id}`);
+      setDraft(buildDoctorDraft(fallbackDoctor));
+      setActiveServiceDay(getInitialActiveServiceDay(fallbackDoctor.available_service_slots.join("\n")));
     } else {
-      repositories.patientRepository.removeAdmin(draft.sourceId);
-      const fallbackAdmin = db.admin_users.find((admin) => admin.id !== draft.sourceId);
-      if (fallbackAdmin) {
-        setSelectedStaffKey(`admin:${fallbackAdmin.id}`);
-        setDraft(buildAdminDraft(fallbackAdmin));
-      } else {
-        setSelectedStaffKey(defaultDoctorKey);
-        syncDraftFromSelection(defaultDoctorKey);
-      }
+      setSelectedStaffKey("new:doctor");
+      setDraft(buildEmptyStaffDraft());
+      setActiveServiceDay(serviceDayOptions[0]);
     }
     setIsEditorOpen(false);
     setRecentAction(`已移除 ${draft.name || "該角色"}。`);
@@ -1099,16 +1032,28 @@ export function AdminStaffPage() {
         <Panel
           title="資料完整性檢查"
           action={
-            <button
-              type="button"
-              onClick={() => {
-                setManagedLineContacts(loadManagedFamilyLineContacts());
-                setIntegrityCheckedAt(new Date().toISOString());
-              }}
-              className="rounded-full border border-brand-sand bg-white px-4 py-2 text-sm font-semibold text-brand-forest"
-            >
-              重新檢查
-            </button>
+            <div className="flex flex-wrap gap-2">
+              {isDataIntegrityOpen ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setManagedLineContacts(loadManagedFamilyLineContacts());
+                    setIntegrityCheckedAt(new Date().toISOString());
+                  }}
+                  className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700"
+                >
+                  重新檢查
+                </button>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => setIsDataIntegrityOpen((current) => !current)}
+                aria-expanded={isDataIntegrityOpen}
+                className="rounded-full border border-brand-sand bg-white px-4 py-2 text-sm font-semibold text-brand-forest"
+              >
+                {isDataIntegrityOpen ? "收起完整性檢查" : "顯示完整性檢查"}
+              </button>
+            </div>
           }
         >
           <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600 lg:flex-row lg:items-center lg:justify-between">
@@ -1125,55 +1070,61 @@ export function AdminStaffPage() {
             <p className="text-xs text-slate-500">最後檢查：{new Date(integrityCheckedAt).toLocaleString("zh-TW")}</p>
           </div>
 
-          <div className="mt-4 grid gap-4 xl:grid-cols-2">
-            {dataIntegrityChecks.map((check) => (
-              <div key={check.key} className="rounded-2xl border border-slate-200 bg-white p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="font-semibold text-brand-ink">{check.title}</p>
-                    <p className="mt-1 text-xs text-slate-500">{check.description}</p>
+          {isDataIntegrityOpen ? (
+            <div className="mt-4 grid gap-4 xl:grid-cols-2">
+              {dataIntegrityChecks.map((check) => (
+                <div key={check.key} className="rounded-2xl border border-slate-200 bg-white p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="font-semibold text-brand-ink">{check.title}</p>
+                      <p className="mt-1 text-xs text-slate-500">{check.description}</p>
+                    </div>
+                    <span
+                      className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                        check.issues.length === 0
+                          ? "bg-emerald-100 text-emerald-800"
+                          : "bg-amber-100 text-amber-800"
+                      }`}
+                    >
+                      {check.issues.length === 0 ? "通過" : `${check.issues.length} 筆`}
+                    </span>
                   </div>
-                  <span
-                    className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                      check.issues.length === 0
-                        ? "bg-emerald-100 text-emerald-800"
-                        : "bg-amber-100 text-amber-800"
-                    }`}
-                  >
-                    {check.issues.length === 0 ? "通過" : `${check.issues.length} 筆`}
-                  </span>
-                </div>
 
-                <div className="mt-3 space-y-2">
-                  {check.issues.length > 0 ? (
-                    check.issues.slice(0, 5).map((issue) => (
-                      <div key={issue.id} className="rounded-xl bg-slate-50 px-3 py-2 text-sm">
-                        <div className="flex flex-wrap items-start justify-between gap-2">
-                          <div className="min-w-0">
-                            <p className="font-semibold text-brand-ink">{issue.title}</p>
-                            <p className="mt-1 text-xs text-slate-600">{issue.detail}</p>
+                  <div className="mt-3 space-y-2">
+                    {check.issues.length > 0 ? (
+                      check.issues.slice(0, 5).map((issue) => (
+                        <div key={issue.id} className="rounded-xl bg-slate-50 px-3 py-2 text-sm">
+                          <div className="flex flex-wrap items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <p className="font-semibold text-brand-ink">{issue.title}</p>
+                              <p className="mt-1 text-xs text-slate-600">{issue.detail}</p>
+                            </div>
+                            <a
+                              href={issue.href}
+                              className="shrink-0 rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-brand-forest ring-1 ring-slate-200"
+                            >
+                              {issue.linkText}
+                            </a>
                           </div>
-                          <a
-                            href={issue.href}
-                            className="shrink-0 rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-brand-forest ring-1 ring-slate-200"
-                          >
-                            {issue.linkText}
-                          </a>
                         </div>
-                      </div>
-                    ))
-                  ) : (
-                    <p className="rounded-xl bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
-                      此項目目前沒有缺漏。
-                    </p>
-                  )}
-                  {check.issues.length > 5 ? (
-                    <p className="text-xs text-slate-500">另有 {check.issues.length - 5} 筆，請先處理上方項目後重新檢查。</p>
-                  ) : null}
+                      ))
+                    ) : (
+                      <p className="rounded-xl bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+                        此項目目前沒有缺漏。
+                      </p>
+                    )}
+                    {check.issues.length > 5 ? (
+                      <p className="text-xs text-slate-500">另有 {check.issues.length - 5} 筆，請先處理上方項目後重新檢查。</p>
+                    ) : null}
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          ) : (
+            <p className="mt-3 text-sm text-slate-500">
+              需要查看缺漏明細或重新檢查時再展開。
+            </p>
+          )}
         </Panel>
 
         <Panel
@@ -1182,7 +1133,7 @@ export function AdminStaffPage() {
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
-                onClick={() => startCreateStaff("doctor")}
+                onClick={startCreateStaff}
                 className="rounded-full bg-brand-sand px-4 py-2 text-sm font-semibold text-brand-forest"
               >
                 新增醫師
@@ -1260,7 +1211,7 @@ export function AdminStaffPage() {
             <div className="mt-6 grid gap-4 md:grid-cols-2 text-sm">
               <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
                 <span className="mb-1 block font-medium text-brand-ink">系統角色</span>
-                <p className="text-slate-600">{draft.role === "doctor" ? "醫師" : "行政"}</p>
+                <p className="text-slate-600">醫師</p>
               </div>
               <label className="block">
                 <span className="mb-1 block font-medium text-brand-ink">姓名</span>
@@ -1284,7 +1235,6 @@ export function AdminStaffPage() {
                 允許定位後，行政端可看位置與路線進度。
               </div>
 
-              {draft.role === "doctor" ? (
               <div className="md:col-span-2 rounded-3xl border border-slate-200 p-4">
                 <div className="grid gap-4 lg:grid-cols-[0.85fr_1.15fr]">
                   <div className="space-y-3">
@@ -1362,7 +1312,6 @@ export function AdminStaffPage() {
                   </div>
                 </div>
               </div>
-              ) : null}
             </div>
 
             {currentDoctorAssignments > 0 ? (
