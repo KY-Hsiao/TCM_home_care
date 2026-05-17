@@ -577,16 +577,15 @@ function DoctorRouteSelector({ embedded = false }: { embedded?: boolean }) {
   };
 
   const handleResetRouteProgress = (routePlanId: string) => {
-    const routePlan = repositories.visitRepository.getSavedRoutePlanById(routePlanId);
-    if (!routePlan) {
+    const resetRoutePlan = repositories.visitRepository.resetRoutePlanProgress(routePlanId);
+    if (!resetRoutePlan) {
       return;
     }
 
-    repositories.visitRepository.resetRoutePlanProgress(routePlanId);
     services.visitAutomation.resetAll();
     setPatientDetailScheduleId(null);
     setRouteListModalId(null);
-    setActiveRoutePlanId(routePlanId);
+    setActiveRoutePlanId(resetRoutePlan.id);
     navigate("/doctor/navigation");
   };
 

@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SESSION_STORAGE_KEY } from "../../app/auth-storage";
@@ -312,6 +312,84 @@ describe("DoctorDashboardPage", () => {
 
     expect(screen.queryByText(`前往 ${maskPatientName(firstPatientName)} 的停留點`)).not.toBeInTheDocument();
     expect(screen.getByText(/即將前往第 1 站/)).toBeInTheDocument();
+  });
+
+  it("重置路線會讀取行政端重新儲存的同日同時段新版本", async () => {
+    renderDashboard();
+
+    openNavigationModal();
+    resetCurrentRouteFromNavigationModal();
+
+    const ctx = capturedContext;
+    if (!ctx) {
+      throw new Error("找不到 AppContext。");
+    }
+
+    const currentRoutePlan = getActiveRoutePlan();
+    const checkedRouteItems = currentRoutePlan.route_items
+      .filter((item) => item.checked)
+      .sort((left, right) => (left.route_order ?? Number.MAX_SAFE_INTEGER) - (right.route_order ?? Number.MAX_SAFE_INTEGER));
+    const newFirstRouteItem = checkedRouteItems.at(-1);
+    if (!newFirstRouteItem) {
+      throw new Error("找不到可反轉的新路線站點。");
+    }
+
+    const correctedRoutePlanId = `route-${currentRoutePlan.doctor_id}-${currentRoutePlan.route_date}-${currentRoutePlan.route_weekday}-${currentRoutePlan.service_time_slot}`;
+    const now = new Date().toISOString();
+
+    act(() => {
+      ctx.repositories.visitRepository.upsertSavedRoutePlan({
+        ...currentRoutePlan,
+        id: correctedRoutePlanId,
+        route_group_id: correctedRoutePlanId,
+        route_name: `${currentRoutePlan.route_name} 修正版`,
+        schedule_ids: [],
+        route_items: [
+          ...checkedRouteItems
+            .slice()
+            .reverse()
+            .map((item, index) => ({
+              ...item,
+              schedule_id: null,
+              route_order: index + 1,
+              status: "scheduled" as const
+            })),
+          ...currentRoutePlan.route_items
+            .filter((item) => !item.checked)
+            .map((item) => ({
+              ...item,
+              schedule_id: null,
+              route_order: null,
+              status: "paused" as const
+            }))
+        ],
+        execution_status: "draft",
+        executed_at: null,
+        saved_at: now,
+        updated_at: now
+      });
+    });
+
+    await waitFor(() => {
+      expect(
+        capturedContext?.repositories.visitRepository.getSavedRoutePlanById(correctedRoutePlanId)?.execution_status
+      ).toBe("executing");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "重置路線" }));
+
+    await waitFor(() => {
+      const resetRoutePlan = capturedContext?.repositories.visitRepository.getSavedRoutePlanById(correctedRoutePlanId);
+      const firstRouteItem = resetRoutePlan?.route_items
+        .filter((item) => item.checked)
+        .sort((left, right) => (left.route_order ?? Number.MAX_SAFE_INTEGER) - (right.route_order ?? Number.MAX_SAFE_INTEGER))[0];
+
+      expect(capturedContext?.session.activeRoutePlanId).toBe(correctedRoutePlanId);
+      expect(firstRouteItem?.patient_id).toBe(newFirstRouteItem.patient_id);
+      expect(
+        screen.getByText(new RegExp(`即將前往第 1 站 ${maskPatientName(newFirstRouteItem.patient_name)}`))
+      ).toBeInTheDocument();
+    });
   });
 
   it("導航途中可將目前患者標記暫停並接續下一位", () => {

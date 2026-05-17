@@ -299,6 +299,55 @@ function upsertSavedRoutePlanList(db: AppDb, routePlan: SavedRoutePlan) {
   return [routePlan, ...filtered];
 }
 
+function isSameRoutePlanScope(left: SavedRoutePlan, right: SavedRoutePlan) {
+  return (
+    left.doctor_id === right.doctor_id &&
+    left.route_date === right.route_date &&
+    left.route_weekday === right.route_weekday &&
+    left.service_time_slot === right.service_time_slot
+  );
+}
+
+function getRoutePlanRevisionTime(routePlan: SavedRoutePlan) {
+  return Math.max(
+    new Date(routePlan.updated_at).getTime(),
+    new Date(routePlan.saved_at).getTime(),
+    new Date(routePlan.executed_at ?? 0).getTime()
+  );
+}
+
+function findLatestRoutePlanVersion(db: AppDb, routePlan: SavedRoutePlan) {
+  return (
+    db.saved_route_plans
+      .filter((item) => isSameRoutePlanScope(item, routePlan))
+      .sort((left, right) => getRoutePlanRevisionTime(right) - getRoutePlanRevisionTime(left))[0] ??
+    routePlan
+  );
+}
+
+function preserveExecutingRouteState(db: AppDb, routePlan: SavedRoutePlan) {
+  if (routePlan.execution_status !== "draft") {
+    return routePlan;
+  }
+
+  const executingRoutePlan = db.saved_route_plans
+    .filter(
+      (item) => item.execution_status === "executing" && isSameRoutePlanScope(item, routePlan)
+    )
+    .sort((left, right) => getRoutePlanRevisionTime(right) - getRoutePlanRevisionTime(left))[0];
+
+  if (!executingRoutePlan) {
+    return routePlan;
+  }
+
+  return {
+    ...routePlan,
+    execution_status: "executing" as const,
+    executed_at: executingRoutePlan.executed_at,
+    created_at: executingRoutePlan.created_at
+  };
+}
+
 function upsertReminderList(db: AppDb, reminder: AppDb["reminders"][number]) {
   const index = db.reminders.findIndex((item) => item.id === reminder.id);
   if (index >= 0) {
@@ -651,13 +700,14 @@ function executeRoutePlanInDb(db: AppDb, routePlanId: string) {
 }
 
 function resetRoutePlanProgressInDb(db: AppDb, routePlanId: string) {
-  const routePlan = db.saved_route_plans.find((item) => item.id === routePlanId);
-  if (!routePlan) {
+  const requestedRoutePlan = db.saved_route_plans.find((item) => item.id === routePlanId);
+  if (!requestedRoutePlan) {
     return {
       db,
       resetRoutePlan: undefined as SavedRoutePlan | undefined
     };
   }
+  const routePlan = findLatestRoutePlanVersion(db, requestedRoutePlan);
 
   const now = new Date().toISOString();
   const patientById = new Map(db.patients.map((patient) => [patient.id, patient]));
@@ -729,7 +779,7 @@ function resetRoutePlanProgressInDb(db: AppDb, routePlanId: string) {
 
   let resetRoutePlan: SavedRoutePlan | undefined;
   const nextSavedRoutePlans = db.saved_route_plans.map((item) => {
-    if (item.id !== routePlanId) {
+    if (item.id !== routePlan.id) {
       return item;
     }
 
@@ -751,7 +801,7 @@ function resetRoutePlanProgressInDb(db: AppDb, routePlanId: string) {
         visit_schedules: db.visit_schedules.filter((schedule) => !scheduleIdSet.has(schedule.id)),
         saved_route_plans: nextSavedRoutePlans
       };
-      const result = executeRoutePlanInDb(cleanedDb, routePlanId);
+      const result = executeRoutePlanInDb(cleanedDb, routePlan.id);
       resetRoutePlan = result.executedRoutePlan;
       return {
         db: result.db,
@@ -1022,17 +1072,20 @@ export function createVisitRepository(
     upsertSavedRoutePlan(routePlan) {
       updateDb((db) => ({
         ...db,
-        saved_route_plans: upsertSavedRoutePlanList(db, {
-          ...routePlan,
-          id:
-            routePlan.id ||
-            buildRouteScopeId(
-              routePlan.doctor_id,
-              routePlan.route_date,
-              routePlan.route_weekday,
-              routePlan.service_time_slot
-            )
-        })
+        saved_route_plans: upsertSavedRoutePlanList(
+          db,
+          preserveExecutingRouteState(db, {
+            ...routePlan,
+            id:
+              routePlan.id ||
+              buildRouteScopeId(
+                routePlan.doctor_id,
+                routePlan.route_date,
+                routePlan.route_weekday,
+                routePlan.service_time_slot
+              )
+          })
+        )
       }));
     },
     deleteSavedRoutePlan(routePlanId) {
@@ -1067,7 +1120,7 @@ export function createVisitRepository(
       let executedRoutePlan: SavedRoutePlan | undefined;
 
       updateDb((db) => {
-        const normalizedRoutePlan = {
+        const normalizedRoutePlan = preserveExecutingRouteState(db, {
           ...routePlan,
           id:
             routePlan.id ||
@@ -1077,7 +1130,7 @@ export function createVisitRepository(
               routePlan.route_weekday,
               routePlan.service_time_slot
             )
-        };
+        });
         const nextDb = {
           ...db,
           saved_route_plans: upsertSavedRoutePlanList(db, normalizedRoutePlan)
