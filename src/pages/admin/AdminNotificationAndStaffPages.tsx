@@ -743,8 +743,8 @@ export function AdminStaffPage() {
     const normalizedPhone = draft.phone.trim();
     const isCreatingDoctor = !(draft.originalRole === "doctor" && draft.sourceId);
 
-    if (!normalizedName || !normalizedPhone) {
-      setRecentAction("請先填寫姓名與聯絡電話。");
+    if (!normalizedName) {
+      setRecentAction("請先填寫醫師姓名。");
       return;
     }
 
@@ -1170,7 +1170,7 @@ export function AdminStaffPage() {
                 </div>
                 <p className="mt-2 text-sm text-slate-600">{item.secondaryLabel}</p>
                 <p className="mt-1 text-xs text-slate-500">
-                  {item.phone} / {item.accountLabel}
+                  {item.phone || "未填電話"} / {item.accountLabel}
                 </p>
               </button>
             ))}

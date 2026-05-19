@@ -4606,10 +4606,6 @@ describe("AdminPages", () => {
     fireEvent.change(within(dialog).getByLabelText("角色姓名"), {
       target: { value: "新加入醫師" }
     });
-    fireEvent.change(within(dialog).getByLabelText("聯絡電話"), {
-      target: { value: "02-2933-1199" }
-    });
-
     fireEvent.click(within(dialog).getByRole("button", { name: "儲存角色設置" }));
 
     expect(screen.getByRole("status")).toHaveTextContent(
@@ -4624,12 +4620,30 @@ describe("AdminPages", () => {
       const newDoctor = storedDb.doctors.find((doctor: { name: string }) => doctor.name === "新加入醫師");
       const storedSession = JSON.parse(window.localStorage.getItem(SESSION_STORAGE_KEY) ?? "{}");
       expect(newDoctor).toMatchObject({
-        phone: "02-2933-1199",
+        phone: "",
         available_service_slots: [],
         status: "active"
       });
       expect(storedSession.activeDoctorId).toBe(newDoctor.id);
     });
+  });
+
+  it("AdminStaffPage 新增醫師只填姓名也會立即出現在名單", () => {
+    renderWithProviders(<AdminStaffPage />);
+
+    fireEvent.click(screen.getByRole("button", { name: "新增醫師" }));
+
+    const dialog = screen.getByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("角色姓名"), {
+      target: { value: "只填姓名醫師" }
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "儲存角色設置" }));
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByText(/醫師名單目前共 2 位/)).toBeInTheDocument();
+    const newDoctorButton = screen.getByRole("button", { name: /只填姓名醫師/ });
+    expect(newDoctorButton).toBeInTheDocument();
+    expect(within(newDoctorButton).getByText(/未填電話/)).toBeInTheDocument();
   });
 
   it("AdminStaffPage 醫師改服務時段後會自動取消原排程", () => {
