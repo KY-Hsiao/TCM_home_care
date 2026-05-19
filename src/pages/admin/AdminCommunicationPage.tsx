@@ -18,6 +18,11 @@ const ACTIVE_VISIT_STATUSES = [
   "scheduled"
 ] as const;
 
+function formatDoctorDisplayName(name: string) {
+  const normalized = name.trim();
+  return normalized.endsWith("醫師") ? normalized : `${normalized}醫師`;
+}
+
 export function AdminTeamCommunicationPage() {
   const { db, repositories, session } = useAppContext();
   const admins = repositories.patientRepository.getAdmins();
@@ -32,6 +37,7 @@ export function AdminTeamCommunicationPage() {
   }, [doctors, selectedDoctorId]);
 
   const selectedDoctor = doctors.find((doctor) => doctor.id === selectedDoctorId) ?? doctors[0];
+  const selectedDoctorName = selectedDoctor ? formatDoctorDisplayName(selectedDoctor.name) : "";
   const doctorSchedules = useMemo(
     () =>
       selectedDoctor
@@ -114,6 +120,7 @@ export function AdminTeamCommunicationPage() {
             <p className="mt-1 text-xs text-slate-500">選擇醫師後右側直接對話。</p>
             <div className="mt-3 grid max-h-[540px] gap-2 overflow-y-auto pr-1">
               {doctors.map((doctor) => {
+                const doctorName = formatDoctorDisplayName(doctor.name);
                 const doctorLogCount = db.contact_logs.filter(
                   (log) =>
                     log.doctor_id === doctor.id &&
@@ -132,7 +139,7 @@ export function AdminTeamCommunicationPage() {
                         : "border-slate-200 bg-white hover:border-brand-forest/40"
                     }`}
                   >
-                    <p className="font-semibold text-brand-ink">{doctor.name}</p>
+                    <p className="font-semibold text-brand-ink">{doctorName}</p>
                     <p className="mt-0.5 text-xs text-slate-600">{doctor.phone || "未設定電話"}</p>
                     <p className="mt-1 text-[11px] text-slate-500">聯絡紀錄 {doctorLogCount} 筆</p>
                   </button>
@@ -143,12 +150,12 @@ export function AdminTeamCommunicationPage() {
 
           <div className="min-h-[520px] min-w-0">
             <StaffCommunicationPanel
-              counterpartLabel={selectedDoctor.name}
+              counterpartLabel={selectedDoctorName}
               currentUserLabel="行政人員"
               contextLabel={
                 activeSchedule && activePatient
                   ? `第 ${activeSchedule.route_order} 站 ${maskPatientName(activePatient.name)}`
-                  : `${selectedDoctor.name} 院內協調`
+                  : `${selectedDoctorName} 院內協調`
               }
               doctorId={selectedDoctor.id}
               adminUserId={selectedAdmin.id}

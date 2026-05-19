@@ -2688,6 +2688,36 @@ describe("AdminPages", () => {
     await waitFor(() => expect(screen.getByText(/最後同步/)).toBeInTheDocument());
   });
 
+  it("AdminTeamCommunicationPage 醫師名單會自動補上醫師稱謂", async () => {
+    const customDb = createSeedDb();
+    customDb.doctors.push({
+      ...customDb.doctors[0],
+      id: "doc-no-title",
+      name: "陳柏霖",
+      phone: "",
+      available_service_slots: []
+    });
+    window.localStorage.setItem(MOCK_DB_STORAGE_KEY, JSON.stringify(customDb));
+    window.localStorage.setItem(
+      SESSION_STORAGE_KEY,
+      JSON.stringify({
+        role: "admin",
+        activeDoctorId: "doc-no-title",
+        activeAdminId: "admin-001",
+        authenticatedDoctorId: null,
+        authenticatedAdminId: "admin-001"
+      })
+    );
+
+    renderWithProviders(<AdminTeamCommunicationPage />);
+
+    expect(screen.getByRole("button", { name: /陳柏霖醫師/ })).toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/陳柏霖醫師/)).toBeInTheDocument();
+    expect(screen.queryByText(/^陳柏霖$/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/陳柏霖醫師醫師/)).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText(/最後同步/)).toBeInTheDocument());
+  });
+
   it("AdminTeamCommunicationPage 只保留文字訊息入口", async () => {
     window.localStorage.setItem(
       SESSION_STORAGE_KEY,
