@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { getDefaultPassword } from "../../app/auth-storage";
 import { useAppContext } from "../../app/use-app-context";
 import type { Doctor } from "../../domain/models";
 import { Badge } from "../../shared/ui/Badge";
@@ -528,7 +529,7 @@ function buildDataIntegrityChecks(
 }
 
 export function AdminStaffPage() {
-  const { repositories, db } = useAppContext();
+  const { repositories, db, setActiveDoctorId } = useAppContext();
   const defaultDoctorKey = db.doctors[0] ? `doctor:${db.doctors[0].id}` : "new:doctor";
   const [selectedStaffKey, setSelectedStaffKey] = useState<string>(defaultDoctorKey);
   const [isEditorOpen, setIsEditorOpen] = useState(false);
@@ -740,6 +741,7 @@ export function AdminStaffPage() {
     const now = new Date().toISOString();
     const normalizedName = draft.name.trim();
     const normalizedPhone = draft.phone.trim();
+    const isCreatingDoctor = !(draft.originalRole === "doctor" && draft.sourceId);
 
     if (!normalizedName || !normalizedPhone) {
       setRecentAction("請先填寫姓名與聯絡電話。");
@@ -778,13 +780,16 @@ export function AdminStaffPage() {
       updated_at: now
     };
     repositories.patientRepository.upsertDoctor(doctorToSave);
+    setActiveDoctorId(doctorIdToSave);
     setSelectedStaffKey(`doctor:${doctorIdToSave}`);
     setDraft(buildDoctorDraft(doctorToSave));
     setActiveServiceDay(getInitialActiveServiceDay(doctorToSave.available_service_slots.join("\n")));
     setRecentAction(
       legacyServiceSlotWarnings.length > 0
         ? `已將 ${normalizedName} 設為醫師，並移除不支援的舊時段：${legacyServiceSlotWarnings.join("、")}。`
-        : `已將 ${normalizedName} 設為醫師。`
+        : isCreatingDoctor
+          ? `已建立 ${normalizedName} 醫師帳號，可在登入頁選擇該醫師並使用預設密碼 ${getDefaultPassword()} 登入。`
+          : `已將 ${normalizedName} 設為醫師。`
     );
   };
 

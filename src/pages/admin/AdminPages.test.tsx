@@ -4596,7 +4596,7 @@ describe("AdminPages", () => {
     expect(screen.getByRole("button", { name: /蕭坤元主任醫師/ })).toBeInTheDocument();
   });
 
-  it("AdminStaffPage 可新增醫師並用分離式時段勾選", () => {
+  it("AdminStaffPage 可新增醫師帳號並用預設密碼登入", async () => {
     renderWithProviders(<AdminStaffPage />);
 
     fireEvent.click(screen.getByRole("button", { name: "新增醫師" }));
@@ -4613,8 +4613,22 @@ describe("AdminPages", () => {
 
     fireEvent.click(within(dialog).getByRole("button", { name: "儲存角色設置" }));
 
-    expect(screen.getByRole("status")).toHaveTextContent("已將 新加入醫師 設為醫師");
-    expect(screen.getAllByText("醫師").length).toBeGreaterThan(0);
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "已建立 新加入醫師 醫師帳號，可在登入頁選擇該醫師並使用預設密碼 0000 登入。"
+    );
+    expect(screen.getByRole("button", { name: /新加入醫師/ })).toBeInTheDocument();
+
+    await waitFor(() => {
+      const storedDb = JSON.parse(window.localStorage.getItem(MOCK_DB_STORAGE_KEY) ?? "{}");
+      const newDoctor = storedDb.doctors.find((doctor: { name: string }) => doctor.name === "新加入醫師");
+      const storedSession = JSON.parse(window.localStorage.getItem(SESSION_STORAGE_KEY) ?? "{}");
+      expect(newDoctor).toMatchObject({
+        phone: "02-2933-1199",
+        available_service_slots: ["星期一上午"],
+        status: "active"
+      });
+      expect(storedSession.activeDoctorId).toBe(newDoctor.id);
+    });
   });
 
   it("AdminStaffPage 醫師改服務時段後會自動取消原排程", () => {
