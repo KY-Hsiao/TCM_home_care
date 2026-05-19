@@ -4648,7 +4648,7 @@ describe("AdminPages", () => {
 
     const dialog = screen.getByRole("dialog");
     fireEvent.change(within(dialog).getByLabelText("角色姓名"), {
-      target: { value: "只填姓名醫師" }
+      target: { value: "只填姓名" }
     });
     fireEvent.click(within(dialog).getByRole("button", { name: "儲存角色設置" }));
 
@@ -4657,6 +4657,26 @@ describe("AdminPages", () => {
     const newDoctorButton = screen.getByRole("button", { name: /只填姓名醫師/ });
     expect(newDoctorButton).toBeInTheDocument();
     expect(within(newDoctorButton).getByText(/未填電話/)).toBeInTheDocument();
+  });
+
+  it("AdminStaffPage 新增醫師時會自動在姓名後補上醫師", async () => {
+    renderWithProviders(<AdminStaffPage />);
+
+    fireEvent.click(screen.getByRole("button", { name: "新增醫師" }));
+
+    const dialog = screen.getByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("角色姓名"), {
+      target: { value: "王小明" }
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "儲存角色設置" }));
+
+    expect(screen.getByRole("status")).toHaveTextContent("已建立 王小明醫師 醫師帳號");
+    expect(screen.getByRole("button", { name: /王小明醫師/ })).toBeInTheDocument();
+    await waitFor(() => {
+      const storedDb = JSON.parse(window.localStorage.getItem(MOCK_DB_STORAGE_KEY) ?? "{}");
+      expect(storedDb.doctors.some((doctor: { name: string }) => doctor.name === "王小明醫師")).toBe(true);
+      expect(storedDb.doctors.some((doctor: { name: string }) => doctor.name === "王小明醫師醫師")).toBe(false);
+    });
   });
 
   it("AdminStaffPage 醫師改服務時段後會自動取消原排程", () => {

@@ -307,6 +307,11 @@ function buildDoctorDraft(doctor?: Doctor): StaffDraft {
   };
 }
 
+function normalizeDoctorName(value: string) {
+  const normalized = value.trim();
+  return normalized.endsWith("醫師") ? normalized : `${normalized}醫師`;
+}
+
 function buildEmptyStaffDraft(): StaffDraft {
   return buildDoctorDraft();
 }
@@ -746,11 +751,11 @@ export function AdminStaffPage() {
 
   const saveStaffRoleSetting = () => {
     const now = new Date().toISOString();
-    const normalizedName = draft.name.trim();
+    const normalizedName = normalizeDoctorName(draft.name);
     const normalizedPhone = draft.phone.trim();
     const isCreatingDoctor = !(draft.originalRole === "doctor" && draft.sourceId);
 
-    if (!normalizedName) {
+    if (!draft.name.trim()) {
       setEditorMessage({
         tone: "error",
         message: "請先填寫醫師姓名。"
