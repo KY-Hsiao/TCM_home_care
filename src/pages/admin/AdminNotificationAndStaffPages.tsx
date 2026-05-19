@@ -779,6 +779,9 @@ export function AdminStaffPage() {
     setSelectedStaffKey(`doctor:${doctorIdToSave}`);
     setDraft(buildDoctorDraft(doctorToSave));
     setActiveServiceDay(getInitialActiveServiceDay(doctorToSave.available_service_slots.join("\n")));
+    if (isCreatingDoctor) {
+      setIsEditorOpen(false);
+    }
     setRecentAction(
       legacyServiceSlotWarnings.length > 0
         ? `已將 ${normalizedName} 設為醫師，並移除不支援的舊時段：${legacyServiceSlotWarnings.join("、")}。`
@@ -1145,6 +1148,10 @@ export function AdminStaffPage() {
             </div>
           }
         >
+          <div className="mb-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+            <span className="font-semibold text-brand-ink">醫師名單目前共 {staffList.length} 位。</span>
+            <span className="ml-2">新增或儲存後會立即更新在下方名單，醫師登入後使用完整醫師端選單。</span>
+          </div>
           <div className="space-y-3">
             {staffList.map((item) => (
               <button

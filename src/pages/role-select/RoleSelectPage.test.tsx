@@ -86,6 +86,32 @@ describe("RoleSelectPage", () => {
     expect(screen.getByText("醫師首頁")).toBeInTheDocument();
   });
 
+  it("新增到醫師名單的醫師也會出現在登入帳號選單", () => {
+    const seededDb = createSeedDb();
+    window.localStorage.setItem(
+      MOCK_DB_STORAGE_KEY,
+      JSON.stringify({
+        ...seededDb,
+        doctors: [
+          ...seededDb.doctors,
+          {
+            ...seededDb.doctors[0],
+            id: "doc-new-login",
+            name: "新加入醫師",
+            phone: "02-2933-1199",
+            available_service_slots: [],
+            created_at: "2026-05-19T14:10:00+08:00",
+            updated_at: "2026-05-19T14:10:00+08:00"
+          }
+        ]
+      })
+    );
+
+    renderRoleSelect();
+
+    expect(screen.getByRole("option", { name: "醫師 - 新加入醫師" })).toBeInTheDocument();
+  });
+
   it("選行政人員並輸入正確密碼後會用單一行政角色進入行政頁", async () => {
     renderRoleSelect();
 

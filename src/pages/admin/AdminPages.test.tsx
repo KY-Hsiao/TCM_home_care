@@ -4599,6 +4599,7 @@ describe("AdminPages", () => {
   it("AdminStaffPage 可先新增醫師帳號再補服務時段", async () => {
     renderWithProviders(<AdminStaffPage />);
 
+    expect(screen.getByText(/醫師名單目前共 1 位/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "新增醫師" }));
 
     const dialog = screen.getByRole("dialog");
@@ -4614,6 +4615,8 @@ describe("AdminPages", () => {
     expect(screen.getByRole("status")).toHaveTextContent(
       "已建立 新加入醫師 醫師帳號，可在登入頁選擇該醫師並使用預設密碼 0000 登入；尚未設定可服務時段，之後可回到角色設置補上。"
     );
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByText(/醫師名單目前共 2 位/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /新加入醫師/ })).toBeInTheDocument();
 
     await waitFor(() => {
