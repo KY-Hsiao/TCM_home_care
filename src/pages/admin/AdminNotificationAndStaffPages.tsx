@@ -749,11 +749,6 @@ export function AdminStaffPage() {
     }
 
     const selectedServiceSlots = getSupportedServiceSlots(draft.serviceSlotsText);
-    if (selectedServiceSlots.length === 0) {
-      setRecentAction("請至少勾選一個醫師可服務時段。");
-      return;
-    }
-
     const doctorIdToSave =
       draft.originalRole === "doctor" && draft.sourceId
         ? draft.sourceId
@@ -788,8 +783,12 @@ export function AdminStaffPage() {
       legacyServiceSlotWarnings.length > 0
         ? `已將 ${normalizedName} 設為醫師，並移除不支援的舊時段：${legacyServiceSlotWarnings.join("、")}。`
         : isCreatingDoctor
-          ? `已建立 ${normalizedName} 醫師帳號，可在登入頁選擇該醫師並使用預設密碼 ${getDefaultPassword()} 登入。`
-          : `已將 ${normalizedName} 設為醫師。`
+          ? selectedServiceSlots.length > 0
+            ? `已建立 ${normalizedName} 醫師帳號，可在登入頁選擇該醫師並使用預設密碼 ${getDefaultPassword()} 登入。`
+            : `已建立 ${normalizedName} 醫師帳號，可在登入頁選擇該醫師並使用預設密碼 ${getDefaultPassword()} 登入；尚未設定可服務時段，之後可回到角色設置補上。`
+          : selectedServiceSlots.length > 0
+            ? `已將 ${normalizedName} 設為醫師。`
+            : `已將 ${normalizedName} 設為醫師；尚未設定可服務時段，之後可回到角色設置補上。`
     );
   };
 
