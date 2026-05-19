@@ -433,6 +433,7 @@ describe("AppShell", () => {
 
   it("行政傳給醫師的未讀團隊通訊，醫師打開團隊通訊後會立刻轉成已讀", async () => {
     const seededDb = createSeedDb();
+    const teamMessageAt = new Date().toISOString();
     window.localStorage.setItem(
       MOCK_DB_STORAGE_KEY,
       JSON.stringify({
@@ -454,8 +455,8 @@ describe("AppShell", () => {
             reply_text: null,
             reply_updated_at: null,
             reply_updated_by_role: null,
-            created_at: "2026-04-30T09:20:00+08:00",
-            updated_at: "2026-04-30T09:20:00+08:00"
+            created_at: teamMessageAt,
+            updated_at: teamMessageAt
           }
         ]
       })
@@ -486,6 +487,7 @@ describe("AppShell", () => {
 
   it("醫師看過團隊通訊後再離開頁面，左側未讀標籤不會跳回未讀", async () => {
     const seededDb = createSeedDb();
+    const teamMessageAt = new Date().toISOString();
     window.localStorage.setItem(
       MOCK_DB_STORAGE_KEY,
       JSON.stringify({
@@ -507,8 +509,8 @@ describe("AppShell", () => {
             reply_text: null,
             reply_updated_at: null,
             reply_updated_by_role: null,
-            created_at: "2026-04-30T09:25:00+08:00",
-            updated_at: "2026-04-30T09:25:00+08:00"
+            created_at: teamMessageAt,
+            updated_at: teamMessageAt
           }
         ]
       })

@@ -2,6 +2,17 @@ import type { NotificationCenterItem } from "../../domain/models";
 import type { ContactLog } from "../../domain/models";
 import type { TeamCommunicationMessage, TeamCommunicationMessageType, TeamCommunicationRole } from "./types";
 
+export const TEAM_COMMUNICATION_RETENTION_HOURS = 24;
+export const TEAM_COMMUNICATION_RETENTION_MS = TEAM_COMMUNICATION_RETENTION_HOURS * 60 * 60 * 1000;
+
+export function isWithinTeamCommunicationRetention(value: string, now = new Date()) {
+  const time = new Date(value).getTime();
+  if (!Number.isFinite(time)) {
+    return false;
+  }
+  return time >= now.getTime() - TEAM_COMMUNICATION_RETENTION_MS;
+}
+
 export function resolveMessageTypeFromSubject(subject: string): TeamCommunicationMessageType {
   void subject;
   return "text";

@@ -1,6 +1,8 @@
 import {
   ensureTeamCommunicationTable,
+  purgeExpiredTeamCommunications,
   query,
+  TEAM_COMMUNICATION_RETENTION_SQL,
   validateRequiredString
 } from "./_lib/team-communications.js";
 
@@ -44,6 +46,7 @@ async function markConversationRead(request, response) {
   }
 
   const now = new Date().toISOString();
+  await purgeExpiredTeamCommunications();
   const result = await query(
     `
       UPDATE team_communications
@@ -55,6 +58,7 @@ async function markConversationRead(request, response) {
         AND receiver_role = $4
         AND receiver_user_id = $5
         AND is_read = FALSE
+        AND contacted_at >= ${TEAM_COMMUNICATION_RETENTION_SQL}
     `,
     [now, doctorId, adminUserId, viewerRole, viewerUserId]
   );
@@ -78,6 +82,7 @@ async function getUnreadCount(request, response) {
     return;
   }
   const readAfterValue = validateRequiredString(readAfter) ? readAfter : null;
+  await purgeExpiredTeamCommunications();
 
   const result = await query(
     `
@@ -89,6 +94,7 @@ async function getUnreadCount(request, response) {
         AND ($3::text IS NULL OR doctor_id = $3)
         AND ($4::text IS NULL OR admin_user_id = $4)
         AND ($5::timestamptz IS NULL OR contacted_at > $5)
+        AND contacted_at >= ${TEAM_COMMUNICATION_RETENTION_SQL}
     `,
     [role, userId, doctorId ?? null, adminUserId ?? null, readAfterValue]
   );
@@ -113,6 +119,7 @@ async function markMessageRead(request, response) {
   }
 
   const now = new Date().toISOString();
+  await purgeExpiredTeamCommunications();
   await query(
     `
       UPDATE team_communications
@@ -122,6 +129,7 @@ async function markMessageRead(request, response) {
       WHERE id = $2
         AND receiver_role = $3
         AND receiver_user_id = $4
+        AND contacted_at >= ${TEAM_COMMUNICATION_RETENTION_SQL}
     `,
     [now, id, viewerRole, viewerUserId]
   );

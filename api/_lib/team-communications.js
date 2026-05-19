@@ -31,6 +31,8 @@ const INDEX_SQL = [
   "CREATE INDEX IF NOT EXISTS team_communications_unread_idx ON team_communications (receiver_role, receiver_user_id, is_read, contacted_at DESC);"
 ];
 
+export const TEAM_COMMUNICATION_RETENTION_SQL = "NOW() - INTERVAL '24 hours'";
+
 let ensured = false;
 let poolInstance = null;
 
@@ -67,6 +69,10 @@ export async function ensureTeamCommunicationTable() {
     await query(statement);
   }
   ensured = true;
+}
+
+export async function purgeExpiredTeamCommunications() {
+  await query(`DELETE FROM team_communications WHERE contacted_at < ${TEAM_COMMUNICATION_RETENTION_SQL}`);
 }
 
 export function mapTeamCommunicationRow(row) {

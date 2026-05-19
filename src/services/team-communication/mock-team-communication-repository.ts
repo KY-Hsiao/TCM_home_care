@@ -1,6 +1,11 @@
 import type { AppDb, ContactLog } from "../../domain/models";
 import type { AppRepositories } from "../../domain/repository";
-import { createUnreadKey, buildMockTeamCommunicationMessage, isTeamCommunicationNotification } from "./helpers";
+import {
+  createUnreadKey,
+  buildMockTeamCommunicationMessage,
+  isTeamCommunicationNotification,
+  isWithinTeamCommunicationRetention
+} from "./helpers";
 import type {
   TeamCommunicationConversationQuery,
   TeamCommunicationCreateInput,
@@ -97,6 +102,7 @@ export function createMockTeamCommunicationRepository(input: {
   ) =>
     input.db.contact_logs
       .filter((log) => ["phone", "web_notice"].includes(log.channel))
+      .filter((log) => isWithinTeamCommunicationRetention(log.contacted_at))
       .map((log) =>
         buildMockTeamCommunicationMessage({
           log,
@@ -118,6 +124,7 @@ export function createMockTeamCommunicationRepository(input: {
               item.role === query.viewerRole &&
               item.owner_user_id === query.viewerUserId &&
               item.linked_doctor_id === query.doctorId &&
+              isWithinTeamCommunicationRetention(item.created_at) &&
               isTeamCommunicationNotification(item) &&
               item.is_unread
           )
@@ -135,6 +142,7 @@ export function createMockTeamCommunicationRepository(input: {
           (log) =>
             log.doctor_id === query.doctorId &&
             log.admin_user_id === query.adminUserId &&
+            isWithinTeamCommunicationRetention(log.contacted_at) &&
             ["phone", "web_notice"].includes(log.channel)
         )
         .sort((left, right) => new Date(left.contacted_at).getTime() - new Date(right.contacted_at).getTime())
@@ -160,6 +168,7 @@ export function createMockTeamCommunicationRepository(input: {
           (item) =>
             item.linked_doctor_id === query.doctorId &&
             item.owner_user_id &&
+            isWithinTeamCommunicationRetention(item.created_at) &&
             isTeamCommunicationNotification(item)
         )
         .filter(
@@ -190,6 +199,9 @@ export function createMockTeamCommunicationRepository(input: {
         .getNotificationCenterItems(query.role, query.userId)
         .filter((item) => {
           if (!item.is_unread || item.role !== query.role || !isTeamCommunicationNotification(item)) {
+            return false;
+          }
+          if (!isWithinTeamCommunicationRetention(item.created_at)) {
             return false;
           }
           if (query.doctorId && item.linked_doctor_id !== query.doctorId) {
@@ -229,6 +241,7 @@ export function createMockTeamCommunicationRepository(input: {
             item.role === query.viewerRole &&
             item.owner_user_id === query.viewerUserId &&
             item.linked_doctor_id === query.doctorId &&
+            isWithinTeamCommunicationRetention(item.created_at) &&
             isTeamCommunicationNotification(item)
         )
         .forEach((item) => {
@@ -241,9 +254,9 @@ export function createMockTeamCommunicationRepository(input: {
         .getNotificationCenterItems(viewerRole, viewerUserId)
         .find((item) => {
           if (item.id === `nc-staff-${messageId}` || item.id.replace(/^nc-/, "staff-log-") === messageId) {
-            return true;
+            return isWithinTeamCommunicationRetention(item.created_at);
           }
-          if (!message || !isTeamCommunicationNotification(item)) {
+          if (!message || !isTeamCommunicationNotification(item) || !isWithinTeamCommunicationRetention(item.created_at)) {
             return false;
           }
           return (

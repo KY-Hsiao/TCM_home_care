@@ -1,7 +1,9 @@
 import {
   ensureTeamCommunicationTable,
   mapTeamCommunicationRow,
+  purgeExpiredTeamCommunications,
   query,
+  TEAM_COMMUNICATION_RETENTION_SQL,
   validateRequiredString
 } from "../_lib/team-communications.js";
 
@@ -21,6 +23,7 @@ export default async function handler(request, response) {
   }
 
   if (request.method === "GET") {
+    await purgeExpiredTeamCommunications();
     const { doctorId, adminUserId } = request.query;
     if (!validateRequiredString(doctorId) || !validateRequiredString(adminUserId)) {
       setJson(response, 400, { error: "缺少 doctorId 或 adminUserId。" });
@@ -33,6 +36,7 @@ export default async function handler(request, response) {
         FROM team_communications
         WHERE doctor_id = $1
           AND admin_user_id = $2
+          AND contacted_at >= ${TEAM_COMMUNICATION_RETENTION_SQL}
         ORDER BY contacted_at ASC
       `,
       [doctorId, adminUserId]
@@ -45,6 +49,7 @@ export default async function handler(request, response) {
   }
 
   if (request.method === "POST") {
+    await purgeExpiredTeamCommunications();
     const body = request.body ?? {};
     const requiredFields = [
       body.id,
