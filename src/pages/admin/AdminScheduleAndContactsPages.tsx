@@ -4064,7 +4064,9 @@ export function AdminLeaveRequestsPage() {
                     }`}
                   >
                     <div className="flex items-center justify-between gap-3">
-                      <p className="font-semibold text-brand-ink">{doctor?.name ?? leaveRequest.doctor_id}</p>
+                      <p className="font-semibold text-brand-ink">
+                        {doctor ? formatDoctorDisplayName(doctor.name) : leaveRequest.doctor_id}
+                      </p>
                       <Badge value={leaveRequest.status} compact />
                     </div>
                     <p className="mt-2 text-sm text-slate-600">

@@ -3738,6 +3738,31 @@ describe("AdminPages", () => {
     });
   });
 
+  it("AdminLeaveRequestsPage 請假醫師選單會自動補上醫師稱謂", () => {
+    const customDb = createSeedDb();
+    customDb.doctors.push({
+      ...customDb.doctors[0],
+      id: "doc-no-title",
+      name: "陳柏霖",
+      phone: "0912-110-003",
+      available_service_slots: ["星期一上午"]
+    });
+    window.localStorage.setItem(
+      MOCK_DB_STORAGE_KEY,
+      JSON.stringify({
+        ...customDb,
+        leave_requests: []
+      })
+    );
+
+    renderWithProviders(<AdminLeaveRequestsPage />);
+
+    const leaveDoctorSelect = screen.getByLabelText("請假醫師");
+    expect(within(leaveDoctorSelect).getByRole("option", { name: "陳柏霖醫師" })).toBeInTheDocument();
+    expect(within(leaveDoctorSelect).queryByRole("option", { name: "陳柏霖" })).not.toBeInTheDocument();
+    expect(within(leaveDoctorSelect).queryByRole("option", { name: "陳柏霖醫師醫師" })).not.toBeInTheDocument();
+  });
+
   it("AdminLeaveRequestsPage 駁回請假時可填寫並保存駁回理由", async () => {
     window.localStorage.setItem(
       MOCK_DB_STORAGE_KEY,
