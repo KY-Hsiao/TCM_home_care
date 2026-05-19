@@ -598,13 +598,6 @@ export function AppShell() {
                     </span>
                   ) : null}
                 </div>
-                <div
-                  className={`${isDoctorShell ? "mt-1 hidden min-w-0 break-words text-[11px] lg:block" : "mt-1 hidden min-w-0 break-words text-xs sm:block"} ${
-                    location.pathname === item.to ? "text-slate-500" : "text-brand-sand/70"
-                  }`}
-                >
-                  {item.description}
-                </div>
               </NavLink>
             ))}
           </nav>
