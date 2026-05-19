@@ -1,6 +1,7 @@
 import { Suspense, lazy, type ReactNode } from "react";
 import { createBrowserRouter } from "react-router-dom";
 import { AppShell } from "./layouts/AppShell";
+import { RouteErrorFallback } from "./RouteErrorFallback";
 import { RoleSelectPage } from "../pages/role-select/RoleSelectPage";
 
 const AdminDashboardPage = lazy(() =>
@@ -107,10 +108,12 @@ function page(element: ReactNode) {
 export const router = createBrowserRouter([
   {
     path: "/",
-    element: <RoleSelectPage />
+    element: <RoleSelectPage />,
+    errorElement: <RouteErrorFallback />
   },
   {
     element: <AppShell />,
+    errorElement: <RouteErrorFallback />,
     children: [
       { path: "/demo-overview", element: page(<DemoOverviewPage />) },
       { path: "/doctor/navigation", element: page(<DoctorLocationPage />) },
