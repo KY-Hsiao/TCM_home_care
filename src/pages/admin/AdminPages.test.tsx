@@ -4679,6 +4679,23 @@ describe("AdminPages", () => {
     });
   });
 
+  it("AdminStaffPage 名單會把既有未加稱謂的醫師姓名顯示為醫師", () => {
+    const customDb = createSeedDb();
+    customDb.doctors.push({
+      ...customDb.doctors[0],
+      id: "doc-no-suffix",
+      name: "陳柏霖",
+      phone: "",
+      available_service_slots: ["星期一上午"]
+    });
+    window.localStorage.setItem(MOCK_DB_STORAGE_KEY, JSON.stringify(customDb));
+
+    renderWithProviders(<AdminStaffPage />);
+
+    expect(screen.getByRole("button", { name: /陳柏霖醫師/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^陳柏霖$/ })).not.toBeInTheDocument();
+  });
+
   it("AdminStaffPage 醫師改服務時段後會自動取消原排程", () => {
     const customDb = createSeedDb();
     customDb.doctors = customDb.doctors.map((doctor) =>

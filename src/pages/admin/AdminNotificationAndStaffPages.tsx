@@ -301,7 +301,7 @@ function buildDoctorDraft(doctor?: Doctor): StaffDraft {
   return {
     sourceId: doctor?.id ?? null,
     originalRole: doctor ? "doctor" : null,
-    name: doctor?.name ?? "",
+    name: doctor ? normalizeDoctorName(doctor.name) : "",
     phone: doctor?.phone ?? "",
     serviceSlotsText: doctor?.available_service_slots.join("\n") ?? ""
   };
@@ -563,7 +563,7 @@ export function AdminStaffPage() {
           key: `doctor:${doctor.id}`,
           id: doctor.id,
           role: "doctor" as const,
-          name: doctor.name,
+          name: normalizeDoctorName(doctor.name),
           phone: doctor.phone,
           accountLabel: "站內通知 / 手機定位",
           secondaryLabel: doctor.available_service_slots.join("、") || "未設定可服務時段"
