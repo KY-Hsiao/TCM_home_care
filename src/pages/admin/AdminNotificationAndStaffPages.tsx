@@ -535,6 +535,10 @@ export function AdminStaffPage() {
   const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [activeServiceDay, setActiveServiceDay] = useState<ServiceDay>(serviceDayOptions[0]);
   const [recentAction, setRecentAction] = useState<string | null>(null);
+  const [editorMessage, setEditorMessage] = useState<{
+    tone: "success" | "error";
+    message: string;
+  } | null>(null);
   const [isSecretManagementOpen, setIsSecretManagementOpen] = useState(false);
   const [isDataIntegrityOpen, setIsDataIntegrityOpen] = useState(false);
   const [testingConnectionService, setTestingConnectionService] =
@@ -706,6 +710,7 @@ export function AdminStaffPage() {
   const openStaffEditor = (staffKey: string) => {
     setSelectedStaffKey(staffKey);
     syncDraftFromSelection(staffKey);
+    setEditorMessage(null);
     setIsEditorOpen(true);
   };
 
@@ -713,11 +718,13 @@ export function AdminStaffPage() {
     const staffKey = "new:doctor";
     setSelectedStaffKey(staffKey);
     syncDraftFromSelection(staffKey);
+    setEditorMessage(null);
     setIsEditorOpen(true);
   };
 
   const closeStaffEditor = () => {
     syncDraftFromSelection(selectedStaffKey);
+    setEditorMessage(null);
     setIsEditorOpen(false);
   };
 
@@ -744,7 +751,10 @@ export function AdminStaffPage() {
     const isCreatingDoctor = !(draft.originalRole === "doctor" && draft.sourceId);
 
     if (!normalizedName) {
-      setRecentAction("請先填寫醫師姓名。");
+      setEditorMessage({
+        tone: "error",
+        message: "請先填寫醫師姓名。"
+      });
       return;
     }
 
@@ -779,10 +789,7 @@ export function AdminStaffPage() {
     setSelectedStaffKey(`doctor:${doctorIdToSave}`);
     setDraft(buildDoctorDraft(doctorToSave));
     setActiveServiceDay(getInitialActiveServiceDay(doctorToSave.available_service_slots.join("\n")));
-    if (isCreatingDoctor) {
-      setIsEditorOpen(false);
-    }
-    setRecentAction(
+    const successMessage =
       legacyServiceSlotWarnings.length > 0
         ? `已將 ${normalizedName} 設為醫師，並移除不支援的舊時段：${legacyServiceSlotWarnings.join("、")}。`
         : isCreatingDoctor
@@ -791,8 +798,17 @@ export function AdminStaffPage() {
             : `已建立 ${normalizedName} 醫師帳號，可在登入頁選擇該醫師並使用預設密碼 ${getDefaultPassword()} 登入；尚未設定可服務時段，之後可回到角色設置補上。`
           : selectedServiceSlots.length > 0
             ? `已將 ${normalizedName} 設為醫師。`
-            : `已將 ${normalizedName} 設為醫師；尚未設定可服務時段，之後可回到角色設置補上。`
-    );
+            : `已將 ${normalizedName} 設為醫師；尚未設定可服務時段，之後可回到角色設置補上。`;
+    setRecentAction(successMessage);
+    if (isCreatingDoctor) {
+      setEditorMessage(null);
+      setIsEditorOpen(false);
+      return;
+    }
+    setEditorMessage({
+      tone: "success",
+      message: successMessage
+    });
   };
 
   const removeStaffRole = () => {
@@ -1216,6 +1232,19 @@ export function AdminStaffPage() {
             {legacyServiceSlotWarnings.length > 0 ? (
               <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
                 偵測到舊版時段資料：{legacyServiceSlotWarnings.join("、")}。依新規則，星期日不再提供編輯，儲存後會自動移除。
+              </div>
+            ) : null}
+
+            {editorMessage ? (
+              <div
+                role="alert"
+                className={`mt-4 rounded-2xl border px-4 py-3 text-sm font-semibold ${
+                  editorMessage.tone === "success"
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                    : "border-rose-200 bg-rose-50 text-rose-700"
+                }`}
+              >
+                {editorMessage.message}
               </div>
             ) : null}
 

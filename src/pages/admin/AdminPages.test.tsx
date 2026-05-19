@@ -4592,8 +4592,21 @@ describe("AdminPages", () => {
     });
     fireEvent.click(within(dialog).getByRole("button", { name: "儲存角色設置" }));
 
+    expect(within(dialog).getByRole("alert")).toHaveTextContent("已將 蕭坤元主任醫師 設為醫師");
     expect(screen.getByRole("status")).toHaveTextContent("已將 蕭坤元主任醫師 設為醫師");
     expect(screen.getByRole("button", { name: /蕭坤元主任醫師/ })).toBeInTheDocument();
+  });
+
+  it("AdminStaffPage 新增醫師未填姓名時會在視窗內顯示儲存回饋", () => {
+    renderWithProviders(<AdminStaffPage />);
+
+    fireEvent.click(screen.getByRole("button", { name: "新增醫師" }));
+    const dialog = screen.getByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "儲存角色設置" }));
+
+    expect(within(dialog).getByRole("alert")).toHaveTextContent("請先填寫醫師姓名。");
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByText(/醫師名單目前共 1 位/)).toBeInTheDocument();
   });
 
   it("AdminStaffPage 可先新增醫師帳號再補服務時段", async () => {
