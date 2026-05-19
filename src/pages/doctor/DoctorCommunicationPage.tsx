@@ -1,6 +1,6 @@
 import { useEffect, useMemo } from "react";
 import { useAppContext } from "../../app/use-app-context";
-import { StaffCommunicationDialog } from "../../shared/components/StaffCommunicationDialog";
+import { StaffCommunicationPanel } from "../../shared/components/StaffCommunicationDialog";
 import { maskPatientName } from "../../shared/utils/patient-name";
 import { Panel } from "../../shared/ui/Panel";
 import { useTeamCommunicationConversation } from "../../services/team-communication/use-team-communication";
@@ -99,29 +99,26 @@ export function DoctorTeamCommunicationPage() {
   }
 
   return (
-    <div className="min-w-0 space-y-3">
-      <StaffCommunicationDialog
-        counterpartLabel="行政人員"
-        currentUserLabel={currentDoctor.name}
-        contextLabel={
-          activeSchedule && activePatient
-            ? `第 ${activeSchedule.route_order} 站 ${maskPatientName(activePatient.name)}`
-            : "院內行政協調"
-        }
-        doctorId={currentDoctor.id}
-        adminUserId={currentAdmin.id}
-        logs={conversation.messages}
-        unreadConversationCount={conversation.unreadCount}
-        syncError={conversation.syncError}
-        lastSyncedAt={conversation.lastSyncedAt}
-        onConversationViewed={() => void markConversationRead()}
-        onClose={() => {
-          if (typeof window !== "undefined") {
-            window.close();
+    <Panel title="團隊通訊">
+      <div className="min-h-[560px] min-w-0">
+        <StaffCommunicationPanel
+          counterpartLabel="行政人員"
+          currentUserLabel={currentDoctor.name}
+          contextLabel={
+            activeSchedule && activePatient
+              ? `第 ${activeSchedule.route_order} 站 ${maskPatientName(activePatient.name)}`
+              : "院內行政協調"
           }
-        }}
-        onCreateLog={createDoctorAdminContactLog}
-      />
-    </div>
+          doctorId={currentDoctor.id}
+          adminUserId={currentAdmin.id}
+          logs={conversation.messages}
+          unreadConversationCount={conversation.unreadCount}
+          syncError={conversation.syncError}
+          lastSyncedAt={conversation.lastSyncedAt}
+          onConversationViewed={() => void markConversationRead()}
+          onCreateLog={createDoctorAdminContactLog}
+        />
+      </div>
+    </Panel>
   );
 }

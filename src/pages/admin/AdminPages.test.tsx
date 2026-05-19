@@ -2656,7 +2656,7 @@ describe("AdminPages", () => {
     ).toBe(true);
   });
 
-  it("AdminTeamCommunicationPage 可雙擊醫師名單直接切換對話對象", async () => {
+  it("AdminTeamCommunicationPage 可在嵌入式頁面切換對話對象", async () => {
     const customDb = createSeedDb();
     customDb.doctors.push({
       ...customDb.doctors[0],
@@ -2679,7 +2679,9 @@ describe("AdminPages", () => {
 
     renderWithProviders(<AdminTeamCommunicationPage />);
 
-    fireEvent.doubleClick(screen.getByRole("button", { name: /許明哲醫師/ }));
+    expect(screen.queryByRole("button", { name: "開啟全頁對話" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "團隊通訊全頁視窗" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /許明哲醫師/ }));
 
     expect(screen.getByLabelText("訊息內容")).toBeInTheDocument();
     expect(screen.getByPlaceholderText(/許明哲醫師/)).toBeInTheDocument();
