@@ -79,6 +79,11 @@ type AdminLineRecipient = {
   lineUserId: string;
 };
 
+function formatDoctorDisplayName(name: string) {
+  const normalized = name.trim();
+  return normalized.endsWith("醫師") ? normalized : `${normalized}醫師`;
+}
+
 type GoogleCalendarEventPreview = {
   id: string;
   summary: string;
@@ -677,7 +682,7 @@ function buildAutoScheduleCarryoverCandidates(input: {
             id,
             notificationItemId: `nc-${id}`,
             doctorId: doctor.id,
-            doctorName: doctor.name,
+            doctorName: formatDoctorDisplayName(doctor.name),
             routeDate,
             routeWeekday,
             timeSlot,
@@ -1447,7 +1452,7 @@ export function AdminSchedulesPage() {
       effectiveSelectedWeekday && selectedTimeSlot
         ? buildRoutePreviewInput({
             routeDate,
-            doctorName: selectedDoctor?.name,
+            doctorName: selectedDoctor ? formatDoctorDisplayName(selectedDoctor.name) : undefined,
             weekday: effectiveSelectedWeekday,
             timeSlot: selectedTimeSlot,
             checkedRows,
@@ -2178,7 +2183,9 @@ export function AdminSchedulesPage() {
       id: routePlanId,
       doctor_id: selectedDoctorId,
       route_group_id: routePlanId,
-      route_name: `${formatDateOnly(routeDate)} ${doctor?.name ?? selectedDoctorId} ${effectiveSelectedWeekday}${selectedTimeSlot}`,
+      route_name: `${formatDateOnly(routeDate)} ${
+        doctor ? formatDoctorDisplayName(doctor.name) : selectedDoctorId
+      } ${effectiveSelectedWeekday}${selectedTimeSlot}`,
       route_date: routeDate,
       route_weekday: effectiveSelectedWeekday,
       service_time_slot: selectedTimeSlot,
@@ -2524,7 +2531,7 @@ export function AdminSchedulesPage() {
                 <option value="">請選擇醫師</option>
                 {doctors.map((doctor) => (
                   <option key={doctor.id} value={doctor.id}>
-                    {doctor.name}
+                    {formatDoctorDisplayName(doctor.name)}
                   </option>
                 ))}
               </select>
@@ -3616,7 +3623,7 @@ export function AdminRemindersPage() {
                     >
                       {db.doctors.map((doctor) => (
                         <option key={doctor.id} value={doctor.id}>
-                          {doctor.name}
+                          {formatDoctorDisplayName(doctor.name)}
                         </option>
                       ))}
                     </select>
@@ -3981,7 +3988,7 @@ export function AdminLeaveRequestsPage() {
               >
                 {db.doctors.map((doctor) => (
                   <option key={doctor.id} value={doctor.id}>
-                    {doctor.name}
+                    {formatDoctorDisplayName(doctor.name)}
                   </option>
                 ))}
               </select>

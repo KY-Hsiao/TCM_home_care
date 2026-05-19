@@ -177,6 +177,25 @@ describe("AdminPages", () => {
     expect(within(slotPatientDialog).getAllByRole("button", { name: "結案" })).toHaveLength(8);
   });
 
+  it("AdminSchedulesPage 醫師下拉選單會自動補上醫師稱謂", () => {
+    const customDb = createSeedDb();
+    customDb.doctors.push({
+      ...customDb.doctors[0],
+      id: "doc-no-title",
+      name: "陳柏霖",
+      phone: "0912-110-003",
+      available_service_slots: ["星期一上午"]
+    });
+    window.localStorage.setItem(MOCK_DB_STORAGE_KEY, JSON.stringify(customDb));
+
+    renderWithProviders(<AdminSchedulesPage />);
+
+    const doctorSelect = screen.getByRole("combobox", { name: "篩選醫師" });
+    expect(within(doctorSelect).getByRole("option", { name: "陳柏霖醫師" })).toBeInTheDocument();
+    expect(within(doctorSelect).queryByRole("option", { name: "陳柏霖" })).not.toBeInTheDocument();
+    expect(within(doctorSelect).queryByRole("option", { name: "陳柏霖醫師醫師" })).not.toBeInTheDocument();
+  });
+
   it("AdminSchedulesPage 今日行程風險提示預設收合，可手動展開", () => {
     renderWithProviders(<AdminSchedulesPage />);
 
