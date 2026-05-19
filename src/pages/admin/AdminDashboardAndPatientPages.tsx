@@ -23,6 +23,11 @@ function mapsLink(address: string, locationKeyword = sameAddressLocationKeyword)
   return buildGoogleMapsSearchUrl(locationKeyword, address);
 }
 
+function formatDoctorDisplayName(name: string) {
+  const normalized = name.trim();
+  return normalized.endsWith("醫師") ? normalized : `${normalized}醫師`;
+}
+
 function formatDateInputValue(date = new Date()) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -791,7 +796,7 @@ export function AdminDashboardPage() {
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="min-w-0">
                     <p className="font-semibold text-brand-ink">
-                      #{doctor.rank} {doctor.doctorName}
+                      #{doctor.rank} {formatDoctorDisplayName(doctor.doctorName)}
                     </p>
                   </div>
                   <Badge value={`分數 ${doctor.score}`} compact />

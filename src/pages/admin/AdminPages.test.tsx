@@ -1932,7 +1932,7 @@ describe("AdminPages", () => {
           {
             ...seededDb.doctors[0],
             id: "doc-rank-002",
-            name: "測試排行醫師",
+            name: "測試排行",
             phone: "0912-000-222"
           }
         ],
@@ -1986,6 +1986,8 @@ describe("AdminPages", () => {
     expect(performancePanel).not.toBeNull();
     expect(within(performancePanel!).getByText("#1 蕭坤元醫師")).toBeInTheDocument();
     expect(within(performancePanel!).getByText("#2 測試排行醫師")).toBeInTheDocument();
+    expect(within(performancePanel!).queryByText("#2 測試排行")).not.toBeInTheDocument();
+    expect(within(performancePanel!).queryByText(/測試排行醫師醫師/)).not.toBeInTheDocument();
     expect(within(performancePanel!).getByText("分數 47")).toBeInTheDocument();
     expect(within(performancePanel!).getByText("分數 9")).toBeInTheDocument();
   });
